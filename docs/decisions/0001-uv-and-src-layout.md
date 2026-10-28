@@ -11,12 +11,15 @@ the repository alone (development plan, "Environment and stack").
 
 ## Decision 1: uv with a committed lockfile
 
-- `pyproject.toml` lists the direct dependencies with minimum versions only
-  (for example `transformers>=5.2`).
+- `pyproject.toml` lists the direct dependencies with minimum versions (for
+  example `transformers>=5.2`). The one exception is torch, which is capped
+  below 2.15 (see 0002).
 - `uv.lock` records the exact version and file hash of every package, direct
   and indirect. Both files are committed and always change together.
-- `uv sync` builds `.venv/` from the lockfile. `uv run <command>` runs inside
-  it and re-syncs first if `pyproject.toml` changed.
+- `uv sync` builds `.venv/` from the lockfile. Before every command,
+  `uv run <command>` re-locks if `pyproject.toml` changed, then makes `.venv/`
+  match `uv.lock` for the active selection (the default groups unless told
+  otherwise). This matters on the GPU pod; see 0002.
 - Python is pinned to 3.11 through `requires-python = ">=3.11,<3.12"`. uv
   downloads 3.11 on any machine that lacks it, and the lockfile only has to
   describe one Python version.
@@ -33,8 +36,8 @@ package indexes, which the CPU and GPU builds need (see 0002).
 - pip with `requirements.txt`: no universal lockfile, and pins are managed by
   hand. pip-tools locks one platform at a time.
 - Poetry: slower, and awkward with PyTorch's per-build indexes.
-- conda: heavier and slower. It isn't needed, because PyTorch wheels bundle
-  their own CUDA libraries.
+- conda: heavier and slower. It isn't needed, because PyTorch's CUDA wheels
+  pull in NVIDIA's CUDA libraries as ordinary pip packages.
 
 **Consequences.**
 - To change a dependency, edit `pyproject.toml` (or use `uv add`), run
@@ -49,22 +52,25 @@ package indexes, which the CPU and GPU builds need (see 0002).
 The package lives in `src/pushlab/`, and the tests in `tests/`.
 
 **Why.**
-- Tests import the installed package, never whatever folder happens to be the
-  current directory. If installation breaks, the tests fail instead of
-  quietly passing against the source tree.
-- Folders at the repository root, such as `scripts/`, `notebooks/` and
-  `experiments/`, can never be imported by accident.
-- It is `uv_build`'s default and the layout the Python Packaging User Guide
-  recommends.
-- uv installs the project in editable mode, so code changes take effect
-  without reinstalling.
+- `pushlab` can be imported only once it is installed, because `src/` is not
+  on Python's import path by itself. Tests, scripts and notebooks therefore
+  always go through the installed package, with its metadata and declared
+  dependencies, never a copy found by accident in the current directory.
+- uv installs the project in editable mode: the installed package points at
+  `src/`, so code changes take effect without reinstalling.
+- It is `uv_build`'s default and the layout used in the Python Packaging User
+  Guide's tutorial.
 
 **Alternative considered.** A flat layout (`pushlab/` at the repository root)
-gives shorter paths, but tests can then pass against the source tree even when
-the installed package is broken.
+gives shorter paths, but `import pushlab` then also works from the repository
+root without any install. Missing metadata or undeclared dependencies can go
+unnoticed that way.
 
 **Consequences.**
 - Run code through `uv run` or the activated `.venv/`. A bare `python` from
   the repository root cannot import `pushlab`, by design.
 - `pushlab.__version__` is read from the installed package's metadata, so the
   version is written in one place only: `pyproject.toml`.
+- The editable install means tests run against `src/`. Checking the built
+  wheel itself needs a separate `uv build` step, if that ever matters (for
+  example before a release).

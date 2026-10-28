@@ -18,8 +18,9 @@ So far you can install the environment and run the tests.
    have it; elsewhere run `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 2. Clone this repository and `cd` into it.
 3. Run `uv sync`. This creates `.venv/` with Python 3.11 (uv downloads it if
-   needed), the CPU-only build of PyTorch (about 190 MB) and the dev tools,
-   at the exact versions in `uv.lock`.
+   needed), the CPU-only build of PyTorch and the dev tools, at the exact
+   versions in `uv.lock`. Expect about 1.3 GB on disk; the PyTorch download
+   itself is about 190 MB.
 4. Run `uv run pytest -q`. Every test should pass.
 
 Not ready yet: setting up a GPU pod (a later Sprint 0 task). The `gpu` extra

@@ -777,7 +777,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.15" },
-    { name = "causal-conv1d", marker = "extra == 'gpu'", specifier = "==1.7.0+cu.13.0.torch.2.14", index = "https://wheels.astral.sh/simple/cu130/" },
+    { name = "causal-conv1d", marker = "extra == 'gpu'", specifier = ">=1.7", index = "https://wheels.astral.sh/simple/cu130/" },
     { name = "duckdb", specifier = ">=2.0" },
     { name = "flash-linear-attention", marker = "extra == 'gpu'", specifier = ">=0.6" },
     { name = "numpy", specifier = ">=2.4" },
