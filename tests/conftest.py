@@ -1,11 +1,19 @@
-"""Shared test setup: fixed random seeds, and GPU tests skipped unless asked for."""
+"""Shared test setup: seeds, GPU-test skipping, and the tiny test model."""
 
+import os
 import random
 import re
+from collections.abc import Callable
 
 import numpy as np
 import pytest
 import torch
+
+# Tests never download from Hugging Face; an accidental download fails fast.
+# Set before transformers is imported, because it reads this once.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+from transformers import Qwen3Config, Qwen3ForCausalLM  # noqa: E402
 
 pytest_plugins = ["pytester"]
 
@@ -60,3 +68,33 @@ def fixed_seeds() -> int:
     """Seed Python, NumPy and torch again right before each test runs."""
     _seed_everything()
     return TEST_SEED
+
+
+def _build_tiny_model() -> Qwen3ForCausalLM:
+    config = Qwen3Config(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,  # hidden size / heads, as in real Qwen3 (default is 128)
+        vocab_size=512,
+    )
+    # Seed only inside a forked random state, so the weights are always the
+    # same and the test's own random numbers are left untouched.
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(TEST_SEED)
+        model = Qwen3ForCausalLM(config)
+    return model.to(torch.float32).eval()
+
+
+@pytest.fixture
+def make_tiny_model() -> Callable[[], Qwen3ForCausalLM]:
+    """A function that builds a fresh tiny model, identical on every call."""
+    return _build_tiny_model
+
+
+@pytest.fixture
+def tiny_model(make_tiny_model: Callable[[], Qwen3ForCausalLM]) -> Qwen3ForCausalLM:
+    """A 2-layer Qwen3-style model with seeded random weights, float32, eval mode."""
+    return make_tiny_model()

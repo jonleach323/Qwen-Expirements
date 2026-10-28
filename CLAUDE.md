@@ -17,6 +17,8 @@ Current sprint: S0 (Bootstrap).
 - Every new function gets a test in the same pull request.
 - Mark tests that need a GPU with @pytest.mark.gpu (skipped unless run with
   -m gpu) and long-running ones with @pytest.mark.slow.
+- CPU tests use the tiny_model fixture from tests/conftest.py. Tests run
+  with Hugging Face offline, so they never download models.
 - Never change an existing test's expected values without explaining why
   in the pull request description.
 - Never commit run outputs, model weights or secrets.
