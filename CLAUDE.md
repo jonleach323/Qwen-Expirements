@@ -7,6 +7,7 @@ Current sprint: S0 (Bootstrap).
 
 ## Commands
 - Install: uv sync
+- Prepare a cloud session (uv, Python, packages, versions): bash scripts/cloud_setup.sh
 - Tests: uv run pytest -q tests/unit
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
