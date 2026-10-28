@@ -1,0 +1,52 @@
+# Runs the project's checks on GitHub for every push and pull request:
+# ruff lint, ruff formatting and the test suite. GPU tests stay skipped,
+# because these machines have no GPU (see the markers in pyproject.toml).
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+# Read-only access to the code is all this workflow needs; it uses no secrets.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the older run,
+# which saves Actions minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    # Branch protection requires this check by name; see docs/runbooks/github.md.
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to exact commits; the comment gives the version.
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # The uv version that Claude Code cloud sessions use.
+          version: "0.11.32"
+          enable-cache: true
+
+      # --locked stops with an error instead of changing uv.lock. The default
+      # groups give the CPU-only torch build and the dev tools.
+      - name: Install the CPU environment from uv.lock
+        run: uv sync --locked
+
+      - name: Lint with ruff
+        run: uv run ruff check .
+
+      - name: Check formatting with ruff
+        run: uv run ruff format --check .
+
+      - name: Run the tests (GPU tests are skipped)
+        run: uv run pytest -q
