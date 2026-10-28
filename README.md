@@ -37,6 +37,11 @@ So far you can install the environment and run the tests.
    GitHub refuse to merge a pull request until the checks pass, follow
    `docs/runbooks/github.md`.
 
+In a Claude Code cloud session, `bash scripts/cloud_setup.sh` does steps 1
+to 3 for you and prints the installed versions.
+`docs/runbooks/cloud-sessions.md` shows how to make every new cloud session
+run it automatically.
+
 Not ready yet: setting up a GPU pod (a later Sprint 0 task). The `gpu` extra
 is declared and locked but has not been installed on a GPU yet;
 `docs/decisions/0002-torch-builds.md` explains how it is meant to be used.
