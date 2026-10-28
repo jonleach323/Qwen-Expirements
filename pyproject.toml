@@ -73,7 +73,21 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--import-mode=importlib"]
+# --strict-markers turns a misspelled marker into an error; -ra lists the
+# reason for every skipped test at the end of a run.
+addopts = ["--import-mode=importlib", "--strict-markers", "-ra"]
+# tests/conftest.py skips gpu tests unless the run is started with -m gpu.
+markers = [
+    "gpu: needs a CUDA GPU; skipped unless selected with -m gpu",
+    "slow: takes more than a few seconds",
+]
+
+[tool.ruff]
+target-version = "py311"
 
 [tool.ruff.lint]
-extend-select = ["I", "UP", "B"]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.format]
+# Also format the code examples inside docstrings.
+docstring-code-format = true

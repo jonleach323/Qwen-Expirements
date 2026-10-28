@@ -21,7 +21,12 @@ So far you can install the environment and run the tests.
    needed), the CPU-only build of PyTorch and the dev tools, at the exact
    versions in `uv.lock`. Expect about 1.3 GB on disk; the PyTorch download
    itself is about 190 MB.
-4. Run `uv run pytest -q`. Every test should pass.
+4. Run `uv run pytest -q`. Every test should pass, except tests that need a
+   GPU: those show as skipped and run only with `uv run pytest -m gpu`.
+5. Run `uv run pre-commit install` once per clone. From then on, every
+   `git commit` first runs the code checks (ruff lint and format, whitespace,
+   YAML, no files over 5 MB) and stops if one fails. Run them by hand with
+   `uv run pre-commit run --all-files`.
 
 Not ready yet: setting up a GPU pod (a later Sprint 0 task). The `gpu` extra
 is declared and locked but has not been installed on a GPU yet;

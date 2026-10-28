@@ -1,0 +1,22 @@
+# Checks that run on every commit once installed with `uv run pre-commit install`.
+# Run them on everything with `uv run pre-commit run --all-files`.
+repos:
+  # Keep `rev` equal to the ruff version in uv.lock, so the hook and
+  # `uv run ruff` always agree.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      # Blocks any committed file over 5 MB (5120 KB), new or modified.
+      - id: check-added-large-files
+        args: [--maxkb=5120, --enforce-all]
