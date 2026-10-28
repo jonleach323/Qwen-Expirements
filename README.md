@@ -1,5 +1,7 @@
 # pushlab
 
+[![Tests](https://github.com/jonleach323/Qwen-Expirements/actions/workflows/tests.yml/badge.svg)](https://github.com/jonleach323/Qwen-Expirements/actions/workflows/tests.yml)
+
 pushlab is the research code for *Switching Neurons Mid-Response*. It will add
 scheduled "pushes" to chosen neurons, sparse-autoencoder features or dense
 vectors of a language model (starting with Qwen3.5-4B and Qwen3-8B) while the
@@ -30,6 +32,10 @@ So far you can install the environment and run the tests.
    `git add` them and commit again. Run the checks by hand with
    `uv run pre-commit run --all-files`. Commits made on the GitHub website
    skip these checks.
+6. GitHub runs the lint and test checks on every push and pull request.
+   The "Tests" badge at the top shows the result for `main`. To make
+   GitHub refuse to merge a pull request until the checks pass, follow
+   `docs/runbooks/github.md`.
 
 Not ready yet: setting up a GPU pod (a later Sprint 0 task). The `gpu` extra
 is declared and locked but has not been installed on a GPU yet;
