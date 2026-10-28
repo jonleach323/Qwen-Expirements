@@ -38,7 +38,8 @@ So far you can install the environment and run the tests.
    `docs/runbooks/github.md`.
 
 In a Claude Code cloud session, `bash scripts/cloud_setup.sh` does steps 1
-to 3 for you and prints the installed versions.
+and 3 for you (the cloud has already cloned the repository) and prints the
+installed versions.
 `docs/runbooks/cloud-sessions.md` shows how to make every new cloud session
 run it automatically.
 
