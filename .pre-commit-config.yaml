@@ -13,9 +13,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # The owner's uploaded plans and prompts stay exactly as uploaded.
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        exclude: ^docs/(plan|prompts)/
       - id: end-of-file-fixer
+        exclude: ^docs/(plan|prompts)/
       - id: check-yaml
       # Blocks any committed file over 5 MB (5120 KB), new or modified.
       - id: check-added-large-files

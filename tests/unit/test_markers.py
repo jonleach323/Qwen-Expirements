@@ -47,8 +47,14 @@ def sample_project(pytester: pytest.Pytester) -> pytest.Pytester:
         ([], {"passed": 1, "skipped": 2}),
         (["-m", "gpu"], {"passed": 2, "deselected": 1}),
         (["-m", "gpu and not slow"], {"passed": 1, "deselected": 2}),
+        (["-m", "gpu or slow"], {"passed": 2, "deselected": 1}),
         (["-m", "slow"], {"skipped": 1, "deselected": 2}),
         (["-m", "not gpu"], {"passed": 1, "deselected": 2}),
+        # gpu appears only negated: GPU tests selected for other reasons skip.
+        (["-m", "slow or not gpu"], {"passed": 1, "skipped": 1, "deselected": 1}),
+        (["-m", "not (slow and gpu)"], {"passed": 1, "skipped": 1, "deselected": 1}),
+        (["-m", "not (gpu and slow)"], {"passed": 1, "skipped": 1, "deselected": 1}),
+        (["-m", "not not gpu"], {"passed": 2, "deselected": 1}),
     ],
 )
 def test_gpu_tests_run_only_with_m_gpu(
