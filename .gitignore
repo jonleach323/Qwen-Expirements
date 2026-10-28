@@ -1,0 +1,35 @@
+# Run outputs, model weights and logs never go in git. The leading slash
+# matches only the top-level folder, so src/pushlab/models/ is still tracked.
+/outputs/
+/models/
+/logs/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+
+# Python build files
+__pycache__/
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Tool caches
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,79 @@
+[project]
+name = "pushlab"
+version = "0.1.0"
+description = "Research code for pushing LLM neurons on schedules during generation."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # Capped below 2.15 so cloud sessions and the GPU pod run the same torch:
+    # the CUDA 13.0 index and the prebuilt causal-conv1d wheel stop at 2.14.
+    "torch>=2.14,<2.15",
+    "transformers>=5.2",
+    "accelerate>=1.15",
+    "safetensors>=0.8",
+    "pandas>=3.1",
+    "pyarrow>=26",
+    "duckdb>=2.0",
+    "numpy>=2.4",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# GPU pod only: CUDA torch plus the fast kernels for Qwen3.5's linear-attention
+# layers. Install with `uv sync --no-group cpu --extra gpu`.
+gpu = [
+    "torch",
+    "flash-linear-attention>=0.6",
+    # Prebuilt wheel from Astral's CUDA 13.0 index (keep it on the same CUDA
+    # as the torch index). Each build requires its torch minor version, so uv
+    # picks the build for the torch above.
+    "causal-conv1d>=1.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.2", "ruff>=0.17", "pre-commit>=4.7"]
+# Selects the small CPU-only torch build. On by default, so a plain `uv sync`
+# (cloud sessions) never downloads CUDA.
+cpu = ["torch"]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+# torch builds follow uv's PyTorch guide ("Configuring accelerators with
+# optional dependencies"), with the CPU side as a default dependency group
+# instead of an extra. See docs/decisions/0002-torch-builds.md.
+[tool.uv]
+default-groups = ["dev", "cpu"]
+conflicts = [[{ group = "cpu" }, { extra = "gpu" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cu130", extra = "gpu" },
+]
+causal-conv1d = { index = "astral-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "astral-cu130"
+url = "https://wheels.astral.sh/simple/cu130/"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B"]
