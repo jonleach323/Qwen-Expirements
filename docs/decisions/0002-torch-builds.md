@@ -59,18 +59,21 @@ three. cu130 was picked for two reasons:
   widely used build.
 - Unlike cu126, it also covers newer GPUs (Blackwell).
 
-The cost is a newer driver: R580 or later, while cu126 runs on older CUDA 12
-drivers. cu126 is the fallback if the pod's driver is older (see
-Consequences).
+The costs are a newer driver (R580 or later, while cu126 runs on older CUDA
+12 drivers) and no support for GPUs older than Turing, such as the V100 and
+P100. The plan's RTX 4090 and A100 are fine on both counts. cu126 is the
+fallback if the pod's driver or GPU rules cu130 out (see Consequences).
 
 **Why a prebuilt `causal-conv1d`.** PyPI has only its source code. Its
 metadata is dynamic, so uv would have to build it just to write the lockfile.
 Building needs a CUDA compiler whose version matches torch's CUDA version, and
 cloud sessions have no such compiler. uv's PyTorch guide points to Astral's GPU
-indexes for exactly these extensions. Each Astral build declares the torch it
-was built for (the pinned wheel requires `torch==2.14.*`), so a plain
-`causal-conv1d>=1.7` is enough: uv always picks the build that matches the
-locked torch.
+indexes for exactly these extensions. Each Astral build requires the torch
+minor version it was built for. The locked wheel,
+`1.7.0+cu.13.0.torch.2.14`, requires `torch==2.14.*`, so a plain
+`causal-conv1d>=1.7` picks the build for the locked torch. The CUDA version
+comes from the index instead, so Astral's index and PyTorch's must name the
+same CUDA version (both are cu130 here).
 
 **Why cap torch below 2.15.** torch 2.15.0 is on the CPU index but not yet on
 the CUDA 13.0 index. Without the cap, a fresh lock would put cloud sessions on
@@ -82,16 +85,17 @@ same torch.
 - The pod needs an NVIDIA driver that supports CUDA 13.0 (R580 or newer).
   Pick the pod template with that in mind. The pod does not need a system CUDA
   toolkit, because the CUDA libraries arrive as pip packages. If only older
-  drivers are available, point both cu130 indexes (PyTorch's and Astral's) at
-  cu126 and re-lock.
+  drivers or GPUs are available, point both cu130 indexes (PyTorch's and
+  Astral's) at cu126 and re-lock.
 - On the pod, plain `uv sync` or `uv run` would switch torch back to the CPU
   build, because the `cpu` group is on by default. Pod setup must always sync
   with `uv sync --no-group cpu --extra gpu`, then set `UV_NO_SYNC=1` so that
   `uv run` uses the environment as installed. The pod setup script, a later
   S0 task, should do both, and CLAUDE.md should then gain the pod install
   command.
-- In a cloud session, any selection that turns the `cpu` group off without
-  adding `gpu` silently downloads PyPI's CUDA torch stack (about 3 GB).
+- In a cloud session, any selection that installs the project with the `cpu`
+  group off and without `gpu` silently downloads PyPI's CUDA torch stack
+  (about 3 GB).
   Examples: `--no-default-groups`, `UV_NO_DEFAULT_GROUPS=1`, or
   `--no-group cpu` on its own. To skip the dev tools, use `--no-dev`.
 - Upgrading torch means raising the cap, checking that the chosen CUDA index

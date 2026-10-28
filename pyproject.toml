@@ -26,8 +26,9 @@ dependencies = [
 gpu = [
     "torch",
     "flash-linear-attention>=0.6",
-    # Prebuilt wheel from Astral's CUDA 13.0 index; each build requires the
-    # torch it was built for, so uv picks the one matching the torch above.
+    # Prebuilt wheel from Astral's CUDA 13.0 index (keep it on the same CUDA
+    # as the torch index). Each build requires its torch minor version, so uv
+    # picks the build for the torch above.
     "causal-conv1d>=1.7",
 ]
 

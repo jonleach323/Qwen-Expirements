@@ -11,15 +11,17 @@ the repository alone (development plan, "Environment and stack").
 
 ## Decision 1: uv with a committed lockfile
 
-- `pyproject.toml` lists the direct dependencies with minimum versions (for
-  example `transformers>=5.2`). The one exception is torch, which is capped
-  below 2.15 (see 0002).
+- `pyproject.toml` uses minimum versions (for example `transformers>=5.2`),
+  not exact pins. The only upper cap on a dependency is torch's, below 2.15
+  (see 0002).
 - `uv.lock` records the exact version and file hash of every package, direct
   and indirect. Both files are committed and always change together.
-- `uv sync` builds `.venv/` from the lockfile. Before every command,
-  `uv run <command>` re-locks if `pyproject.toml` changed, then makes `.venv/`
-  match `uv.lock` for the active selection (the default groups unless told
-  otherwise). This matters on the GPU pod; see 0002.
+- `uv sync` builds `.venv/` from the lockfile and removes anything else.
+  Before every command, `uv run <command>` re-locks if `pyproject.toml`
+  changed. It then installs or replaces packages until everything the active
+  selection locks is present at its locked version; the active selection is
+  the default groups unless told otherwise. Unlike `uv sync`, it leaves extra
+  packages in place. This matters on the GPU pod; see 0002.
 - Python is pinned to 3.11 through `requires-python = ">=3.11,<3.12"`. uv
   downloads 3.11 on any machine that lacks it, and the lockfile only has to
   describe one Python version.
@@ -46,6 +48,10 @@ package indexes, which the CPU and GPU builds need (see 0002).
   between sprints, with a decision note, as the plan's risk table says.
 - A hash of `uv.lock` can serve as the environment fingerprint in each run
   manifest.
+- The `uv_build` requirement follows uv's convention of capping at the next
+  minor release (`<0.12.0`, matching the uv in cloud sessions). A newer uv,
+  for example on the pod, still builds the project but prints a warning.
+  Widen the range when cloud sessions move to a newer uv.
 
 ## Decision 2: src layout
 
@@ -62,9 +68,9 @@ The package lives in `src/pushlab/`, and the tests in `tests/`.
   Guide's tutorial.
 
 **Alternative considered.** A flat layout (`pushlab/` at the repository root)
-gives shorter paths, but `import pushlab` then also works from the repository
-root without any install. Missing metadata or undeclared dependencies can go
-unnoticed that way.
+gives shorter paths, but Python then finds `pushlab/` from the repository root
+without any install. Code can come to rely on undeclared dependencies without
+anyone noticing.
 
 **Consequences.**
 - Run code through `uv run` or the activated `.venv/`. A bare `python` from
