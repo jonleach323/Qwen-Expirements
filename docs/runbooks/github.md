@@ -25,20 +25,22 @@ delete it. It takes about five minutes, all in the browser.
    don't see it, click the **⋯** menu at the end of that row, then
    **Settings**.
 3. In the left sidebar, under "Code, planning, and automation", click
-   **Rules**, then **Rulesets**.
+   **Rules** (it may already be open), then **Rulesets**.
 4. Click **New ruleset**, then **New branch ruleset**.
 5. Under "Ruleset name", type `Protect main`.
 6. Set "Enforcement status" to **Active**.
 7. Leave the "Bypass list" empty, so the rules apply to you too.
-8. Under "Target branches", click **Add target**, then **Include default
+8. Under "Target branches", click **Add a target**, then **Include default
    branch**. That is `main`.
-9. Under "Branch rules", leave **Restrict deletions** and **Block force
-   pushes** ticked. They are on by default.
+9. In the list of rules below, make sure **Restrict deletions** and **Block
+   force pushes** are ticked. They usually are already.
 10. Tick **Require a pull request before merging**. Set "Required
     approvals" to **0**. GitHub never lets you approve your own pull
     request, so with 1 required approval you could not merge your own work.
-11. Tick **Require status checks to pass**. Click **Add checks**, type
-    `Lint and test`, and select it from the list.
+11. Tick **Require status checks to pass** (the full label may end in
+    "before merging"). Click **Add checks** and type `Lint and test`. Pick
+    it from the suggestions, or click the **+** button next to what you
+    typed. It must then appear in the list of required checks.
 12. Scroll to the bottom and click **Create**.
 
 ## Check that it works
