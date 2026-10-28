@@ -1,11 +1,19 @@
-"""Shared test setup: fixed random seeds, and GPU tests skipped unless asked for."""
+"""Shared test setup: seeds, GPU-test skipping, and the tiny test model."""
 
+import os
 import random
 import re
+from collections.abc import Callable
 
 import numpy as np
 import pytest
 import torch
+
+# Tests never download from Hugging Face; an accidental download fails fast.
+# Set before transformers is imported: huggingface_hub reads it once, then.
+os.environ["HF_HUB_OFFLINE"] = "1"
+
+from transformers import Qwen3Config, Qwen3ForCausalLM  # noqa: E402
 
 pytest_plugins = ["pytester"]
 
@@ -60,3 +68,37 @@ def fixed_seeds() -> int:
     """Seed Python, NumPy and torch again right before each test runs."""
     _seed_everything()
     return TEST_SEED
+
+
+def _build_tiny_model() -> Qwen3ForCausalLM:
+    config = Qwen3Config(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        # Qwen3 sets head_dim apart from the hidden size. Here the attention
+        # width (4 x 32 = 128) differs from the hidden size (64), as it does
+        # in Qwen3.5-4B (16 x 256 vs 2560). The class default would be 128.
+        head_dim=32,
+        vocab_size=512,
+        dtype="float32",
+    )
+    # Seed only inside a forked random state, so the weights are always the
+    # same and the test's own random numbers are left untouched.
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(TEST_SEED)
+        model = Qwen3ForCausalLM(config)
+    return model.to(torch.float32).eval()
+
+
+@pytest.fixture
+def make_tiny_model() -> Callable[[], Qwen3ForCausalLM]:
+    """A function that builds a fresh tiny model, identical on every call."""
+    return _build_tiny_model
+
+
+@pytest.fixture
+def tiny_model(make_tiny_model: Callable[[], Qwen3ForCausalLM]) -> Qwen3ForCausalLM:
+    """A 2-layer Qwen3-style model with seeded random weights, float32, eval mode."""
+    return make_tiny_model()
