@@ -2,6 +2,7 @@
 
 import copy
 import doctest
+from collections.abc import Callable
 
 import pytest
 import torch
@@ -11,6 +12,8 @@ from transformers import (
     Qwen3_5ForConditionalGeneration,
     Qwen3Config,
     Qwen3ForCausalLM,
+    Qwen3MoeConfig,
+    Qwen3MoeForCausalLM,
 )
 
 from pushlab.models import discovery
@@ -52,8 +55,26 @@ def test_model_info_matches_the_tiny_configuration(
     assert model_info(tiny_model) == ModelInfo(layers=2, hidden_size=64, mlp_size=128)
 
 
-def _real_architecture(name: str) -> nn.Module:
-    """Build a registered model's real class tree on the meta device (no weights)."""
+def _qwen3_5(sizes: dict[str, int]) -> nn.Module:
+    return Qwen3_5ForConditionalGeneration(Qwen3_5Config(text_config=sizes))
+
+
+def _qwen3(sizes: dict[str, int]) -> nn.Module:
+    return Qwen3ForCausalLM(
+        Qwen3Config(
+            **sizes, num_attention_heads=32, num_key_value_heads=8, head_dim=128
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "build"), [("qwen3.5-4b", _qwen3_5), ("qwen3-8b", _qwen3)]
+)
+def test_discovery_on_real_class_trees(
+    name: str, build: Callable[[dict[str, int]], nn.Module]
+) -> None:
+    # The real classes at full size on the meta device (no weights). Qwen3.5's
+    # tree is the vision-language wrapper, with a 27-block vision tower.
     spec = REGISTRY[name]
     sizes = {
         "num_hidden_layers": spec.layers,
@@ -61,19 +82,7 @@ def _real_architecture(name: str) -> nn.Module:
         "intermediate_size": spec.mlp_size,
     }
     with torch.device("meta"):
-        if spec.kind == "vision_language":
-            return Qwen3_5ForConditionalGeneration(Qwen3_5Config(text_config=sizes))
-        return Qwen3ForCausalLM(
-            Qwen3Config(
-                **sizes, num_attention_heads=32, num_key_value_heads=8, head_dim=128
-            )
-        )
-
-
-@pytest.mark.parametrize("name", ["qwen3.5-4b", "qwen3-8b"])
-def test_real_architectures_match_the_registry(name: str) -> None:
-    spec = REGISTRY[name]
-    model = _real_architecture(name)
+        model = build(sizes)
     assert model_info(model) == ModelInfo(
         layers=spec.layers, hidden_size=spec.hidden_size, mlp_size=spec.mlp_size
     )
@@ -84,13 +93,56 @@ def test_two_models_in_one_container_are_refused(
     tiny_model: Qwen3ForCausalLM,
 ) -> None:
     both = nn.ModuleList([tiny_model, copy.deepcopy(tiny_model)])
-    with pytest.raises(ValueError, match="layer"):
+    with pytest.raises(ValueError, match="numbered from 0"):
         find_mlp_modules(both)
+
+
+def test_layer_numbers_must_start_at_zero_without_gaps(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    first, second = (layer.mlp for layer in tiny_model.model.layers)
+    with pytest.raises(ValueError, match="numbered from 0"):
+        find_mlp_modules(nn.ModuleDict({"1": first, "2": second}))
+
+
+def test_an_mlp_without_a_layer_number_is_refused(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    with pytest.raises(ValueError, match="no layer number"):
+        find_mlp_modules(tiny_model.model.layers[0].mlp)
+
+
+def test_mixture_of_experts_is_refused() -> None:
+    # Its experts' down_proj weights are one fused tensor, not a module.
+    config = Qwen3MoeConfig(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        num_experts=4,
+        num_experts_per_tok=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        vocab_size=512,
+    )
+    with torch.device("meta"):
+        model = Qwen3MoeForCausalLM(config)
+    with pytest.raises(ValueError, match="mixture-of-experts"):
+        find_mlp_modules(model)
 
 
 def test_model_info_refuses_a_model_without_mlps() -> None:
     with pytest.raises(ValueError, match="down_proj"):
         model_info(nn.Linear(4, 4))
+
+
+def test_model_info_refuses_mlp_sizes_that_differ_by_layer(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    tiny_model.model.layers[1].mlp.down_proj = nn.Linear(96, 64, bias=False)
+    with pytest.raises(ValueError, match="differ"):
+        model_info(tiny_model)
 
 
 def test_docstring_examples_run() -> None:

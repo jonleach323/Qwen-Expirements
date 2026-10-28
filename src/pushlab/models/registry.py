@@ -29,7 +29,8 @@ class ModelSpec:
     kind: Kind
 
 
-# TODO(prompt 8): pin each revision to a commit hash instead of "main".
+# TODO(prompt 8): pin each Hugging Face model's revision to a commit hash
+# instead of "main". The tiny test model has nothing to pin.
 _SPECS = [
     ModelSpec(
         name="qwen3.5-4b",

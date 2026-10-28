@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import torch
 from torch import nn
 
 
@@ -18,12 +19,17 @@ def find_mlp_modules(model: nn.Module) -> list[tuple[int, nn.Module]]:
     """Return (layer index, MLP module) for every module with a down_proj.
 
     The whole module tree is searched, so a language model nested inside a
-    wrapper (as in Qwen3.5's vision-language packaging) is found the same way
-    as a plain one. Each MLP's layer index is the last number in its module
-    name, for example 14 in "model.layers.14.mlp", and the result is sorted
-    by it. The indices must run 0, 1, 2, ... with one MLP each, so dense
-    models only: two models in one container, or a mixture-of-experts layer
-    with several down_proj modules, raise ValueError.
+    wrapper is found the same way as a plain one, as long as nothing else in
+    the wrapper has a down_proj. That holds for Qwen3.5, whose vision tower
+    uses other names. Each MLP's layer index is the last number in its
+    module name, for example 14 in "model.layers.14.mlp", and the result is
+    sorted by it.
+
+    Anything that is not exactly one MLP per layer, numbered from 0, raises
+    ValueError instead of returning a wrong answer. That covers two models
+    in one container, a vision tower that also has down_proj modules (as in
+    Gemma 4 or Qwen2.5-VL), and mixture-of-experts models, whose experts
+    keep their down_proj weights in a single tensor. Dense models only.
 
     Example:
         >>> from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -41,7 +47,13 @@ def find_mlp_modules(model: nn.Module) -> list[tuple[int, nn.Module]]:
     """
     found = []
     for name, module in model.named_modules():
-        if not isinstance(getattr(module, "down_proj", None), nn.Module):
+        down_proj = getattr(module, "down_proj", None)
+        if isinstance(down_proj, torch.Tensor):
+            raise ValueError(
+                f"{name!r} holds fused expert weights; "
+                "mixture-of-experts models are not supported"
+            )
+        if not isinstance(down_proj, nn.Module):
             continue
         numbers = [int(part) for part in name.split(".") if part.isdigit()]
         if not numbers:

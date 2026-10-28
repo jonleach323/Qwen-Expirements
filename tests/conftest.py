@@ -10,8 +10,8 @@ import pytest
 import torch
 
 # Tests never download from Hugging Face; an accidental download fails fast.
-# Set before transformers is imported, because it reads this once.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
+# Set before transformers is imported: huggingface_hub reads it once, then.
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 from transformers import Qwen3Config, Qwen3ForCausalLM  # noqa: E402
 
@@ -77,8 +77,12 @@ def _build_tiny_model() -> Qwen3ForCausalLM:
         intermediate_size=128,
         num_attention_heads=4,
         num_key_value_heads=2,
-        head_dim=16,  # hidden size / heads, as in real Qwen3 (default is 128)
+        # Qwen3 sets head_dim apart from the hidden size. Here the attention
+        # width (4 x 32 = 128) differs from the hidden size (64), as it does
+        # in Qwen3.5-4B (16 x 256 vs 2560). The class default would be 128.
+        head_dim=32,
         vocab_size=512,
+        dtype="float32",
     )
     # Seed only inside a forked random state, so the weights are always the
     # same and the test's own random numbers are left untouched.
