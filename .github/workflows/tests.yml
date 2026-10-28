@@ -12,17 +12,22 @@ permissions:
   contents: read
 
 # A newer push to the same branch or pull request cancels the older run,
-# which saves Actions minutes.
+# which saves Actions minutes. Runs on main are never cancelled, so every
+# merge gets a full result.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   tests:
     # Branch protection requires this check by name; see docs/runbooks/github.md.
     name: Lint and test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # A run normally takes under a minute; this enforces the 5-minute limit.
+    timeout-minutes: 5
+    env:
+      # Every uv command in this job fails instead of changing uv.lock.
+      UV_LOCKED: "1"
     steps:
       # Actions are pinned to exact commits; the comment gives the version.
       - name: Check out the code
@@ -36,9 +41,14 @@ jobs:
           # The uv version that Claude Code cloud sessions use.
           version: "0.11.32"
           enable-cache: true
+          # Downloading the packages is faster than restoring a 290 MB cache,
+          # so keep only what is slow to rebuild (Astral's advice for
+          # GitHub-hosted runners).
+          prune-cache: true
 
-      # --locked stops with an error instead of changing uv.lock. The default
-      # groups give the CPU-only torch build and the dev tools.
+      # --locked (also set above for every step) stops with an error instead
+      # of changing uv.lock. The default groups give the CPU-only torch
+      # build and the dev tools.
       - name: Install the CPU environment from uv.lock
         run: uv sync --locked
 
