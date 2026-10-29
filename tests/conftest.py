@@ -1,5 +1,6 @@
 """Shared test setup: seeds, GPU-test skipping, and the tiny test models."""
 
+import importlib
 import json
 import os
 import random
@@ -217,8 +218,34 @@ def _build_tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
     return model.to(torch.float32).eval()
 
 
+# The functions Qwen3.5's linear-attention layers call. transformers points
+# each at a fast GPU kernel when causal-conv1d or flash-linear-attention is
+# installed, as on the pod, and those kernels refuse CPU tensors.
+_QWEN3_5_KERNEL_FUNCTIONS = (
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
+    "torch_chunk_gated_delta_rule",
+    "torch_recurrent_gated_delta_rule",
+)
+
+
 @pytest.fixture
-def tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
+def qwen3_5_on_pytorch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run Qwen3.5's linear-attention layers with transformers' PyTorch code.
+
+    Then the tiny Qwen3.5 models run on the CPU even where the GPU kernels are
+    installed, so the unit tests pass on the pod too.
+    """
+    module = importlib.import_module("transformers.models.qwen3_5.modeling_qwen3_5")
+    for name in _QWEN3_5_KERNEL_FUNCTIONS:
+        pytorch_version = getattr(getattr(module, name), "__wrapped__", None)
+        if pytorch_version is None:
+            pytest.skip(f"transformers' {name} no longer exposes its PyTorch version")
+        monkeypatch.setattr(module, name, pytorch_version)
+
+
+@pytest.fixture
+def tiny_vl_model(qwen3_5_on_pytorch: None) -> Qwen3_5ForConditionalGeneration:
     """A 4-layer Qwen3.5-style model in its vision-language wrapper, float32, eval."""
     return _build_tiny_vl_model()
 
@@ -245,7 +272,7 @@ def tiny_models_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def tiny_downloads(
-    monkeypatch: pytest.MonkeyPatch, tiny_models_dir: Path
+    monkeypatch: pytest.MonkeyPatch, tiny_models_dir: Path, qwen3_5_on_pytorch: None
 ) -> dict[str, ModelSpec]:
     """Register tiny-vl and tiny-lm, and point PUSHLAB_MODELS_DIR at them.
 

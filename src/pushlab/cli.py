@@ -8,7 +8,6 @@ experiments/p0/s0_baseline.yaml, names the experiment, seed and prompt.
 
 import argparse
 import hashlib
-import re
 import sys
 import time
 from collections.abc import Sequence
@@ -21,7 +20,9 @@ import yaml
 from pushlab import PROJECT_ROOT
 from pushlab.models.registry import REGISTRY
 from pushlab.store.records import (
+    EXPERIMENT_NAME,
     MANIFEST_FILE,
+    MAX_SEED,
     RUNS_FILE,
     RunRecord,
     make_run_id,
@@ -31,18 +32,19 @@ from pushlab.store.records import (
 
 BASELINE_EXPERIMENT = PROJECT_ROOT / "experiments" / "p0" / "s0_baseline.yaml"
 
-# Experiment names start every run ID, so they stay simple.
-_EXPERIMENT_NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
-
 
 @dataclass(frozen=True)
 class BaselineExperiment:
-    """The baseline's settings from its experiment file."""
+    """The baseline's settings from its experiment file.
+
+    sha256 is the hash of the exact bytes the settings were read from.
+    """
 
     experiment: str
     seed: int
     prompt_id: str
     prompt: str
+    sha256: str
 
 
 def read_baseline_experiment(path: Path) -> BaselineExperiment:
@@ -52,26 +54,30 @@ def read_baseline_experiment(path: Path) -> BaselineExperiment:
         >>> read_baseline_experiment(BASELINE_EXPERIMENT).experiment
         's0-baseline'
     """
+    content = path.read_bytes()
     try:
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(content)
     except yaml.YAMLError as error:
         raise ValueError(f"not valid YAML: {error}") from error
     if not isinstance(data, dict):
         raise ValueError("expected the keys experiment, seed, prompt_id and prompt")
     name = data.get("experiment")
-    if not isinstance(name, str) or not _EXPERIMENT_NAME.fullmatch(name):
+    if not isinstance(name, str) or not EXPERIMENT_NAME.fullmatch(name):
         raise ValueError(
             "experiment must be lowercase letters and digits joined by hyphens, "
             f"such as s0-baseline, not {name!r}"
         )
     seed = data.get("seed")
-    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
-        raise ValueError(f"seed must be a whole number, 0 or more, not {seed!r}")
+    if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed <= MAX_SEED:
+        raise ValueError(
+            f"seed must be a whole number from 0 to {MAX_SEED}, not {seed!r}"
+        )
     for key in ("prompt_id", "prompt"):
         value = data.get(key)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} must be non-empty text, not {value!r}")
-    return BaselineExperiment(name, seed, data["prompt_id"], data["prompt"])
+    sha256 = hashlib.sha256(content).hexdigest()
+    return BaselineExperiment(name, seed, data["prompt_id"], data["prompt"], sha256)
 
 
 def custom_prompt_id(prompt: str) -> str:
@@ -152,6 +158,19 @@ def _refuse(message: str) -> int:
     return 1
 
 
+def _file_in_the_way(out: Path) -> Path | None:
+    """The file, if any, at out or above it that stops out being a folder.
+
+    Example:
+        >>> _file_in_the_way(Path("/no/such/folder")) is None
+        True
+    """
+    for path in (out, *out.parents):
+        if path.exists():
+            return None if path.is_dir() else path
+    return None
+
+
 def run_baseline(
     model_name: str,
     out: Path,
@@ -168,6 +187,8 @@ def run_baseline(
         >>> run_baseline("qwen3.5-4b", Path("outputs/s0"))  # doctest: +SKIP
         0
     """
+    if (in_the_way := _file_in_the_way(out)) is not None:
+        return _refuse(f"--out must be a folder, but {in_the_way} is a file")
     already_there = f"{out} already holds a run; pass --overwrite to replace it"
     existing = [out / name for name in (RUNS_FILE, MANIFEST_FILE)]
     if not overwrite and any(path.exists() for path in existing):
@@ -187,10 +208,13 @@ def run_baseline(
     from pushlab.engine.generate import greedy_generate
     from pushlab.models.chat import chat_prompt_ids, stop_token_ids
     from pushlab.models.load import default_device, default_dtype, load_model
-    from pushlab.store.environment import environment_info, file_sha256
+    from pushlab.store.environment import environment_info
 
     started_at = _now()
     device = default_device()
+    # Read now, so the manifest describes the code and files that start the
+    # run even if the checkout changes while it runs.
+    environment = environment_info(device)
     dtype = default_dtype(device)
     dtype_name = str(dtype).removeprefix("torch.")
     where = "GPU" if device == "cuda" else "CPU"
@@ -228,10 +252,10 @@ def run_baseline(
         output_tokens=tokens,
         status="ok",
     )
-    info = environment_info(device) | {
+    info = environment | {
         "experiment": experiment.experiment,
         "experiment_file": BASELINE_EXPERIMENT.relative_to(PROJECT_ROOT).as_posix(),
-        "experiment_sha256": file_sha256(BASELINE_EXPERIMENT),
+        "experiment_sha256": experiment.sha256,
         "model": model_name,
         "model_id": loaded.spec.hf_id,
         "model_revision": loaded.revision,
@@ -247,8 +271,10 @@ def run_baseline(
     try:
         runs_path = write_runs([record], out, overwrite=overwrite)
         manifest_path = write_manifest(out, info, overwrite=overwrite)
-    except FileExistsError:  # written by something else while this one ran
-        return _refuse(already_there)
+    except FileExistsError:
+        if any(path.exists() for path in existing):  # written meanwhile
+            return _refuse(already_there)
+        raise
     print(f"Saved run {record.run_id} and its manifest:")
     print(f"  {runs_path}\n  {manifest_path}")
     return 0

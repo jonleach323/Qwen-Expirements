@@ -190,6 +190,15 @@ def test_new_shells_keep_the_cuda_build(tmp_path: Path) -> None:
     assert bashrc.count(f"source {pod_env}") == 1
 
 
+def test_compiled_gpu_kernels_stay_on_the_volume(tmp_path: Path) -> None:
+    # Triton compiles flash-linear-attention's kernels on first use; on the
+    # container disk they would be lost, and compiled again, at every stop.
+    _run(tmp_path)
+    pod_env = (tmp_path / "workspace" / "pushlab.env").read_text()
+    cache = tmp_path / "workspace" / ".cache" / "triton"
+    assert f'export TRITON_CACHE_DIR="{cache}"' in pod_env
+
+
 @pytest.mark.parametrize("pod_value", [False, "0", "", "10"])
 def test_warns_when_the_pod_does_not_set_uv_no_sync_to_1(
     tmp_path: Path, pod_value: bool | str

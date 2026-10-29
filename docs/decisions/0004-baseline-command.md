@@ -39,27 +39,38 @@ manifest. Its parts:
   block. The text is then tokenized without adding special tokens.
 - **Decoding** (`pushlab.engine.generate.greedy_generate`). pushlab's own
   loop takes the most likely token at each step and reuses the model's
-  cache. It stops after `--max-new-tokens` tokens (200 by default) or after
-  `<|im_end|>` or the config's end token, which is kept as the last token.
-  `output_text` is the reply decoded without special tokens.
+  cache. Like `generate()`, it scores only the newest position at each step
+  (`logits_to_keep=1`), so a long prompt costs no memory for scores it
+  never uses. It stops after `--max-new-tokens` tokens (200 by default) or
+  after `<|im_end|>` or the config's end token, which is kept as the last
+  token. `output_text` is the reply decoded without special tokens.
 - **runs.parquet** (`pushlab.store.records`). The columns are exactly the
   plan's fields, in its order. `schedule` and `decoding` are JSON text with
   sorted keys, which DuckDB reads with `->>`. `output_tokens` is a list of
   32-bit integers and `seed` a 64-bit one; nothing may be missing. A run ID
-  is `<experiment>-<counter>`, counting from `000001`. `batch_key` is
-  `b<batch>:<row>`, so the baseline's is `b000001:0`. Malformed records are
+  is `<experiment>-<counter>`, counting from `000001`, in the one spelling
+  `make_run_id` gives. Experiment names are lowercase letters and digits
+  joined by hyphens. `batch_key` is `b<batch>:<row>`, so the baseline's is
+  `b000001:0`. `decoding` must say the strategy, the token limit, whether
+  thinking is on (true or false) and the data type. Malformed records are
   refused before anything is written.
 - **manifest.json** has the code commit, the SHA-256 of `uv.lock`, the
   model's ID and commit, the GPU, the CUDA, torch and transformers
   versions, the start and end times and the run count. It also records
   whether the code had uncommitted changes, the driver and Python versions,
-  the experiment file and its hash, the device, the data type, the prompt
-  and the runs by status. A field that does not apply, such as the GPU on a
-  CPU, is `null`.
+  the versions of other libraries that can change results (among them the
+  GPU kernels for Qwen3.5's linear-attention layers), the experiment file
+  and the hash of the exact bytes read from it, the device, the data type,
+  the prompt and the runs by status. The code and library details are read
+  as the run starts, so a `git pull` during the run cannot change them.
+  Of the required fields, only those that may not apply can be `null`: the
+  code commit outside a git checkout, the lockfile hash without a
+  `uv.lock`, and the GPU and CUDA on a CPU. Times carry a time zone.
 - **Files are replaced only when asked.** If the folder already has
   `runs.parquet` or `manifest.json`, the command stops before loading the
-  model unless given `--overwrite`. Each file is written to a temporary
-  name and then renamed, so a failed write leaves no half file.
+  model unless given `--overwrite`, and an `--out` that is a file is
+  refused. Each file is written to a temporary name and then renamed, so a
+  failed write leaves no half file; both get the usual file permissions.
 - **Settings live in the experiment file.** `experiments/p0/s0_baseline.yaml`
   names the experiment, the seed and the default prompt. A prompt given
   with `--prompt` gets the ID `custom-` plus the first 12 characters of its
@@ -95,3 +106,14 @@ manifest. Its parts:
   prompt 8 pins them.
 - The command loads torch only when it runs, so `pushlab --help` answers
   at once.
+- The baseline is one bounded reply, started by hand outside the plan's
+  runner, so it has no `--dry-run` and its experiment file no
+  `max_gpu_hours`. Both arrive with `pushlab run` in S2.
+- Two more GPU smoke tests check that causal-conv1d and
+  flash-linear-attention import, because transformers falls back to slow
+  PyTorch code without them and only logs a warning. Step 7 now ends with
+  `5 passed`. The pod keeps Triton's compiled kernels on the volume
+  (`TRITON_CACHE_DIR`), so a restart does not compile them again.
+- On the pod, those kernels refuse the CPU tensors of the unit tests' tiny
+  Qwen3.5 model. The tests' `qwen3_5_on_pytorch` fixture switches the model
+  to transformers' PyTorch code, so `pytest tests/unit` passes there too.

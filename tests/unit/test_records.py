@@ -3,6 +3,7 @@
 import dataclasses
 import doctest
 import json
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +109,7 @@ def test_the_file_has_the_plans_columns_and_duckdb_reads_it(tmp_path: Path) -> N
     path = write_runs([_record()], tmp_path)
     schema = pq.read_schema(path)
     assert schema.names == PLAN_FIELDS
+    assert not any(field.nullable for field in schema)
     assert schema.field("seed").type == pa.int64()
     assert schema.field("output_tokens").type == pa.list_(pa.int32())
     query = (
@@ -130,16 +132,28 @@ def test_make_run_id_counts_from_one_with_six_digits() -> None:
         ({"run_id": "s0-baseline"}, "run_id"),
         ({"run_id": "other-000001"}, "run_id"),
         ({"run_id": "s0-baseline-00a001"}, "run_id"),
+        ({"run_id": "s0-baseline-2"}, "run_id"),
+        ({"run_id": "s0-baseline-000000"}, "run_id"),
+        ({"run_id": "s0-baseline-\u0661\u0662"}, "run_id"),
         ({"experiment": ""}, "experiment"),
+        ({"experiment": "S0 baseline", "run_id": "S0 baseline-000002"}, "experiment"),
         ({"model": ""}, "model"),
         ({"prompt_id": 7}, "prompt_id"),
         ({"schedule": {}}, "schedule"),
+        ({"schedule": [1]}, "schedule"),
         ({"schedule": [{"dose": float("nan")}]}, "schedule"),
+        ({"schedule": [{"window": (1, 5)}]}, "schedule changes"),
         ({"decoding": {"strategy": "greedy"}}, "decoding"),
-        ({"decoding": DECODING | {"max_new_tokens": {1, 2}}}, "decoding"),
+        ({"decoding": DECODING | {"max_new_tokens": {1, 2}}}, "max_new_tokens"),
+        ({"decoding": DECODING | {"max_new_tokens": 0}}, "max_new_tokens"),
+        ({"decoding": DECODING | {"thinking": "no"}}, "thinking"),
+        ({"decoding": DECODING | {"strategy": ""}}, "strategy"),
+        ({"decoding": DECODING | {"dtype": 16}}, "dtype"),
+        ({"decoding": DECODING | {"top_p": float("inf")}}, "decoding"),
         ({"seed": 1.5}, "seed"),
         ({"seed": True}, "seed"),
         ({"seed": -1}, "seed"),
+        ({"seed": 2**63}, "seed"),
         ({"batch_key": ""}, "batch_key"),
         ({"control_of": None}, "control_of"),
         ({"output_text": None}, "output_text"),
@@ -202,6 +216,28 @@ def test_a_failed_write_leaves_no_file_behind(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_a_failed_manifest_write_leaves_no_file_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_write_text(self: Path, text: str, *args: Any, **kwargs: Any) -> int:
+        Path.write_bytes(self, text[:10].encode())
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", broken_write_text)
+    with pytest.raises(OSError, match="disk full"):
+        write_manifest(tmp_path, _info())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_both_files_get_the_usual_permissions(tmp_path: Path) -> None:
+    # Like any other new file, so other users and tools can read them.
+    reference = tmp_path / "reference.txt"
+    reference.write_text("written the usual way")
+    usual = stat.S_IMODE(reference.stat().st_mode)
+    for path in (write_runs([_record()], tmp_path), write_manifest(tmp_path, _info())):
+        assert stat.S_IMODE(path.stat().st_mode) == usual
+
+
 def test_reading_refuses_a_file_with_other_columns(tmp_path: Path) -> None:
     pq.write_table(pa.table({"run_id": ["x-1"]}), tmp_path / "runs.parquet")
     with pytest.raises(ValueError, match="columns"):
@@ -253,7 +289,14 @@ def test_a_manifest_missing_a_field_is_refused(tmp_path: Path, field: str) -> No
         ({"run_count": -1}, "run_count"),
         ({"run_count": True}, "run_count"),
         ({"run_count": "1"}, "run_count"),
+        ({"model_id": None}, "model_id"),
+        ({"model_revision": ""}, "model_revision"),
+        ({"torch": None}, "torch"),
+        ({"transformers": 5.21}, "transformers"),
         ({"started_at": 1730196000}, "started_at"),
+        ({"started_at": "2026-10-29"}, "started_at"),
+        ({"started_at": "2026-10-29T10:00:00"}, "started_at"),
+        ({"finished_at": "2026-10-29T09:59:59+00:00"}, "before"),
         ({"extra": float("nan")}, "JSON"),
         ({"extra": {1, 2}}, "JSON"),
     ],

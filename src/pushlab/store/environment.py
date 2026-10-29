@@ -1,8 +1,10 @@
 """What a manifest records about the code and the machine a run used."""
 
 import hashlib
+import importlib.metadata
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,23 @@ import torch
 import transformers
 
 from pushlab import PROJECT_ROOT
+
+# Installed libraries whose versions can change a run's results: the GPU
+# kernels that Qwen3.5's linear-attention layers use when they are installed
+# (transformers quietly falls back to slower PyTorch code without them), and
+# the libraries around the model.
+PACKAGES = (
+    "torch",
+    "transformers",
+    "tokenizers",
+    "accelerate",
+    "safetensors",
+    "numpy",
+    "flash-linear-attention",
+    "fla-core",
+    "causal-conv1d",
+    "triton",
+)
 
 
 def _run(command: list[str], folder: Path | None = None) -> str | None:
@@ -83,6 +102,22 @@ def driver_version() -> str | None:
     return output.splitlines()[0].strip() if output else None
 
 
+def package_versions(names: Sequence[str] = PACKAGES) -> dict[str, str | None]:
+    """The installed version of each named package, or None if it is missing.
+
+    Example:
+        >>> package_versions(["no-such-package"])
+        {'no-such-package': None}
+    """
+    versions: dict[str, str | None] = {}
+    for name in names:
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
 def environment_info(
     device: torch.device | str, root: Path = PROJECT_ROOT
 ) -> dict[str, Any]:
@@ -91,7 +126,7 @@ def environment_info(
     Example:
         >>> sorted(environment_info("cpu"))  # doctest: +NORMALIZE_WHITESPACE
         ['code_commit', 'code_dirty', 'cuda', 'driver', 'gpu', 'lockfile_sha256',
-         'python', 'torch', 'transformers']
+         'packages', 'python', 'torch', 'transformers']
     """
     return {
         "code_commit": code_commit(root),
@@ -103,4 +138,5 @@ def environment_info(
         "torch": torch.__version__,
         "transformers": transformers.__version__,
         "python": sys.version.split()[0],
+        "packages": package_versions(),
     }

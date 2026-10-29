@@ -58,6 +58,23 @@ def test_works_through_qwen3_5s_wrapper_and_linear_attention(
     assert tokens == _most_likely_next_tokens(tiny_vl_model, PROMPT, tokens)
 
 
+@pytest.mark.parametrize("model_fixture", ["tiny_model", "tiny_vl_model"])
+def test_scores_only_the_newest_position(
+    model_fixture: str, request: pytest.FixtureRequest
+) -> None:
+    # Scores for every prompt position would cost memory and are never used.
+    model = request.getfixturevalue(model_fixture)
+    shapes = []
+    hook = model.lm_head.register_forward_hook(
+        lambda module, inputs, output: shapes.append(tuple(output.shape[:2]))
+    )
+    try:
+        greedy_generate(model, PROMPT, 3)
+    finally:
+        hook.remove()
+    assert shapes == [(1, 1)] * 3
+
+
 def test_stops_after_a_stop_token_and_keeps_it(tiny_model: Qwen3ForCausalLM) -> None:
     tokens = greedy_generate(tiny_model, PROMPT, 12)
     stop = tokens[4]

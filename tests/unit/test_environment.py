@@ -2,6 +2,7 @@
 
 import doctest
 import hashlib
+import importlib.metadata
 import re
 import subprocess
 import sys
@@ -14,12 +15,14 @@ import transformers
 from pushlab import PROJECT_ROOT
 from pushlab.store import environment
 from pushlab.store.environment import (
+    PACKAGES,
     code_commit,
     code_is_dirty,
     driver_version,
     environment_info,
     file_sha256,
     gpu_name,
+    package_versions,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +89,33 @@ def test_no_nvidia_smi_means_no_driver_version(monkeypatch: pytest.MonkeyPatch) 
     assert driver_version() is None
 
 
+def test_the_driver_version_comes_from_nvidia_smi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fake nvidia-smi for a pod with two GPUs: one line per GPU.
+    fake = tmp_path / "nvidia-smi"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$*" = "--query-gpu=driver_version --format=csv,noheader" ]; then\n'
+        "  printf '580.95.05\\n580.95.05\\n'\n"
+        "else\n"
+        "  echo unexpected >&2; exit 1\n"
+        "fi\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert driver_version() == "580.95.05"
+
+
+def test_package_versions_are_the_installed_ones() -> None:
+    assert package_versions(["torch", "no-such-package"]) == {
+        "torch": importlib.metadata.version("torch"),
+        "no-such-package": None,
+    }
+    # The GPU kernels for Qwen3.5's linear-attention layers are among them.
+    assert {"flash-linear-attention", "causal-conv1d", "triton"} <= set(PACKAGES)
+
+
 def test_environment_info_describes_this_machine() -> None:
     info = environment_info("cpu")
     assert info == {
@@ -98,6 +128,7 @@ def test_environment_info_describes_this_machine() -> None:
         "torch": torch.__version__,
         "transformers": transformers.__version__,
         "python": sys.version.split()[0],
+        "packages": package_versions(),
     }
 
 

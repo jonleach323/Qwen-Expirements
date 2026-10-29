@@ -114,8 +114,9 @@ def load_model(
     if not is_downloaded(spec, folder):
         raise FileNotFoundError(
             f"{name} ({spec.hf_id} at {spec.revision}) is not downloaded into "
-            f"{folder}. On the GPU pod, run `bash scripts/setup_pod.sh` "
-            "(docs/runbooks/pod.md); elsewhere, set PUSHLAB_MODELS_DIR to the "
+            f"{folder}. On the GPU pod, add {name} to configs/models.yaml if it "
+            "is not listed there, then run `bash scripts/setup_pod.sh` "
+            "(docs/runbooks/pod.md). Elsewhere, set PUSHLAB_MODELS_DIR to the "
             "folder that holds the models."
         )
     revision = json.loads((folder / MARKER).read_text()).get("commit", spec.revision)

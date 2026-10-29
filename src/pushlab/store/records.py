@@ -9,7 +9,8 @@ anything is written, and an existing file is only replaced when asked.
 import json
 import os
 import re
-import tempfile
+import uuid
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -24,11 +25,19 @@ MANIFEST_FILE = "manifest.json"
 
 STATUSES = ("ok", "failed", "collapsed")
 
+# Experiment names start every run ID, so they stay simple: lowercase letters
+# and digits joined by hyphens, such as s0-baseline.
+EXPERIMENT_NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+# The largest seed the runs table can hold (a signed 64-bit integer).
+MAX_SEED = 2**63 - 1
+
 # Every run's decoding settings include these. The data type is among them
 # because the plan records it with every run.
 DECODING_KEYS = ("strategy", "max_new_tokens", "thinking", "dtype")
 
-# Every manifest has these fields; it may have more.
+# Every manifest has these fields; it may have more. Only the ones that may
+# not apply (no git checkout, no uv.lock, no GPU) may be None.
 REQUIRED_MANIFEST_FIELDS = (
     "code_commit",
     "lockfile_sha256",
@@ -140,39 +149,66 @@ def _to_json(name: str, value: object) -> str:
     return text
 
 
+def _is_text(value: object) -> bool:
+    return isinstance(value, str) and value != ""
+
+
+def _check_decoding(decoding: object) -> None:
+    if not isinstance(decoding, dict):
+        raise ValueError(f"decoding must be a dict, not {decoding!r}")
+    if missing := [key for key in DECODING_KEYS if key not in decoding]:
+        raise ValueError(f"decoding lacks {', '.join(missing)}")
+    for key in ("strategy", "dtype"):
+        if not _is_text(decoding[key]):
+            raise ValueError(f"decoding's {key} must be non-empty text")
+    count = decoding["max_new_tokens"]
+    if not _is_int(count) or count < 1:
+        raise ValueError(f"decoding's max_new_tokens must be 1 or more, not {count!r}")
+    if not isinstance(decoding["thinking"], bool):
+        raise ValueError("decoding's thinking must be True or False")
+
+
 def _check(record: RunRecord) -> dict[str, Any]:
     """Raise ValueError unless record is well formed; return it as a row."""
     for name in ("run_id", "experiment", "model", "prompt_id", "batch_key"):
         value = getattr(record, name)
-        if not isinstance(value, str) or not value:
+        if not _is_text(value):
             raise ValueError(f"{name} must be non-empty text, not {value!r}")
     for name in ("control_of", "output_text", "status"):
         value = getattr(record, name)
         if not isinstance(value, str):
             raise ValueError(f"{name} must be text, not {value!r}")
-    if not re.fullmatch(re.escape(record.experiment) + r"-\d+", record.run_id):
+    if not EXPERIMENT_NAME.fullmatch(record.experiment):
         raise ValueError(
-            f"run_id {record.run_id!r} must be '{record.experiment}-<counter>'"
+            "experiment must be lowercase letters and digits joined by hyphens, "
+            f"such as s0-baseline, not {record.experiment!r}"
+        )
+    # The one spelling make_run_id gives, so one counter has one run ID.
+    counter = re.fullmatch(re.escape(record.experiment) + "-([0-9]+)", record.run_id)
+    if (
+        not counter
+        or int(counter[1]) < 1
+        or record.run_id != make_run_id(record.experiment, int(counter[1]))
+    ):
+        raise ValueError(
+            f"run_id {record.run_id!r} must be '{record.experiment}-' and a "
+            "counter from 000001, as make_run_id writes it"
         )
     if record.status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}, not {record.status!r}")
-    if not _is_int(record.seed) or not 0 <= record.seed < 2**63:
+    if not _is_int(record.seed) or not 0 <= record.seed <= MAX_SEED:
         raise ValueError(
-            f"seed must be a whole number from 0 to 2**63-1, not {record.seed!r}"
+            f"seed must be a whole number from 0 to {MAX_SEED}, not {record.seed!r}"
         )
     tokens = record.output_tokens
     if not isinstance(tokens, list) or not all(
         _is_int(token) and 0 <= token < 2**31 for token in tokens
     ):
         raise ValueError(f"output_tokens must be a list of token IDs, not {tokens!r}")
-    if not isinstance(record.schedule, list):
-        raise ValueError(
-            f"schedule must be a list of segments, not {record.schedule!r}"
-        )
-    if not isinstance(record.decoding, dict):
-        raise ValueError(f"decoding must be a dict, not {record.decoding!r}")
-    if missing := [key for key in DECODING_KEYS if key not in record.decoding]:
-        raise ValueError(f"decoding lacks {', '.join(missing)}")
+    schedule = record.schedule
+    if not isinstance(schedule, list) or not all(isinstance(s, dict) for s in schedule):
+        raise ValueError(f"schedule must be a list of segments, not {schedule!r}")
+    _check_decoding(record.decoding)
     row = asdict(record)
     row["schedule"] = _to_json("schedule", record.schedule)
     row["decoding"] = _to_json("decoding", record.decoding)
@@ -190,12 +226,11 @@ def _replace_atomically(path: Path, write: Callable[[Path], object]) -> None:
     """Write a temporary file next to path, then rename it to path.
 
     A reader sees the old file or the new one, never half of one, and a
-    failed write leaves nothing behind.
+    failed write leaves nothing behind. write creates the temporary file
+    itself, so it gets the usual permissions.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    os.close(handle)
-    temporary = Path(name)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         write(temporary)
         os.replace(temporary, path)
@@ -227,8 +262,8 @@ def write_runs(
             rows.append(_check(record))
         except ValueError as error:
             raise ValueError(f"records[{index}]: {error}") from None
-    run_ids = [row["run_id"] for row in rows]
-    if duplicates := sorted({i for i in run_ids if run_ids.count(i) > 1}):
+    counts = Counter(row["run_id"] for row in rows)
+    if duplicates := sorted(run_id for run_id, n in counts.items() if n > 1):
         raise ValueError(f"run_id {', '.join(duplicates)} appears more than once")
     path = Path(out_dir) / RUNS_FILE
     _refuse_existing(path, overwrite)
@@ -264,10 +299,12 @@ def write_manifest(
 ) -> Path:
     """Save info as out_dir/manifest.json; return its path.
 
-    info must have every field in REQUIRED_MANIFEST_FIELDS; one that does
-    not apply, such as the GPU on a CPU run, is None. Times are ISO 8601
-    text. Extra fields are kept. An existing manifest.json raises
-    FileExistsError unless overwrite is True.
+    info must have every field in REQUIRED_MANIFEST_FIELDS. The model ID and
+    revision and the torch and transformers versions are text; the code
+    commit, lockfile hash, GPU and CUDA may be None when they do not apply,
+    such as the GPU on a CPU run. Times are ISO 8601 text with a time zone,
+    and the run cannot finish before it starts. Extra fields are kept. An
+    existing manifest.json raises FileExistsError unless overwrite is True.
 
     Example:
         >>> write_manifest(Path("outputs/s0-baseline"), info)  # doctest: +SKIP
@@ -275,17 +312,25 @@ def write_manifest(
     """
     if missing := [name for name in REQUIRED_MANIFEST_FIELDS if name not in info]:
         raise ValueError(f"the manifest lacks {', '.join(missing)}")
+    for name in ("model_id", "model_revision", "torch", "transformers"):
+        if not _is_text(info[name]):
+            raise ValueError(f"{name} must be non-empty text, not {info[name]!r}")
     count = info["run_count"]
     if not _is_int(count) or count < 0:
         raise ValueError(f"run_count must be a number of runs, not {count!r}")
+    times = {}
     for name in ("started_at", "finished_at"):
         try:
-            datetime.fromisoformat(info[name])
+            times[name] = datetime.fromisoformat(info[name])
         except (TypeError, ValueError):
+            times[name] = None
+        if times[name] is None or times[name].tzinfo is None:
             raise ValueError(
-                f"{name} must be an ISO 8601 time, such as "
+                f"{name} must be an ISO 8601 time with a time zone, such as "
                 f"2026-10-29T10:00:00+00:00, not {info[name]!r}"
-            ) from None
+            )
+    if times["finished_at"] < times["started_at"]:
+        raise ValueError("finished_at is before started_at")
     try:
         text = json.dumps(dict(info), indent=2, sort_keys=True, allow_nan=False)
     except (TypeError, ValueError) as error:

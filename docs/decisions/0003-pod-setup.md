@@ -31,6 +31,7 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 | The Python 3.11 that uv installs | `/workspace/.local/share/uv/python` | kept |
 | Models | `/workspace/models/<registry name>` | kept |
 | Hugging Face's own files (`HF_HOME`) | `/workspace/.cache/huggingface` | kept |
+| GPU kernels Triton compiles for Qwen3.5 (`TRITON_CACHE_DIR`) | `/workspace/.cache/triton` | kept |
 | Setup logs | `/workspace/logs` | kept |
 | Settings for new shells | `/workspace/pushlab.env`, loaded from `~/.bashrc` | the file is kept; each run adds the `~/.bashrc` line again |
 | uv 0.11.32 and the Claude Code CLI | `~/.local/bin`, ahead of the image's `/bin/uv` on PATH | lost; each run reinstalls them in seconds |
@@ -116,8 +117,10 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 - On a pod deployed without the `UV_NO_SYNC` variable, notebooks are never
   protected, and terminals only if they were opened after the script ran
   since the pod started. The script's warning and the runbook point this out.
-- A warm start after a restart should take about a minute: reinstalling uv
-  and Claude Code, checking the environment and running the smoke tests.
+- A warm start after a restart reinstalls uv and Claude Code, checks the
+  environment and runs the smoke tests. Since decision 0004 these load
+  Qwen3.5-4B once to write a test reply, which is the slowest part; prompt 8
+  measures it against the 3-minute target.
 - To drop a model, remove it from `configs/models.yaml` and delete its
   folder under `/workspace/models`.
 - `configs/` is a new top-level folder for machine settings. Experiment

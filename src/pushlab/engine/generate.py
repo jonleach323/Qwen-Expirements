@@ -16,11 +16,13 @@ def greedy_generate(
     """Return the most likely next token, again and again, after input_ids.
 
     The first pass reads the whole prompt; each later pass feeds only the
-    newest token and reuses the model's cache of everything before it. It
-    stops after max_new_tokens tokens, or right after a token in
+    newest token and reuses the model's cache of everything before it. Each
+    pass scores only the newest position, as Hugging Face's generate() does,
+    so a long prompt does not need a score for every word at every position.
+    It stops after max_new_tokens tokens, or right after a token in
     stop_token_ids, which is kept as the last token. The loop is pushlab's
-    own rather than Hugging Face's generate(), so no setting from the model's
-    generation config can change it.
+    own rather than generate(), so no setting from the model's generation
+    config can change it.
 
     Example:
         >>> from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -43,7 +45,9 @@ def greedy_generate(
         raise ValueError(f"max_new_tokens must be at least 1, not {max_new_tokens}")
     device = next(model.parameters()).device
     output = model(
-        input_ids=torch.tensor([list(input_ids)], device=device), use_cache=True
+        input_ids=torch.tensor([list(input_ids)], device=device),
+        use_cache=True,
+        logits_to_keep=1,
     )
     tokens: list[int] = []
     while True:
@@ -55,4 +59,5 @@ def greedy_generate(
             input_ids=torch.tensor([[token]], device=device),
             past_key_values=output.past_key_values,
             use_cache=True,
+            logits_to_keep=1,
         )
