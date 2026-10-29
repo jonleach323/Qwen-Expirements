@@ -6,8 +6,10 @@ development plans in docs/ are the source of truth.
 Current sprint: S0 (Bootstrap).
 
 ## Commands
-- Install: uv sync
+- Install: uv sync (never on the GPU pod: it swaps in the CPU-only torch)
 - Prepare a cloud session (uv, Python, packages, versions): bash scripts/cloud_setup.sh
+- Prepare the GPU pod, or update it after uv.lock changes: bash scripts/setup_pod.sh
+  (--dry-run lists the steps; see docs/runbooks/pod.md)
 - Tests: uv run pytest -q tests/unit
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files

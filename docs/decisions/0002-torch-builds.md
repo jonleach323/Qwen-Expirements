@@ -90,9 +90,8 @@ same torch.
 - On the pod, plain `uv sync` or `uv run` would switch torch back to the CPU
   build, because the `cpu` group is on by default. Pod setup must always sync
   with `uv sync --no-group cpu --extra gpu`, then set `UV_NO_SYNC=1` so that
-  `uv run` uses the environment as installed. The pod setup script, a later
-  S0 task, should do both, and CLAUDE.md should then gain the pod install
-  command.
+  `uv run` uses the environment as installed. `scripts/setup_pod.sh` does
+  both (decision 0003), and CLAUDE.md lists it.
 - In a cloud session, any selection that installs the project with the `cpu`
   group off and without `gpu` silently downloads PyPI's CUDA torch stack
   (about 3 GB).

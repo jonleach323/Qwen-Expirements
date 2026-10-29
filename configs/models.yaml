@@ -1,0 +1,7 @@
+# The models scripts/setup_pod.sh downloads on the GPU pod, each into its own
+# folder under /workspace/models. Every name must be in the model registry
+# (src/pushlab/models/registry.py), which says where the model comes from and
+# which revision to fetch. Models that are already there are skipped, so adding
+# a name here and running the script again downloads only the new model.
+models:
+  - qwen3.5-4b

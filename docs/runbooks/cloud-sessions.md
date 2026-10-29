@@ -106,7 +106,7 @@ nothing: the first `uv run` in a session installs whatever is new.
      packages" or "Installed N packages", with no "Downloading torch" line.
      That means the session started ready.
    - The versions should include `torch 2.14.1+cpu`.
-   - The tests should end with a line like "58 passed, 1 skipped in 1.2s".
+   - The tests should end with a line like "94 passed, 3 skipped in 2.0s".
    - A warning about `UV_NATIVE_TLS` at the top of the test output is
      harmless.
 
@@ -125,7 +125,7 @@ nothing: the first `uv run` in a session installs whatever is new.
 - **"invalid peer certificate: UnknownIssuer".** The pasted script is an old
   copy. Paste the current version from `main`.
 - **"This machine has a GPU."** The script is for cloud sessions only. GPU
-  pods get their own setup script later in Sprint 0.
+  pods use `scripts/setup_pod.sh`; see `docs/runbooks/pod.md`.
 - **"The pushlab repository is not on this machine"**. The session was for
   another repository, so there was nothing to install. This shouldn't happen
   in a dedicated pushlab environment.

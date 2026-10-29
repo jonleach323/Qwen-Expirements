@@ -4,10 +4,11 @@
 /models/
 /logs/
 
-# Secrets
+# Secrets, such as a filled-in copy of scripts/pod.env.example
 .env
 .env.*
 !.env.example
+*.env
 
 # Virtual environments
 .venv/
