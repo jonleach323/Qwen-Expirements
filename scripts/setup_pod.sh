@@ -10,7 +10,7 @@
 # PUSHLAB_WORKSPACE replaces /workspace (the tests point it at a temporary folder).
 set -euo pipefail
 
-UV_VERSION="0.11.32" # the uv that CI and cloud sessions use
+UV_VERSION="0.11.32" # the uv that CI and cloud sessions use; pinned on the pod too
 MIN_DRIVER=580       # the CUDA 13.0 build of torch needs NVIDIA driver 580+
 FRESH_TARGET=1200    # seconds: ready in 20 minutes on a fresh pod,
 WARM_TARGET=180      # and in 3 minutes on a warm volume
@@ -48,6 +48,10 @@ DOWNLOAD=(uv run --no-sync python -m pushlab.models.download
 SMOKE=(uv run --no-sync pytest -q -m gpu -k smoke)
 LOG=""
 STEP=""
+# Runpod's images come with their own uv, so every shell has uv from the start.
+# A plain uv run swaps in the CPU-only torch unless UV_NO_SYNC=1 is set, and only
+# a pod environment variable sets it before this script runs (pod.md, step 3).
+POD_UV_NO_SYNC=${UV_NO_SYNC:-}
 
 # A volume where a run has finished before only needs checking, so it gets
 # the shorter target.
@@ -107,22 +111,30 @@ check_gpu() {
   local major=${first_driver%%.*}
   if [[ ! $major =~ ^[0-9]+$ ]] || ((major < MIN_DRIVER)); then
     fail "The NVIDIA driver is ${first_driver:-unknown}, but pushlab's CUDA 13.0 build of torch" \
-      "needs driver $MIN_DRIVER or newer. Deploy a new pod with CUDA 13.0 or newer" \
-      "selected in the GPU filter; see docs/runbooks/pod.md."
+      "needs driver $MIN_DRIVER or newer. Terminate this pod, then deploy a new one with" \
+      "CUDA 13.0 chosen in the template's CUDA version dropdown; see docs/runbooks/pod.md."
   fi
 }
 
+is_pinned_uv() { [[ $1 == "uv $UV_VERSION" || $1 == "uv $UV_VERSION "* ]]; }
+
+# Runpod's images ship their own uv, often another version, so check the
+# version rather than whether any uv exists.
 install_uv() {
-  if command -v uv >/dev/null 2>&1; then
-    note "found $(uv --version)"
+  local found
+  found=$(uv --version 2>/dev/null || true)
+  if is_pinned_uv "$found"; then
+    note "found $found"
     return
   fi
+  if [[ -n $found ]]; then note "found $found, not the pinned version"; fi
   note "installing uv $UV_VERSION into ~/.local/bin"
   # Our pushlab.env puts ~/.local/bin on PATH, so the installer leaves the
   # shell profiles alone.
   curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | env UV_NO_MODIFY_PATH=1 sh
-  command -v uv >/dev/null 2>&1 || fail "uv was installed but is not on PATH."
-  note "installed $(uv --version)"
+  found=$(uv --version 2>/dev/null || true)
+  is_pinned_uv "$found" || fail "uv $UV_VERSION was installed, but another uv comes first on PATH."
+  note "installed $found"
 }
 
 # The settings every shell on the pod needs. The file lives on the volume;
@@ -147,10 +159,18 @@ EOF
   note "new shells load $POD_ENV"
 }
 
+warn_about_uv_no_sync() {
+  note "warning: the pod does not set UV_NO_SYNC=1 itself. Until it does, a plain" \
+    "uv run in a terminal or notebook that has not loaded $POD_ENV" \
+    "can swap torch for the CPU-only build. Add UV_NO_SYNC with the value 1 to" \
+    "the pod's environment variables (docs/runbooks/pod.md, \"Deploy the pod\", step 3)."
+}
+
 install_environment() {
   write_pod_env
   # shellcheck source=/dev/null
   source "$POD_ENV"
+  if [[ $POD_UV_NO_SYNC != 1 ]]; then warn_about_uv_no_sync; fi
   note "the first time, this downloads about 3 GB and shows no progress bar"
   cd "$REPO"
   "${SYNC[@]}"
@@ -171,8 +191,8 @@ check_hf_token() {
   # ${HF_TOKEN:+set} tests the token without ever expanding its value.
   if [[ -z ${HF_TOKEN:+set} ]]; then
     fail "HF_TOKEN is not set, so the models cannot be downloaded." \
-      "Give the pod your Hugging Face token as the environment variable HF_TOKEN" \
-      "(docs/runbooks/pod.md, \"Store your tokens in Runpod\"), then run this again."
+      "Give the pod your Hugging Face token as the environment variable HF_TOKEN:" \
+      "see \"HF_TOKEN is not set\" under \"If something goes wrong\" in docs/runbooks/pod.md."
   fi
   note "HF_TOKEN is set (its value is never shown)"
 }
@@ -223,7 +243,7 @@ run_step 1 "Checking that a GPU is visible" \
   "check with nvidia-smi that a GPU is visible, print its name and memory, and stop unless its driver is $MIN_DRIVER or newer" \
   check_gpu
 run_step 2 "Installing uv if missing" \
-  "install uv $UV_VERSION into ~/.local/bin unless uv is already installed" \
+  "install uv $UV_VERSION into ~/.local/bin unless that version is already installed" \
   install_uv
 run_step 3 "Installing the CUDA environment, dev tools and GPU kernels" \
   "write $POD_ENV, make new shells load it, and run: ${SYNC[*]}" \
@@ -250,4 +270,8 @@ else
   printf '\nThe pod is ready. New terminals pick up its settings by themselves;\n'
   printf 'in this one, run first:  source %s\n' "$POD_ENV"
   printf 'Then sign in to Claude Code with:  claude\n'
+  if [[ $POD_UV_NO_SYNC != 1 ]]; then
+    echo
+    warn_about_uv_no_sync
+  fi
 fi

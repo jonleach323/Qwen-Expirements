@@ -1,17 +1,20 @@
 """Downloading model weights once: configs/models.yaml and pushlab.models.download.
 
-A fake downloader and a fake Hugging Face client stand in for the real ones,
-so nothing is downloaded.
+Two stand-ins replace Hugging Face, so nothing is downloaded: a fake
+downloader for the bookkeeping, and a fake Hub server that answers the real
+huggingface_hub library's requests inside this process.
 """
 
 import doctest
+import hashlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx2
 import pytest
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub import set_client_factory
+from huggingface_hub.utils._http import default_client_factory
 
 from pushlab.models import download
 from pushlab.models.download import (
@@ -20,34 +23,19 @@ from pushlab.models.download import (
     is_downloaded,
     main,
     parse_model_names,
+    remove_unfinished_files,
 )
 from pushlab.models.registry import REGISTRY, ModelSpec
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
-
-
-class FakeHub:
-    """Stands in for huggingface_hub: records each request, downloads nothing."""
-
-    def __init__(self) -> None:
-        self.requests: list[tuple[str, str, object]] = []
-
-    def model_info(self, repo_id: str, revision: str) -> SimpleNamespace:
-        self.requests.append(("model_info", repo_id, revision))
-        return SimpleNamespace(sha=COMMIT)
-
-    def snapshot_download(self, repo_id: str, *, revision: str, local_dir: Path) -> str:
-        self.requests.append(("snapshot_download", repo_id, (revision, local_dir)))
-        return str(local_dir)
-
-
-@pytest.fixture
-def hub(monkeypatch: pytest.MonkeyPatch) -> FakeHub:
-    fake = FakeHub()
-    monkeypatch.setattr(download, "HfApi", lambda: fake)
-    monkeypatch.setattr(download, "snapshot_download", fake.snapshot_download)
-    return fake
+REPO = "Qwen/Qwen3.5-4B"
+FILES = {
+    "config.json": b'{"model_type": "qwen3_5"}',
+    "model-00001-of-00002.safetensors": b"first half of the weights",
+    "model-00002-of-00002.safetensors": b"second half of the weights",
+}
+FAKE_TOKEN = "hf_fake_token_for_tests"
 
 
 class FakeDownloader:
@@ -60,6 +48,68 @@ class FakeDownloader:
         self.calls.append((spec.name, folder))
         (folder / "config.json").write_text("{}")
         return COMMIT
+
+
+class FakeHubServer:
+    """Answers huggingface_hub's requests for Qwen3.5-4B, inside this process."""
+
+    def __init__(self) -> None:
+        self.requests: list[str] = []
+        self.model_info_status = 200  # set 401 to refuse the token
+        self.listing_status = 200  # set 400 to make listing the files fail
+
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        self.requests.append(f"{request.method} {path}")
+        assert request.headers.get("authorization") == f"Bearer {FAKE_TOKEN}"
+        if path == f"/api/models/{REPO}/revision/main":
+            if self.model_info_status != 200:
+                return self._error(self.model_info_status, request)
+            return httpx2.Response(200, json={"id": REPO, "sha": COMMIT})
+        if path == f"/api/models/{REPO}/tree/{COMMIT}":
+            if self.listing_status != 200:
+                return self._error(self.listing_status, request)
+            entries = [
+                {"type": "file", "path": name, "size": len(data), "oid": _oid(data)}
+                for name, data in FILES.items()
+            ]
+            return httpx2.Response(200, json=entries)
+        name = path.removeprefix(f"/{REPO}/resolve/{COMMIT}/")
+        if name in FILES:
+            data = FILES[name]
+            headers = {
+                "X-Repo-Commit": COMMIT,
+                "ETag": f'"{_oid(data)}"',
+                "Content-Length": str(len(data)),
+            }
+            body = b"" if request.method == "HEAD" else data
+            return httpx2.Response(200, headers=headers, content=body)
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    @staticmethod
+    def _error(status: int, request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, json={"error": "refused"}, request=request)
+
+
+def _oid(data: bytes) -> str:
+    """The git blob ID that Hugging Face reports for a small file."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+@pytest.fixture
+def hub(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHubServer]:
+    server = FakeHubServer()
+    monkeypatch.setenv("HF_TOKEN", FAKE_TOKEN)
+    transport = httpx2.MockTransport(server.handle)
+    set_client_factory(lambda: httpx2.Client(transport=transport))
+    yield server
+    set_client_factory(default_client_factory)
+
+
+def _config(tmp_path: Path) -> str:
+    config = tmp_path / "models.yaml"
+    config.write_text("models: [qwen3.5-4b]\n")
+    return str(config)
 
 
 def test_the_pod_downloads_qwen3_5_4b() -> None:
@@ -142,28 +192,81 @@ def test_a_different_or_broken_record_downloads_again(
     assert len(fake.calls) == 1
 
 
-def test_hub_download_fetches_every_file_from_one_commit(
-    tmp_path: Path, hub: FakeHub
+def test_downloads_every_file_from_one_commit(
+    tmp_path: Path, hub: FakeHubServer
 ) -> None:
-    commit = download.hub_download(REGISTRY["qwen3.5-4b"], tmp_path)
-    assert commit == COMMIT
-    assert hub.requests == [
-        ("model_info", "Qwen/Qwen3.5-4B", "main"),
-        ("snapshot_download", "Qwen/Qwen3.5-4B", (COMMIT, tmp_path)),
+    models = tmp_path / "models"
+    folder = models / "qwen3.5-4b"
+    leftover = folder / ".cache" / "huggingface" / "download" / "a.b.c.incomplete"
+    leftover.parent.mkdir(parents=True)
+    leftover.write_text("part of a file from a killed download")
+    assert main([_config(tmp_path), str(models)]) == 0
+    assert not leftover.exists()
+    for name, data in FILES.items():
+        assert (folder / name).read_bytes() == data
+    assert hub.requests[:2] == [
+        f"GET /api/models/{REPO}/revision/main",
+        f"GET /api/models/{REPO}/tree/{COMMIT}",
     ]
+    assert all(f"/{COMMIT}" in request for request in hub.requests[1:])
+    record = json.loads((folder / MARKER).read_text())
+    assert record["commit"] == COMMIT
 
 
-def test_main_downloads_the_listed_models(tmp_path: Path, hub: FakeHub) -> None:
-    config = tmp_path / "models.yaml"
-    config.write_text("models: [qwen3.5-4b]\n")
-    assert main([str(config), str(tmp_path / "models")]) == 0
+def test_a_finished_download_needs_no_requests(
+    tmp_path: Path, hub: FakeHubServer
+) -> None:
+    models = tmp_path / "models"
+    main([_config(tmp_path), str(models)])
+    hub.requests.clear()
+    assert main([_config(tmp_path), str(models)]) == 0
+    assert hub.requests == []
+
+
+def test_a_half_full_folder_is_not_recorded_when_listing_fails(
+    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An earlier run was interrupted after one file. Now the Hub cannot list
+    # the commit's files, and snapshot_download hands the folder back as is.
     folder = tmp_path / "models" / "qwen3.5-4b"
-    assert hub.requests[-1] == (
-        "snapshot_download",
-        "Qwen/Qwen3.5-4B",
-        (COMMIT, folder),
-    )
-    assert is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_bytes(FILES["config.json"])
+    hub.listing_status = 400
+    assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
+    assert "did not list the files" in capsys.readouterr().err
+    assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+
+
+def test_a_file_missing_after_the_download_is_not_recorded(
+    tmp_path: Path,
+    hub: FakeHubServer,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Hugging Face already listed this commit, but a file went missing and
+    # the next snapshot_download returned without fetching it.
+    models = tmp_path / "models"
+    folder = models / "qwen3.5-4b"
+    main([_config(tmp_path), str(models)])
+    (folder / MARKER).unlink()
+    (folder / "model-00002-of-00002.safetensors").unlink()
+    monkeypatch.setattr(download, "snapshot_download", lambda *args, **kwargs: "")
+    assert main([_config(tmp_path), str(models)]) == 1
+    assert "model-00002-of-00002.safetensors" in capsys.readouterr().err
+    assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+
+
+def test_main_explains_a_refused_token(
+    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub.model_info_status = 401
+    assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
+    err = capsys.readouterr().err
+    assert "401" in err
+    assert "HF_TOKEN" in err
+    assert FAKE_TOKEN not in err
+    folder = tmp_path / "models" / "qwen3.5-4b"
+    assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
 
 
 def test_main_explains_a_bad_config_without_a_traceback(
@@ -176,26 +279,16 @@ def test_main_explains_a_bad_config_without_a_traceback(
     assert main([str(tmp_path / "missing.yaml"), str(tmp_path)]) == 1
 
 
-def test_main_explains_a_refused_download(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    url = "https://huggingface.co/api/models/Qwen/Qwen3.5-4B/revision/main"
-    response = httpx2.Response(401, request=httpx2.Request("GET", url))
-
-    class RefusingApi:
-        def model_info(self, repo_id: str, revision: str) -> None:
-            raise HfHubHTTPError("401 Client Error: Unauthorized", response=response)
-
-    monkeypatch.setattr(download, "HfApi", RefusingApi)
-    config = tmp_path / "models.yaml"
-    config.write_text("models: [qwen3.5-4b]\n")
-    assert main([str(config), str(tmp_path / "models")]) == 1
-    err = capsys.readouterr().err
-    assert "401" in err
-    assert "HF_TOKEN" in err
-    assert not is_downloaded(REGISTRY["qwen3.5-4b"], tmp_path / "models" / "qwen3.5-4b")
+def test_removes_the_partial_files_a_killed_download_left(tmp_path: Path) -> None:
+    downloads = tmp_path / ".cache" / "huggingface" / "download"
+    downloads.mkdir(parents=True)
+    partial = downloads / "abc.0123.9f8e7d6c.incomplete"
+    partial.write_text("half a file")
+    finished = tmp_path / "config.json"
+    finished.write_text("{}")
+    assert remove_unfinished_files(tmp_path) == 1
+    assert not partial.exists()
+    assert finished.exists()
 
 
 def test_docstring_examples_run() -> None:
