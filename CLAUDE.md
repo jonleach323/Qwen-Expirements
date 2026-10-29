@@ -28,6 +28,10 @@ Current sprint: S0 (Bootstrap).
 - Never change an existing test's expected values without explaining why
   in the pull request description.
 - Never commit run outputs, model weights or secrets.
+- On the GPU pod, never change files in the repository: find the problem
+  there, then make the change from a cloud session through a pull request.
+  The pod's GitHub token is read-only, and an uncommitted change marks
+  every manifest code_dirty.
 - Never start a GPU job; write the experiment file and its --dry-run
   output, and the owner starts it.
 - Ask before adding a dependency.

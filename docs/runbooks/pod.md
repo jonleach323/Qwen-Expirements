@@ -347,12 +347,19 @@ start a Claude Code cloud session and give it the message and the log.
   `pyproject.toml` without `uv.lock`. Fix it in a cloud session with
   `uv lock`, merge it, then `git pull` on the pod.
 - **Step 7 fails, with `FAILED` lines from pytest.** Running the script
-  again loads the model again and usually fails the same way. Give Claude,
-  in a cloud session, the `FAILED` lines and the log. A failed
-  `test_the_qwen3_5_kernels_import` means the GPU kernels did not load; the
-  one case where running the script again can help, because its step 3
-  reinstalls them. "the reply ran to --max-new-tokens" means the model's
-  reply did not end within 200 tokens; the log shows the reply.
+  again loads the model again and fails the same way, so don't. Give
+  Claude, in a cloud session, the `FAILED` lines and the log. A failed
+  `test_the_qwen3_5_kernels_import` means causal-conv1d or
+  flash-linear-attention is installed but does not load; step 3 has just
+  checked them, so the fix needs Claude. "the reply ran to
+  --max-new-tokens" means the model's reply did not end within 200 tokens;
+  the log shows the reply.
+- **`git pull` says "Your local changes to the following files would be
+  overwritten by merge".** A file of the repository was edited on the pod.
+  The change belongs in a pull request instead, so throw the local copy
+  away with `git checkout -- <the file it names>`, then run `git pull` and
+  `bash scripts/setup_pod.sh` again. If the edit was worth keeping, ask
+  Claude in a cloud session to make it through a pull request.
 - **"error: Failed to spawn: `pushlab`".** First run
   `cd /workspace/Qwen-Expirements`: uv finds the command only inside the
   repository. If it still fails, the command is not installed yet, because

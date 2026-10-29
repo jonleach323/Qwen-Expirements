@@ -118,8 +118,9 @@ manifest. Its parts:
   `5 passed`. The pod keeps Triton's compiled kernels on the volume
   (`TRITON_CACHE_DIR`), so a restart does not compile them again.
 - On the pod, those kernels refuse CPU tensors, so a Qwen3.5 model in a CPU
-  test would fail there. The tests' `qwen3_5_on_pytorch` fixture switches
-  Qwen3.5 to transformers' PyTorch code in every test not marked gpu, so
-  `pytest tests/unit` passes on the pod too.
+  test would fail there. `tests/conftest.py` switches Qwen3.5 to
+  transformers' PyTorch code before every test not marked gpu, ahead of its
+  fixtures, so `pytest tests/unit` passes on the pod too. A unit test checks
+  the switch, so a transformers release that breaks it fails in CI.
 - Change `configs/models.yaml` through a pull request, never on the pod: an
   edit there would mark every later manifest `code_dirty`.

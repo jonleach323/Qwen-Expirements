@@ -106,7 +106,7 @@ nothing: the first `uv run` in a session installs whatever is new.
      packages" or "Installed N packages", with no "Downloading torch" line.
      That means the session started ready.
    - The versions should include `torch 2.14.1+cpu`.
-   - The tests should end with a line like "272 passed, 6 skipped in 9.3s".
+   - The tests should end with a line like "277 passed, 6 skipped in 7.5s".
    - A warning about `UV_NATIVE_TLS` at the top of the test output is
      harmless.
 

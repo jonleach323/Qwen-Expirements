@@ -72,10 +72,50 @@ def _seed_everything() -> None:
     torch.manual_seed(TEST_SEED)  # also seeds every GPU
 
 
+# The functions Qwen3.5's linear-attention layers call. transformers points
+# each at a fast GPU kernel when causal-conv1d or flash-linear-attention is
+# installed, as on the pod, and those kernels refuse CPU tensors.
+QWEN3_5_KERNEL_FUNCTIONS = (
+    "causal_conv1d_fn",
+    "causal_conv1d_update",
+    "torch_chunk_gated_delta_rule",
+    "torch_recurrent_gated_delta_rule",
+)
+_PYTORCH_SWITCH = pytest.StashKey[pytest.MonkeyPatch]()
+
+
+def _run_qwen3_5_on_pytorch(patch: pytest.MonkeyPatch) -> None:
+    """Point Qwen3.5's linear-attention functions at transformers' PyTorch code."""
+    module = importlib.import_module("transformers.models.qwen3_5.modeling_qwen3_5")
+    for name in QWEN3_5_KERNEL_FUNCTIONS:
+        function = getattr(module, name)
+        # functools.wraps keeps the PyTorch function as __wrapped__. A test
+        # session started inside a test finds it already switched.
+        patch.setattr(module, name, getattr(function, "__wrapped__", function))
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    """Seed before any fixture is set up, so module-scoped ones are fixed too."""
+    """Seed before any fixture is set up, so module-scoped ones are fixed too.
+
+    For the same reason, every test not marked gpu runs Qwen3.5 on
+    transformers' PyTorch code from here on. Then a Qwen3.5 model in any CPU
+    test, or in any fixture, runs on the CPU even where the GPU kernels are
+    installed, so the unit tests pass on the pod too. GPU tests keep the
+    fast kernels.
+    """
     _seed_everything()
+    if item.get_closest_marker("gpu") is None:
+        patch = pytest.MonkeyPatch()
+        _run_qwen3_5_on_pytorch(patch)
+        item.stash[_PYTORCH_SWITCH] = patch
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item: pytest.Item) -> None:
+    """Undo the switch to PyTorch code once the test's fixtures are gone."""
+    if (patch := item.stash.get(_PYTORCH_SWITCH, None)) is not None:
+        patch.undo()
 
 
 @pytest.fixture(autouse=True)
@@ -216,37 +256,6 @@ def _build_tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
         torch.default_generator.manual_seed(TEST_SEED)
         model = Qwen3_5ForConditionalGeneration(config)
     return model.to(torch.float32).eval()
-
-
-# The functions Qwen3.5's linear-attention layers call. transformers points
-# each at a fast GPU kernel when causal-conv1d or flash-linear-attention is
-# installed, as on the pod, and those kernels refuse CPU tensors.
-_QWEN3_5_KERNEL_FUNCTIONS = (
-    "causal_conv1d_fn",
-    "causal_conv1d_update",
-    "torch_chunk_gated_delta_rule",
-    "torch_recurrent_gated_delta_rule",
-)
-
-
-@pytest.fixture(autouse=True)
-def qwen3_5_on_pytorch(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Run Qwen3.5's linear-attention layers with transformers' PyTorch code.
-
-    It applies to every test not marked gpu, so a Qwen3.5 model built in a
-    test runs on the CPU even where the GPU kernels are installed, and the
-    unit tests pass on the pod too. GPU tests keep the fast kernels.
-    """
-    if request.node.get_closest_marker("gpu") is not None:
-        return
-    module = importlib.import_module("transformers.models.qwen3_5.modeling_qwen3_5")
-    for name in _QWEN3_5_KERNEL_FUNCTIONS:
-        function = getattr(module, name)
-        # functools.wraps keeps the PyTorch function as __wrapped__. A test
-        # session started inside a test finds it already switched.
-        monkeypatch.setattr(module, name, getattr(function, "__wrapped__", function))
 
 
 @pytest.fixture

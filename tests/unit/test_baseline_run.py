@@ -5,8 +5,10 @@ uses: loading, the chat prompt, greedy decoding and both output files.
 """
 
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -159,16 +161,43 @@ def test_a_system_clock_set_back_during_the_run_does_not_stop_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Each reading of the system clock is two seconds earlier than the last.
+    # Each reading of the system clock is two seconds earlier than the last,
+    # as a date and as seconds; the clock that never steps back is real.
     readings = iter(
         datetime(2026, 10, 29, 10, 0, 5 - 2 * n, tzinfo=UTC) for n in range(3)
     )
+    seconds = iter(range(1_000_000, 0, -2))
+    stepping_back = SimpleNamespace(
+        time=lambda: next(seconds),
+        monotonic=time.monotonic,
+        perf_counter=time.perf_counter,
+    )
     monkeypatch.setattr(cli, "_now", lambda: next(readings))
+    monkeypatch.setattr(cli, "time", stepping_back)
     out = tmp_path / "out"
     argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
     assert main([*argv, "--max-new-tokens", "2"]) == 0
     manifest = json.loads((out / "manifest.json").read_text())
     assert manifest["started_at"] <= manifest["finished_at"]
+
+
+@pytest.mark.usefixtures("cpu_only")
+def test_a_manifest_that_fails_its_checks_leaves_no_run_file(
+    tiny_downloads: dict[str, ModelSpec],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read_environment = environment.environment_info
+
+    def without_torch(*args: object, **kwargs: object) -> dict:
+        return read_environment(*args, **kwargs) | {"torch": None}
+
+    monkeypatch.setattr(environment, "environment_info", without_torch)
+    out = tmp_path / "out"
+    argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
+    with pytest.raises(ValueError, match="torch"):
+        main([*argv, "--max-new-tokens", "2"])
+    assert not out.exists() or list(out.iterdir()) == []
 
 
 @pytest.mark.usefixtures("cpu_only")
