@@ -12,7 +12,7 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -25,6 +25,7 @@ from pushlab.store.records import (
     MAX_SEED,
     RUNS_FILE,
     RunRecord,
+    check_manifest,
     make_run_id,
     write_manifest,
     write_runs,
@@ -149,8 +150,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _refuse(message: str) -> int:
@@ -210,7 +211,8 @@ def run_baseline(
     from pushlab.models.load import default_device, default_dtype, load_model
     from pushlab.store.environment import environment_info
 
-    started_at = _now()
+    started = _now()
+    clock = time.monotonic()  # never steps back, unlike the system clock
     device = default_device()
     # Read now, so the manifest describes the code and files that start the
     # run even if the checkout changes while it runs.
@@ -252,6 +254,7 @@ def run_baseline(
         output_tokens=tokens,
         status="ok",
     )
+    finished = started + timedelta(seconds=time.monotonic() - clock)
     info = environment | {
         "experiment": experiment.experiment,
         "experiment_file": BASELINE_EXPERIMENT.relative_to(PROJECT_ROOT).as_posix(),
@@ -263,11 +266,12 @@ def run_baseline(
         "dtype": dtype_name,
         "prompt_id": prompt_id,
         "prompt": prompt,
-        "started_at": started_at,
-        "finished_at": _now(),
+        "started_at": started.isoformat(timespec="seconds"),
+        "finished_at": finished.isoformat(timespec="seconds"),
         "run_count": 1,
         "runs_by_status": {"ok": 1},
     }
+    check_manifest(info)  # before writing, so a bad manifest leaves no run file
     try:
         runs_path = write_runs([record], out, overwrite=overwrite)
         manifest_path = write_manifest(out, info, overwrite=overwrite)

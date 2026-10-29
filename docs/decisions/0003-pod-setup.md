@@ -83,8 +83,11 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 - **Driver.** Step 1 stops unless the NVIDIA driver is 580 or newer, which
   the CUDA 13.0 build of torch needs (decision 0002). Stopping there, before
   3 GB of downloads, makes the error cheap.
-- **GPU kernels** come as prebuilt wheels pinned in `uv.lock`
-  (decision 0002), so nothing compiles on the pod.
+- **GPU kernels.** causal-conv1d comes as a prebuilt CUDA wheel pinned in
+  `uv.lock` (decision 0002), so nothing is built from source when
+  installing. flash-linear-attention's kernels are compiled by Triton the
+  first time they run (in step 7, since decision 0004), and the compiled
+  kernels are kept in `/workspace/.cache/triton`.
 - **Secrets.** The script checks `HF_TOKEN` without expanding its value and
   never prints the environment. `huggingface_hub` reads `HF_TOKEN` by itself.
   Git reads `GITHUB_TOKEN` through a credential helper at the moment it needs

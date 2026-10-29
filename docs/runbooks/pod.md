@@ -255,9 +255,15 @@ print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
 ## Rules on the pod
 
 - **Never run plain `uv sync` on the pod.** It would replace the CUDA build
-  of torch with the CPU-only one. After a `git pull` that changes `uv.lock`
-  or `pyproject.toml`, run `bash scripts/setup_pod.sh` again: it updates the
-  environment and installs the `pushlab` command.
+  of torch with the CPU-only one. After a `git pull` that changes `uv.lock`,
+  `pyproject.toml` or `configs/models.yaml`, run `bash scripts/setup_pod.sh`
+  again: it updates the environment, installs the `pushlab` command and
+  downloads new models.
+- Don't edit files of the repository on the pod, such as
+  `configs/models.yaml`. Change them through a pull request from a cloud
+  session, then `git pull`. An edit made on the pod makes every manifest
+  record uncommitted code (`code_dirty: true`) and can stop a later
+  `git pull`.
 - `uv run ...` is safe wherever `UV_NO_SYNC=1` is set, and the pod variable
   from step 3 of "Deploy the pod" sets it in every terminal and notebook.
   Without it, a plain `uv run` replaces the CUDA build of torch with the
@@ -274,7 +280,9 @@ print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
 The last step number on screen shows where the script stopped, and the log
 file in `/workspace/logs` has everything. Fix the cause and run the script
 again; it skips the work already finished. If a fix restarts the pod,
-continue with "Every time you start the pod again" once it is running.
+continue with "Every time you start the pod again" once it is running. If
+no entry below matches, or the fix is not something you can do on the pod,
+start a Claude Code cloud session and give it the message and the log.
 
 - **"No GPU is visible".** The pod has no GPU. This happens when a stopped
   pod is started again after someone else rented its machine's GPUs:
@@ -338,12 +346,23 @@ continue with "Every time you start the pod again" once it is running.
 - **"needs to be updated, but `--locked` was provided".** Someone changed
   `pyproject.toml` without `uv.lock`. Fix it in a cloud session with
   `uv lock`, merge it, then `git pull` on the pod.
-- **"error: Failed to spawn: `pushlab`".** The `pushlab` command is not
-  installed yet, because the setup script has not run since a `git pull`
-  added it. Run `bash scripts/setup_pod.sh`, then the command again.
+- **Step 7 fails, with `FAILED` lines from pytest.** Running the script
+  again loads the model again and usually fails the same way. Give Claude,
+  in a cloud session, the `FAILED` lines and the log. A failed
+  `test_the_qwen3_5_kernels_import` means the GPU kernels did not load; the
+  one case where running the script again can help, because its step 3
+  reinstalls them. "the reply ran to --max-new-tokens" means the model's
+  reply did not end within 200 tokens; the log shows the reply.
+- **"error: Failed to spawn: `pushlab`".** First run
+  `cd /workspace/Qwen-Expirements`: uv finds the command only inside the
+  repository. If it still fails, the command is not installed yet, because
+  the setup script has not run since a `git pull` added it. Run
+  `bash scripts/setup_pod.sh`, then the command again.
 - **"pushlab baseline: ... is not downloaded into /workspace/models/...".**
-  Add the model's name to `configs/models.yaml`, then run
-  `bash scripts/setup_pod.sh`, which downloads it.
+  If `configs/models.yaml` lists the model, run `bash scripts/setup_pod.sh`;
+  it downloads the model, or its new revision after a pull that changed
+  one. If the file does not list it, add it through a pull request from a
+  cloud session, `git pull` on the pod, and then run the script.
 - **You pressed Ctrl-C.** Run the script again.
 - **The browser lost its connection.** The script keeps running on the pod.
   Reopen its terminal from **Running Terminals and Kernels** and let it

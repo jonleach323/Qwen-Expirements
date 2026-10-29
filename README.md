@@ -49,11 +49,11 @@ tests. `docs/runbooks/pod.md` shows how to create the pod and run it. Never
 run plain `uv sync` on the pod: it would swap in the CPU-only PyTorch. The
 script has not yet run on a real GPU; that is a later Sprint 0 task.
 
-On the pod, `uv run pushlab baseline --model qwen3.5-4b --out
-/workspace/runs/s0-baseline` generates one unsteered reply and saves it as a
-run (`runs.parquet`) with its manifest (`manifest.json`). See "Generate the
-baseline reply" in `docs/runbooks/pod.md`, and `uv run pushlab baseline
---help` for its options.
+On the pod, run from the repository (`cd /workspace/Qwen-Expirements`),
+`uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/s0-baseline`
+generates one unsteered reply and saves it as a run (`runs.parquet`) with its
+manifest (`manifest.json`). See "Generate the baseline reply" in
+`docs/runbooks/pod.md`, and `uv run pushlab baseline --help` for its options.
 
 Where things go: see "Repository layout and conventions" in
 `docs/plan/development-plan.md`. Design decisions live in `docs/decisions/`.

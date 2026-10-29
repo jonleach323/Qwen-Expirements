@@ -230,7 +230,8 @@ def _replace_atomically(path: Path, write: Callable[[Path], object]) -> None:
     itself, so it gets the usual permissions.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    # Absolute, so pyarrow never reads a folder name such as run:1 as a URL.
+    temporary = path.absolute().with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         write(temporary)
         os.replace(temporary, path)
@@ -280,7 +281,7 @@ def read_runs(out_dir: Path) -> list[RunRecord]:
         'ok'
     """
     path = Path(out_dir) / RUNS_FILE
-    table = pq.read_table(path)
+    table = pq.read_table(path.absolute())
     if not table.schema.equals(RUNS_SCHEMA):
         raise ValueError(
             f"{path} does not have the runs table's columns and types: "
@@ -294,21 +295,20 @@ def read_runs(out_dir: Path) -> list[RunRecord]:
     ]
 
 
-def write_manifest(
-    out_dir: Path, info: Mapping[str, Any], *, overwrite: bool = False
-) -> Path:
-    """Save info as out_dir/manifest.json; return its path.
+def check_manifest(info: Mapping[str, Any]) -> str:
+    """Raise ValueError unless info is a valid manifest; return it as JSON text.
 
     info must have every field in REQUIRED_MANIFEST_FIELDS. The model ID and
     revision and the torch and transformers versions are text; the code
     commit, lockfile hash, GPU and CUDA may be None when they do not apply,
     such as the GPU on a CPU run. Times are ISO 8601 text with a time zone,
-    and the run cannot finish before it starts. Extra fields are kept. An
-    existing manifest.json raises FileExistsError unless overwrite is True.
+    and the run cannot finish before it starts. Extra fields are kept.
 
     Example:
-        >>> write_manifest(Path("outputs/s0-baseline"), info)  # doctest: +SKIP
-        PosixPath('outputs/s0-baseline/manifest.json')
+        >>> check_manifest({"run_count": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: the manifest lacks code_commit, lockfile_sha256, ...
     """
     if missing := [name for name in REQUIRED_MANIFEST_FIELDS if name not in info]:
         raise ValueError(f"the manifest lacks {', '.join(missing)}")
@@ -335,7 +335,23 @@ def write_manifest(
         text = json.dumps(dict(info), indent=2, sort_keys=True, allow_nan=False)
     except (TypeError, ValueError) as error:
         raise ValueError(f"the manifest must be plain JSON: {error}") from error
+    return text + "\n"
+
+
+def write_manifest(
+    out_dir: Path, info: Mapping[str, Any], *, overwrite: bool = False
+) -> Path:
+    """Check info with check_manifest and save it as out_dir/manifest.json.
+
+    Returns the file's path. An existing manifest.json raises
+    FileExistsError unless overwrite is True.
+
+    Example:
+        >>> write_manifest(Path("outputs/s0-baseline"), info)  # doctest: +SKIP
+        PosixPath('outputs/s0-baseline/manifest.json')
+    """
+    text = check_manifest(info)
     path = Path(out_dir) / MANIFEST_FILE
     _refuse_existing(path, overwrite)
-    _replace_atomically(path, lambda temporary: temporary.write_text(text + "\n"))
+    _replace_atomically(path, lambda temporary: temporary.write_text(text))
     return path

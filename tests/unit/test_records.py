@@ -16,6 +16,7 @@ from pushlab.store import records
 from pushlab.store.records import (
     REQUIRED_MANIFEST_FIELDS,
     RunRecord,
+    check_manifest,
     make_run_id,
     read_runs,
     write_manifest,
@@ -203,6 +204,17 @@ def test_the_output_folder_is_created(tmp_path: Path) -> None:
     assert read_runs(out) == [_record()]
 
 
+def test_a_relative_folder_named_like_a_url_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pyarrow would read a relative "run:1/runs.parquet" as a URL with the
+    # scheme "run".
+    monkeypatch.chdir(tmp_path)
+    write_runs([_record()], Path("run:1"))
+    write_manifest(Path("run:1"), _info())
+    assert read_runs(Path("run:1")) == [_record()]
+
+
 def test_a_failed_write_leaves_no_file_behind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -307,6 +319,13 @@ def test_a_manifest_with_bad_values_is_refused(
     with pytest.raises(ValueError, match=problem):
         write_manifest(tmp_path, _info(**changes))
     assert list(tmp_path.iterdir()) == []
+
+
+def test_check_manifest_gives_the_text_write_manifest_saves(tmp_path: Path) -> None:
+    path = write_manifest(tmp_path, _info())
+    assert check_manifest(_info()) == path.read_text()
+    with pytest.raises(ValueError, match="run_count"):
+        check_manifest(_info(run_count=-1))
 
 
 def test_an_existing_manifest_is_kept_unless_overwrite_is_set(tmp_path: Path) -> None:

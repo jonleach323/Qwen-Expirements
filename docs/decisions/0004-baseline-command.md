@@ -65,7 +65,10 @@ manifest. Its parts:
   as the run starts, so a `git pull` during the run cannot change them.
   Of the required fields, only those that may not apply can be `null`: the
   code commit outside a git checkout, the lockfile hash without a
-  `uv.lock`, and the GPU and CUDA on a CPU. Times carry a time zone.
+  `uv.lock`, and the GPU and CUDA on a CPU. Times carry a time zone; the
+  run's length comes from a clock that never steps back, so the finish
+  cannot come before the start. The manifest is checked before either file
+  is written.
 - **Files are replaced only when asked.** If the folder already has
   `runs.parquet` or `manifest.json`, the command stops before loading the
   model unless given `--overwrite`, and an `--out` that is a file is
@@ -114,6 +117,9 @@ manifest. Its parts:
   PyTorch code without them and only logs a warning. Step 7 now ends with
   `5 passed`. The pod keeps Triton's compiled kernels on the volume
   (`TRITON_CACHE_DIR`), so a restart does not compile them again.
-- On the pod, those kernels refuse the CPU tensors of the unit tests' tiny
-  Qwen3.5 model. The tests' `qwen3_5_on_pytorch` fixture switches the model
-  to transformers' PyTorch code, so `pytest tests/unit` passes there too.
+- On the pod, those kernels refuse CPU tensors, so a Qwen3.5 model in a CPU
+  test would fail there. The tests' `qwen3_5_on_pytorch` fixture switches
+  Qwen3.5 to transformers' PyTorch code in every test not marked gpu, so
+  `pytest tests/unit` passes on the pod too.
+- Change `configs/models.yaml` through a pull request, never on the pod: an
+  edit there would mark every later manifest `code_dirty`.

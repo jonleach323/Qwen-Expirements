@@ -32,6 +32,8 @@ def test_the_baseline_command_writes_a_reply_and_a_manifest(tmp_path: Path) -> N
         timeout=1200,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    # pytest shows this only if a check below fails: the reply and its length.
+    print(result.stdout)
 
     (run,) = read_runs(out)
     assert run.run_id == "s0-baseline-000001"

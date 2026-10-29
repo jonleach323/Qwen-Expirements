@@ -229,23 +229,28 @@ _QWEN3_5_KERNEL_FUNCTIONS = (
 )
 
 
-@pytest.fixture
-def qwen3_5_on_pytorch(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(autouse=True)
+def qwen3_5_on_pytorch(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Run Qwen3.5's linear-attention layers with transformers' PyTorch code.
 
-    Then the tiny Qwen3.5 models run on the CPU even where the GPU kernels are
-    installed, so the unit tests pass on the pod too.
+    It applies to every test not marked gpu, so a Qwen3.5 model built in a
+    test runs on the CPU even where the GPU kernels are installed, and the
+    unit tests pass on the pod too. GPU tests keep the fast kernels.
     """
+    if request.node.get_closest_marker("gpu") is not None:
+        return
     module = importlib.import_module("transformers.models.qwen3_5.modeling_qwen3_5")
     for name in _QWEN3_5_KERNEL_FUNCTIONS:
-        pytorch_version = getattr(getattr(module, name), "__wrapped__", None)
-        if pytorch_version is None:
-            pytest.skip(f"transformers' {name} no longer exposes its PyTorch version")
-        monkeypatch.setattr(module, name, pytorch_version)
+        function = getattr(module, name)
+        # functools.wraps keeps the PyTorch function as __wrapped__. A test
+        # session started inside a test finds it already switched.
+        monkeypatch.setattr(module, name, getattr(function, "__wrapped__", function))
 
 
 @pytest.fixture
-def tiny_vl_model(qwen3_5_on_pytorch: None) -> Qwen3_5ForConditionalGeneration:
+def tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
     """A 4-layer Qwen3.5-style model in its vision-language wrapper, float32, eval."""
     return _build_tiny_vl_model()
 
@@ -272,7 +277,7 @@ def tiny_models_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def tiny_downloads(
-    monkeypatch: pytest.MonkeyPatch, tiny_models_dir: Path, qwen3_5_on_pytorch: None
+    monkeypatch: pytest.MonkeyPatch, tiny_models_dir: Path
 ) -> dict[str, ModelSpec]:
     """Register tiny-vl and tiny-lm, and point PUSHLAB_MODELS_DIR at them.
 
