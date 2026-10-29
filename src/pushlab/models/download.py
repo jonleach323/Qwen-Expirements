@@ -20,8 +20,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import yaml
-from huggingface_hub import HfApi, get_cached_repo_tree, snapshot_download
-from huggingface_hub.errors import CachedRepoTreeNotFoundError, HfHubHTTPError
+from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.errors import DryRunError, HfHubHTTPError
 
 from pushlab.models.registry import REGISTRY, ModelSpec
 
@@ -102,10 +102,12 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
     """Download spec's model from Hugging Face into folder; return the commit.
 
     The revision is turned into a commit first, so every file comes from the
-    same commit even if the revision moves on during the download. When the
-    Hub cannot list that commit's files, snapshot_download returns the folder
-    as it is, perhaps half full, with only a warning. So the folder is checked
-    against the commit's file list before the download counts as finished.
+    same commit even if the revision moves on during the download.
+    snapshot_download can return before the folder matches that commit, with
+    only a warning: when the Hub cannot list the commit's files it returns the
+    folder as it is, and when a file's update check fails it keeps the old
+    copy. So a dry run then checks every file before the download counts as
+    finished.
 
     Example:
         >>> spec = REGISTRY["qwen3.5-4b"]
@@ -121,15 +123,18 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
         )
     snapshot_download(spec.hf_id, revision=commit, local_dir=folder)
     try:
-        files = get_cached_repo_tree(spec.hf_id, revision=commit, local_dir=folder)
-    except CachedRepoTreeNotFoundError as error:
+        files = snapshot_download(
+            spec.hf_id, revision=commit, local_dir=folder, dry_run=True
+        )
+    except DryRunError as error:
         raise IncompleteDownloadError(
             f"Hugging Face did not list the files of {spec.hf_id} at {commit}"
         ) from error
-    missing = [file.path for file in files if not (folder / file.path).is_file()]
-    if missing:
+    stale = [f.filename for f in files if f.will_download or f.commit_hash != commit]
+    if stale:
+        names = ", ".join(stale[:3]) + (" and more" if len(stale) > 3 else "")
         raise IncompleteDownloadError(
-            f"{len(missing)} files of {spec.hf_id} are missing, such as {missing[0]}"
+            f"files of {spec.hf_id} missing or not from commit {commit}: {names}"
         )
     return commit
 
@@ -198,8 +203,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:  # a network failure or an unfinished download
         print(f"The download stopped: {type(error).__name__}: {error}", file=sys.stderr)
         print(
-            "Check the pod's internet connection and run the script again; "
-            "finished files are kept.",
+            "If it mentions a connection, a timeout or missing files, run the "
+            "script again; finished files are kept. For anything else, see "
+            '"The download stopped" in docs/runbooks/pod.md.',
             file=sys.stderr,
         )
         return 1

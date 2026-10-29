@@ -7,7 +7,8 @@
 # is logged with a timestamp to /workspace/logs/. See docs/runbooks/pod.md.
 #
 # Usage: bash scripts/setup_pod.sh [--dry-run]
-# PUSHLAB_WORKSPACE replaces /workspace (the tests point it at a temporary folder).
+# For the tests, PUSHLAB_WORKSPACE replaces /workspace and PUSHLAB_RP_ENVIRONMENT
+# replaces /etc/rp_environment.
 set -euo pipefail
 
 UV_VERSION="0.11.32" # the uv that CI and cloud sessions use; pinned on the pod too
@@ -50,8 +51,16 @@ LOG=""
 STEP=""
 # Runpod's images come with their own uv, so every shell has uv from the start.
 # A plain uv run swaps in the CPU-only torch unless UV_NO_SYNC=1 is set, and only
-# a pod environment variable sets it before this script runs (pod.md, step 3).
-POD_UV_NO_SYNC=${UV_NO_SYNC:-}
+# a pod environment variable sets it everywhere (pod.md, "Deploy the pod").
+# Runpod's start script copies the pod's variables to /etc/rp_environment; read
+# them there, because this shell's own UV_NO_SYNC may come from pushlab.env.
+RP_ENVIRONMENT="${PUSHLAB_RP_ENVIRONMENT:-/etc/rp_environment}"
+POD_UV_NO_SYNC=""
+if [[ ! -f $RP_ENVIRONMENT ]]; then
+  POD_UV_NO_SYNC=${UV_NO_SYNC:-} # not a Runpod image: trust this shell
+elif grep -Eqx '(export )?UV_NO_SYNC="?1"?' "$RP_ENVIRONMENT"; then
+  POD_UV_NO_SYNC=1
+fi
 
 # A volume where a run has finished before only needs checking, so it gets
 # the shorter target.
@@ -110,9 +119,13 @@ check_gpu() {
   done <<<"$gpus"
   local major=${first_driver%%.*}
   if [[ ! $major =~ ^[0-9]+$ ]] || ((major < MIN_DRIVER)); then
+    local advice="Terminate this pod (nothing on it is needed yet) and deploy a new one"
+    if [[ $KIND == "warm volume" ]]; then
+      advice="Terminating this pod deletes /workspace: copy off what you need first"
+    fi
     fail "The NVIDIA driver is ${first_driver:-unknown}, but pushlab's CUDA 13.0 build of torch" \
-      "needs driver $MIN_DRIVER or newer. Terminate this pod, then deploy a new one with" \
-      "CUDA 13.0 chosen in the template's CUDA version dropdown; see docs/runbooks/pod.md."
+      "needs driver $MIN_DRIVER or newer. $advice;" \
+      "see \"The NVIDIA driver is\" under \"If something goes wrong\" in docs/runbooks/pod.md."
   fi
 }
 
@@ -133,7 +146,7 @@ install_uv() {
   # shell profiles alone.
   curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | env UV_NO_MODIFY_PATH=1 sh
   found=$(uv --version 2>/dev/null || true)
-  is_pinned_uv "$found" || fail "uv $UV_VERSION was installed, but another uv comes first on PATH."
+  is_pinned_uv "$found" || fail "Installed uv $UV_VERSION, but uv --version now prints \"${found:-nothing}\"."
   note "installed $found"
 }
 
@@ -161,9 +174,9 @@ EOF
 
 warn_about_uv_no_sync() {
   note "warning: the pod does not set UV_NO_SYNC=1 itself. Until it does, a plain" \
-    "uv run in a terminal or notebook that has not loaded $POD_ENV" \
-    "can swap torch for the CPU-only build. Add UV_NO_SYNC with the value 1 to" \
-    "the pod's environment variables (docs/runbooks/pod.md, \"Deploy the pod\", step 3)."
+    "uv run in a notebook, or in a terminal opened before this script ran, can" \
+    "swap torch for the CPU-only build. Add UV_NO_SYNC with the value 1 through" \
+    "Edit Pod (docs/runbooks/pod.md, \"If something goes wrong\")."
 }
 
 install_environment() {

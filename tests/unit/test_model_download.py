@@ -29,12 +29,15 @@ from pushlab.models.registry import REGISTRY, ModelSpec
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+NEW_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
 REPO = "Qwen/Qwen3.5-4B"
 FILES = {
     "config.json": b'{"model_type": "qwen3_5"}',
     "model-00001-of-00002.safetensors": b"first half of the weights",
     "model-00002-of-00002.safetensors": b"second half of the weights",
 }
+# A later commit that changes only config.json.
+NEW_FILES = {**FILES, "config.json": b'{"model_type": "qwen3_5", "fixed": true}'}
 FAKE_TOKEN = "hf_fake_token_for_tests"
 
 
@@ -54,9 +57,12 @@ class FakeHubServer:
     """Answers huggingface_hub's requests for Qwen3.5-4B, inside this process."""
 
     def __init__(self) -> None:
+        self.commits = {COMMIT: FILES, NEW_COMMIT: NEW_FILES}
+        self.main = COMMIT  # the commit that the revision "main" points to
         self.requests: list[str] = []
         self.model_info_status = 200  # set 401 to refuse the token
-        self.listing_status = 200  # set 400 to make listing the files fail
+        self.listing_failures = 0  # how many requests to list files fail
+        self.unreachable: set[str] = set()  # files whose update check fails
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
@@ -65,25 +71,30 @@ class FakeHubServer:
         if path == f"/api/models/{REPO}/revision/main":
             if self.model_info_status != 200:
                 return self._error(self.model_info_status, request)
-            return httpx2.Response(200, json={"id": REPO, "sha": COMMIT})
-        if path == f"/api/models/{REPO}/tree/{COMMIT}":
-            if self.listing_status != 200:
-                return self._error(self.listing_status, request)
-            entries = [
-                {"type": "file", "path": name, "size": len(data), "oid": _oid(data)}
-                for name, data in FILES.items()
-            ]
-            return httpx2.Response(200, json=entries)
-        name = path.removeprefix(f"/{REPO}/resolve/{COMMIT}/")
-        if name in FILES:
-            data = FILES[name]
-            headers = {
-                "X-Repo-Commit": COMMIT,
-                "ETag": f'"{_oid(data)}"',
-                "Content-Length": str(len(data)),
-            }
-            body = b"" if request.method == "HEAD" else data
-            return httpx2.Response(200, headers=headers, content=body)
+            return httpx2.Response(200, json={"id": REPO, "sha": self.main})
+        for commit, files in self.commits.items():
+            if path == f"/api/models/{REPO}/tree/{commit}":
+                if self.listing_failures:
+                    self.listing_failures -= 1
+                    return self._error(400, request)
+                entries = [
+                    {"type": "file", "path": name, "size": len(data), "oid": _oid(data)}
+                    for name, data in files.items()
+                ]
+                return httpx2.Response(200, json=entries)
+            prefix = f"/{REPO}/resolve/{commit}/"
+            if path.startswith(prefix) and path[len(prefix) :] in files:
+                name = path[len(prefix) :]
+                if request.method == "HEAD" and name in self.unreachable:
+                    raise httpx2.ConnectError("the Hub could not be reached")
+                data = files[name]
+                headers = {
+                    "X-Repo-Commit": commit,
+                    "ETag": f'"{_oid(data)}"',
+                    "Content-Length": str(len(data)),
+                }
+                body = b"" if request.method == "HEAD" else data
+                return httpx2.Response(200, headers=headers, content=body)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     @staticmethod
@@ -98,6 +109,9 @@ def _oid(data: bytes) -> str:
 
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHubServer]:
+    # huggingface_hub 2.x sends every request through an httpx2 client. Its
+    # default client factory is private, but it is the only way to put the
+    # library back as it was.
     server = FakeHubServer()
     monkeypatch.setenv("HF_TOKEN", FAKE_TOKEN)
     transport = httpx2.MockTransport(server.handle)
@@ -223,37 +237,48 @@ def test_a_finished_download_needs_no_requests(
     assert hub.requests == []
 
 
+@pytest.mark.parametrize(
+    ("listing_failures", "message"),
+    [(1, "missing or not from commit"), (2, "did not list the files")],
+)
 def test_a_half_full_folder_is_not_recorded_when_listing_fails(
-    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    hub: FakeHubServer,
+    capsys: pytest.CaptureFixture[str],
+    listing_failures: int,
+    message: str,
 ) -> None:
     # An earlier run was interrupted after one file. Now the Hub cannot list
     # the commit's files, and snapshot_download hands the folder back as is.
+    # The check after it may then get the list (1 failure) or not (2).
     folder = tmp_path / "models" / "qwen3.5-4b"
     folder.mkdir(parents=True)
     (folder / "config.json").write_bytes(FILES["config.json"])
-    hub.listing_status = 400
+    hub.listing_failures = listing_failures
     assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
-    assert "did not list the files" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
     assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
 
 
-def test_a_file_missing_after_the_download_is_not_recorded(
-    tmp_path: Path,
-    hub: FakeHubServer,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+def test_a_file_kept_from_an_older_commit_is_not_recorded(
+    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Hugging Face already listed this commit, but a file went missing and
-    # the next snapshot_download returned without fetching it.
+    # A first download finished, then "main" moved on and the record is gone
+    # (a new revision does the same). Checking config.json for an update
+    # fails, so snapshot_download keeps the old copy with only a warning.
     models = tmp_path / "models"
     folder = models / "qwen3.5-4b"
-    main([_config(tmp_path), str(models)])
+    assert main([_config(tmp_path), str(models)]) == 0
     (folder / MARKER).unlink()
-    (folder / "model-00002-of-00002.safetensors").unlink()
-    monkeypatch.setattr(download, "snapshot_download", lambda *args, **kwargs: "")
+    hub.main = NEW_COMMIT
+    hub.unreachable = {"config.json"}
     assert main([_config(tmp_path), str(models)]) == 1
-    assert "model-00002-of-00002.safetensors" in capsys.readouterr().err
+    assert "config.json" in capsys.readouterr().err
     assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+    hub.unreachable.clear()
+    assert main([_config(tmp_path), str(models)]) == 0
+    assert (folder / "config.json").read_bytes() == NEW_FILES["config.json"]
+    assert json.loads((folder / MARKER).read_text())["commit"] == NEW_COMMIT
 
 
 def test_main_explains_a_refused_token(

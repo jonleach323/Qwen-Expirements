@@ -20,6 +20,8 @@ SETUP_POD = ROOT / "scripts" / "setup_pod.sh"
 HF_SECRET = "hf_test_secret_value_123"
 GITHUB_SECRET = "github_pat_test_secret_value_456"
 GPU = "NVIDIA GeForce RTX 4090, 24564 MiB"
+PINNED_UV = "uv 0.11.32 (x86_64-unknown-linux-gnu)"  # how uv prints its version
+IMAGE_UV = "uv 0.13.4 (x86_64-unknown-linux-gnu)"  # the uv in Runpod's image
 SYSTEM_TOOLS = ("bash", "sh", "env", "date", "dirname", "mkdir", "tee", "cat")
 SYSTEM_TOOLS += ("grep", "chmod")
 STEPS = [
@@ -38,14 +40,17 @@ def _run(
     tmp_path: Path,
     *args: str,
     hf_token: bool = True,
-    pod_uv_no_sync: bool = True,
+    pod_uv_no_sync: bool | None = True,
     tools: dict[str, str | None] | None = None,
+    **shell_env: str,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Run setup_pod.sh with fake tools; return the result and the tool calls.
 
-    `tools` replaces the shell code of some fake tools by name, or leaves a
-    tool out entirely when given None. Every fake logs to calls.log, which
-    the shell code can name as CALLS.
+    `pod_uv_no_sync` says whether the pod sets UV_NO_SYNC=1, as Runpod records
+    it in /etc/rp_environment; None means there is no such file. `tools`
+    replaces the shell code of some fake tools by name, or leaves a tool out
+    entirely when given None. Every fake logs to calls.log, which the shell
+    code can name as CALLS. `shell_env` adds variables to the calling shell.
     """
     bin_dir = tmp_path / "bin"
     system = tmp_path / "system"
@@ -57,7 +62,7 @@ def _run(
     calls = tmp_path / "calls.log"
     fakes = {
         "nvidia-smi": f'echo "{GPU}, 580.82.07"',
-        "uv": 'echo "uv $*" >> "CALLS"; [ "$1" = --version ] && echo uv 0.11.32',
+        "uv": f'echo "uv $*" >> "CALLS"; [ "$1" = --version ] && echo "{PINNED_UV}"',
         "claude": 'echo "claude $*" >> "CALLS"; echo "2.1.0 (Claude Code)"',
         "curl": 'echo "curl $*" >> "CALLS"; exit 1',
         **(tools or {}),
@@ -68,19 +73,27 @@ def _run(
         if body is not None:
             tool.write_text(f"#!/bin/sh\n{body.replace('CALLS', str(calls))}\nexit 0\n")
             tool.chmod(0o755)
-    env = {
-        **os.environ,
+    rp_environment = tmp_path / "rp_environment"
+    rp_environment.unlink(missing_ok=True)
+    if pod_uv_no_sync is not None:
+        line = 'export UV_NO_SYNC="1"' if pod_uv_no_sync else 'export LANG="C.UTF-8"'
+        rp_environment.write_text(line + "\n")
+    # BASH_ENV, ENV and exported functions could bring back real tools.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BASH_FUNC_")}
+    for name in ("HF_TOKEN", "UV_NO_SYNC", "BASH_ENV", "ENV"):
+        env.pop(name, None)
+    env |= {
         "HOME": str(tmp_path / "home"),
         "PUSHLAB_WORKSPACE": str(tmp_path / "workspace"),
+        "PUSHLAB_RP_ENVIRONMENT": str(rp_environment),
         "PATH": f"{bin_dir}{os.pathsep}{system}",
         "GITHUB_TOKEN": GITHUB_SECRET,
     }
-    for name in ("HF_TOKEN", "UV_NO_SYNC"):
-        env.pop(name, None)
     if hf_token:
         env["HF_TOKEN"] = HF_SECRET
     if pod_uv_no_sync:
         env["UV_NO_SYNC"] = "1"
+    env |= shell_env
     for name, body in fakes.items():  # a fake must never resolve to a real tool
         found = shutil.which(name, path=env["PATH"])
         assert found == (str(bin_dir / name) if body is not None else None), name
@@ -91,6 +104,7 @@ def _run(
         text=True,
         timeout=60,
         check=False,
+        start_new_session=True,  # so a fake can press Ctrl-C for the script alone
     )
     lines = calls.read_text().splitlines() if calls.exists() else []
     return result, lines
@@ -174,6 +188,21 @@ def test_warns_when_the_pod_does_not_set_uv_no_sync(tmp_path: Path) -> None:
     assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == 2
 
 
+def test_warns_even_when_the_shell_has_loaded_pushlab_env(tmp_path: Path) -> None:
+    # A terminal that loaded pushlab.env has UV_NO_SYNC=1, but the pod may not.
+    result, _ = _run(tmp_path, pod_uv_no_sync=False, UV_NO_SYNC="1")
+    assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == 2
+
+
+@pytest.mark.parametrize(("shell_value", "warnings"), [("1", 0), ("", 2)])
+def test_without_runpods_record_the_shell_decides(
+    tmp_path: Path, shell_value: str, warnings: int
+) -> None:
+    result, _ = _run(tmp_path, pod_uv_no_sync=None, UV_NO_SYNC=shell_value)
+    assert result.returncode == 0, _output(result)
+    assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == warnings
+
+
 def test_second_run_counts_as_warm_and_repeats_nothing(tmp_path: Path) -> None:
     _run(tmp_path)
     result, _ = _run(tmp_path)
@@ -200,7 +229,9 @@ fi"""
 def test_installs_the_pinned_uv_and_claude_code_when_needed(tmp_path: Path) -> None:
     # Runpod's image brings another uv, and Claude Code is missing. The fake
     # curl hands out installers that put fake programs in ~/.local/bin.
-    image_uv = 'echo "image-uv $*" >> "CALLS"; [ "$1" = --version ] && echo uv 0.13.4'
+    image_uv = (
+        f'echo "image-uv $*" >> "CALLS"; [ "$1" = --version ] && echo "{IMAGE_UV}"'
+    )
     fake_tool = (
         'mkdir -p "$HOME/.local/bin"\n'
         'printf \'#!/bin/sh\\necho "{name} $*" >> "CALLS"\\n'
@@ -210,7 +241,7 @@ def test_installs_the_pinned_uv_and_claude_code_when_needed(tmp_path: Path) -> N
     uv_installer = (
         'echo "uv-installer UV_NO_MODIFY_PATH=$UV_NO_MODIFY_PATH" >> "CALLS"\n'
     )
-    uv_installer += fake_tool.format(name="uv", version="uv 0.11.32")
+    uv_installer += fake_tool.format(name="uv", version=PINNED_UV)
     claude_installer = fake_tool.format(name="claude", version="2.1.0 (Claude Code)")
     curl = f"""echo "curl $*" >> "CALLS"
 case "$*" in
@@ -227,14 +258,23 @@ esac"""
     assert "curl -LsSf https://astral.sh/uv/0.11.32/install.sh" in calls
     assert "uv-installer UV_NO_MODIFY_PATH=1" in calls
     assert "curl -fsSL https://claude.ai/install.sh" in calls
-    assert "found uv 0.13.4, not the pinned version" in result.stdout
-    assert "installed uv 0.11.32" in result.stdout
+    assert f"found {IMAGE_UV}, not the pinned version" in result.stdout
+    assert f"installed {PINNED_UV}" in result.stdout
     assert "installed 2.1.0 (Claude Code)" in result.stdout
     # Every later uv command used the pinned uv, not the image's.
     assert [call for call in calls if call.startswith("image-uv")] == [
         "image-uv --version"
     ]
     assert "uv sync --locked --no-group cpu --extra gpu" in calls
+
+
+def test_stops_when_the_pinned_uv_is_still_not_found(tmp_path: Path) -> None:
+    # The installer ran but left the image's uv first on PATH.
+    image_uv = f'[ "$1" = --version ] && echo "{IMAGE_UV}"'
+    result, _ = _run(tmp_path, tools={"uv": image_uv, "curl": "echo :"})
+    assert result.returncode == 1
+    assert f'uv --version now prints "{IMAGE_UV}"' in _output(result)
+    assert "Setup stopped at step 2/8" in _log(tmp_path)
 
 
 def test_stops_when_no_gpu_is_visible(tmp_path: Path) -> None:
@@ -248,8 +288,19 @@ def test_stops_when_the_driver_is_too_old_for_cuda_13(tmp_path: Path) -> None:
     result, calls = _run(tmp_path, tools={"nvidia-smi": f'echo "{GPU}, 550.54.15"'})
     assert result.returncode != 0
     assert "580" in _output(result)
-    assert "Terminate this pod" in _output(result)
+    assert "Terminate this pod (nothing on it is needed yet)" in _output(result)
     assert calls == []
+
+
+def test_an_old_driver_on_a_warm_volume_warns_before_terminating(
+    tmp_path: Path,
+) -> None:
+    # A volume that moved to another machine keeps work worth saving.
+    _run(tmp_path)
+    result, _ = _run(tmp_path, tools={"nvidia-smi": f'echo "{GPU}, 550.54.15"'})
+    assert result.returncode != 0
+    assert "Terminating this pod deletes /workspace" in _output(result)
+    assert "nothing on it is needed yet" not in _output(result)
 
 
 def test_stops_with_a_clear_message_when_hf_token_is_missing(
@@ -268,8 +319,9 @@ def test_ctrl_c_still_says_where_setup_stopped(tmp_path: Path) -> None:
     if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
         pytest.skip("Ctrl-C is ignored in this test run, so it cannot be simulated")
     # The fake uv interrupts the script during step 3, as Ctrl-C would.
+    # Like Ctrl-C in a terminal, it signals every process of the script.
     interrupt = (
-        '[ "$1" = --version ] && echo uv 0.11.32; [ "$1" = sync ] && kill -INT $PPID'
+        f'[ "$1" = --version ] && echo "{PINNED_UV}"; [ "$1" = sync ] && kill -INT 0'
     )
     result, _ = _run(tmp_path, tools={"uv": interrupt})
     assert result.returncode == 130

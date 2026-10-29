@@ -83,8 +83,9 @@ stops. Never copy it to `/workspace` or into the repository.
    version doesn't matter, because the script installs its own, but
    pushlab's torch needs a machine whose NVIDIA driver supports CUDA 13.0
    (driver 580 or newer). In the older deploy page, use
-   **Additional filters → CUDA Versions** and select 13.0 instead. Step 1 of
-   the script checks the driver. Keep **Start Jupyter notebook** on.
+   **Additional filters → CUDA Versions** instead and select 13.0, 13.1,
+   13.2, 13.3 and 13.4: it matches versions exactly. Step 1 of the script
+   checks the driver. Keep **Start Jupyter notebook** on.
 3. **Environment variables:** select **Set overrides** (in the older deploy
    page, **Edit Template**) and add three variables:
 
@@ -100,7 +101,10 @@ stops. Never copy it to `/workspace` or into the repository.
    every terminal and notebook from the moment the pod starts. The script
    still installs the environment, because `uv sync` ignores it.
 4. **GPU:** choose **RTX 4090**. Under **Filter**, set **Cloud type** to
-   **Secure**.
+   **Secure**. Then check **CUDA versions** in the same panel: the template
+   fills it with 13.0 to 13.4, but choosing a cloud type can empty it. If it
+   is empty, select 13.0, 13.1, 13.2, 13.3 and 13.4 again before
+   **Apply filters**.
 5. **Storage:** leave the container disk at its default. Under persistent
    storage, choose **Volume disk**, set it to 100 GB and keep the mount path
    `/workspace`.
@@ -171,10 +175,12 @@ paste the code back into the terminal.
 - Step 1 shows `NVIDIA GeForce RTX 4090` and about 24,000 MiB of memory.
 - Step 7 ends with `2 passed`.
 - Step 8 says `beat the 20-minute target`.
-- The output has no line starting with `warning:`.
+- The output never says `the pod does not set UV_NO_SYNC=1 itself`.
 - `ls /workspace/models/qwen3.5-4b` lists `config.json` and the
   `.safetensors` weight files.
-- `echo $UV_NO_SYNC` prints `1`.
+- `grep UV_NO_SYNC /etc/rp_environment` prints `export UV_NO_SYNC="1"`.
+  That file holds the pod's own variables; `echo $UV_NO_SYNC` would also
+  show the copy in `pushlab.env`.
 - This prints `2.14.1+cu130 NVIDIA GeForce RTX 4090`:
 
   ```bash
@@ -230,26 +236,42 @@ continue with "Every time you start the pod again" once it is running.
   tied to one machine (Secure Cloud only, created at
   <https://www.console.runpod.io/user/storage>).
 - **"The NVIDIA driver is ..., but pushlab's CUDA 13.0 build of torch needs
-  driver 580 or newer".** The machine's driver is too old. Terminate this
-  pod, so it stops costing money (nothing on it is needed yet), then deploy
-  a new one with CUDA 13.0 chosen as in step 2 of "Deploy the pod".
+  driver 580 or newer".** The machine's driver is too old. On a fresh pod,
+  terminate it so it stops costing money (nothing on it is needed yet). On
+  a warm volume, for example after a migration, terminating deletes
+  `/workspace`, so copy off what you need first. Then deploy a new pod with
+  CUDA 13.0 chosen as in steps 2 and 4 of "Deploy the pod".
+- **The pod never finishes starting, and its system log says
+  `unsatisfied condition: cuda>=13.0`.** The pod landed on a machine whose
+  driver is too old for the CUDA 13.0 image, so the script cannot even run.
+  Terminate it and deploy again with **CUDA versions** set as in step 4 of
+  "Deploy the pod".
 - **"HF_TOKEN is not set".** The pod has no `HF_TOKEN` variable. On the Pods
   page, open the pod's **⋮** menu, select **Edit Pod**, add the variable as
   in step 3 of "Deploy the pod" and select **Save**. The pod restarts, which
   keeps `/workspace`.
 - **"warning: the pod does not set UV_NO_SYNC=1 itself".** Add the
   `UV_NO_SYNC` variable with the value `1` the same way, with **Edit Pod**.
-- **"Hugging Face refused the download: 401".** The token is wrong or was
-  deleted. Create a new one, update the `hf_token` secret with
-  **Edit Secret Value**, and restart the pod.
-- **"The download stopped: ..."** Usually the connection to Hugging Face
-  failed. Run the script again; the files that finished are kept.
+  Until then, a plain `uv run` in a notebook, or in a terminal opened before
+  the script ran, can swap in the CPU-only torch.
+- **"Hugging Face refused the download: Client error '401 Unauthorized'
+  ..."** The token is wrong or was deleted. Create a new one, update the
+  `hf_token` secret with **Edit Secret Value**, and restart the pod.
+- **"The download stopped: ..."** If the message mentions a connection, a
+  timeout or missing files, the connection to Hugging Face failed: run the
+  script again; the files that finished are kept. Anything else, such as
+  "No space left on device", fails again until it is fixed, so ask Claude
+  about the message and the log in `/workspace/logs` first.
 - **`git clone` or `git pull` fails with "Authentication failed" or
   "Repository not found".** The `GITHUB_TOKEN` variable is missing, the
   token has expired (after 90 days) or it can't see this repository.
   `echo ${GITHUB_TOKEN:+set}` prints `set` if the pod has the variable,
-  without showing it. Create a new token as in step 1, update the
-  `github_token` secret and restart the pod.
+  without showing it. If it prints an empty line, add `GITHUB_TOKEN` with
+  the value `{{ RUNPOD_SECRET_github_token }}` through **Edit Pod**, as for
+  `HF_TOKEN`. If it prints `set`, create a new token as in step 1, update
+  the `github_token` secret with **Edit Secret Value** and restart the pod.
+  If it was the first `git clone` that failed, nothing was cloned: once the
+  pod is running again, repeat "5. Clone the repository" instead.
 - **"needs to be updated, but `--locked` was provided".** Someone changed
   `pyproject.toml` without `uv.lock`. Fix it in a cloud session with
   `uv lock`, merge it, then `git pull` on the pod.
