@@ -1,0 +1,9 @@
+# Sprint 0 baseline: one unsteered reply from `pushlab baseline`, to show that
+# a model loads, answers with thinking off and greedy decoding, and that the
+# run is stored with its manifest. The run is s0-baseline-000001.
+experiment: s0-baseline
+# Greedy decoding draws no random numbers, but every experiment sets a seed.
+seed: 0
+# The reply's prompt, used unless the command is given --prompt.
+prompt_id: s0-neuron-explainer
+prompt: Explain what a neuron in a language model is, in three sentences.

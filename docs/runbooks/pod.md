@@ -11,7 +11,8 @@ pushlab research. It runs eight steps:
 4. It installs the Claude Code CLI if it is missing.
 5. It checks that your Hugging Face token is set.
 6. It downloads the models in `configs/models.yaml` to `/workspace/models`.
-7. It runs the GPU smoke tests.
+7. It runs the GPU smoke tests: a check that torch can use the GPU, and one
+   reply from Qwen3.5-4B with `pushlab baseline`.
 8. It prints the total time and whether it beat the target.
 
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
@@ -174,7 +175,7 @@ paste the code back into the terminal.
 ## Check that it worked
 
 - Step 1 shows `NVIDIA GeForce RTX 4090` and about 24,000 MiB of memory.
-- Step 7 ends with `2 passed`.
+- Step 7 ends with `3 passed`.
 - Step 8 says `beat the 20-minute target`.
 - The output never says `the pod does not set UV_NO_SYNC=1 itself`.
 - `ls /workspace/models/qwen3.5-4b` lists `config.json` and the
@@ -207,6 +208,40 @@ paste the code back into the terminal.
 Stop the pod whenever you are not using it, because the GPU is billed for
 every second the pod runs. Terminate it only when you are done for good: that
 deletes `/workspace`.
+
+## Generate the baseline reply
+
+`pushlab baseline` loads a downloaded model, asks it one question with
+thinking off, always picks the most likely next token, and saves the reply
+as a run. It is a GPU job, so you start it yourself:
+
+```bash
+cd /workspace/Qwen-Expirements
+uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/s0-baseline
+```
+
+It prints the reply and writes two files into the `--out` folder:
+
+- `runs.parquet`, the run `s0-baseline-000001`: the reply's text and token
+  IDs, the model and its commit, and the decoding settings.
+- `manifest.json`, what produced it: the code commit, the lockfile's hash,
+  the model's ID and commit, the GPU, the CUDA, driver, torch and
+  transformers versions, and the start and end times.
+
+The question comes from `experiments/p0/s0_baseline.yaml`; `--prompt "..."`
+asks another one, and `--max-new-tokens` caps the reply (200 by default). It
+refuses to replace an earlier run in the same folder unless you add
+`--overwrite`. Keep outputs under `/workspace/runs`, outside the repository:
+run outputs never go in git.
+
+To look at the run, start Python with `uv run python` and type:
+
+```python
+from pathlib import Path
+from pushlab.store.records import read_runs
+
+print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
+```
 
 ## Rules on the pod
 

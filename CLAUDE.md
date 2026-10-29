@@ -11,6 +11,8 @@ Current sprint: S0 (Bootstrap).
 - Prepare the GPU pod, or update it after uv.lock changes: bash scripts/setup_pod.sh
   (--dry-run lists the steps; see docs/runbooks/pod.md)
 - Tests: uv run pytest -q tests/unit
+- One unsteered reply saved as a run (a GPU job: the owner runs it on the pod):
+  uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/s0-baseline
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 

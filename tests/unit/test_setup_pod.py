@@ -364,6 +364,6 @@ def test_the_smoke_test_command_selects_only_the_gpu_smoke_tests(
         str(ROOT / "tests"),
     )
     (call,) = recorder.getcalls("pytest_collection_finish")
-    selected = [item.nodeid for item in call.session.items]
-    assert selected
-    assert all(node.startswith("tests/gpu/test_smoke.py::") for node in selected)
+    selected = {item.nodeid.split("::")[0] for item in call.session.items}
+    # The GPU check, and one reply from the real model with pushlab baseline.
+    assert selected == {"tests/gpu/test_smoke.py", "tests/gpu/test_baseline_smoke.py"}

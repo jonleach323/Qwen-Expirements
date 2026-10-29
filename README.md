@@ -8,9 +8,9 @@ vectors of a language model (starting with Qwen3.5-4B and Qwen3-8B) while the
 model writes a reply. It will run large batches of these experiments from YAML
 files and store every result so it traces back to its experiment file, code
 version and model version. The plans in `docs/plan/` describe the research and
-how the software gets built. Today the repository is a skeleton: the folder
-layout, a locked Python environment and a smoke test. There is no experiment
-code yet.
+how the software gets built. So far it can load a model, generate one
+unsteered reply and store it with its manifest (`pushlab baseline`); the
+pushes come in later sprints.
 
 ## Getting started
 
@@ -48,6 +48,12 @@ PyTorch and the GPU kernels, downloads the models and runs the GPU smoke
 tests. `docs/runbooks/pod.md` shows how to create the pod and run it. Never
 run plain `uv sync` on the pod: it would swap in the CPU-only PyTorch. The
 script has not yet run on a real GPU; that is a later Sprint 0 task.
+
+On the pod, `uv run pushlab baseline --model qwen3.5-4b --out
+/workspace/runs/s0-baseline` generates one unsteered reply and saves it as a
+run (`runs.parquet`) with its manifest (`manifest.json`). See "Generate the
+baseline reply" in `docs/runbooks/pod.md`, and `uv run pushlab baseline
+--help` for its options.
 
 Where things go: see "Repository layout and conventions" in
 `docs/plan/development-plan.md`. Design decisions live in `docs/decisions/`.
