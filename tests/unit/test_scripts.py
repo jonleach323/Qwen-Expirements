@@ -1,4 +1,4 @@
-"""Checks on the shell scripts in scripts/."""
+"""Checks on the files in scripts/."""
 
 import os
 import subprocess
@@ -11,8 +11,9 @@ SCRIPTS = sorted((ROOT / "scripts").rglob("*.sh"))
 CLOUD_SETUP = ROOT / "scripts" / "cloud_setup.sh"
 
 
-def test_there_are_scripts_to_check() -> None:
-    assert SCRIPTS
+def test_the_syntax_check_covers_every_setup_script() -> None:
+    names = {script.name for script in SCRIPTS}
+    assert {"cloud_setup.sh", "setup_pod.sh"} <= names
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda path: path.name)
@@ -54,6 +55,12 @@ def test_cloud_setup_refuses_to_run_on_a_gpu_machine(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "GPU" in result.stderr
     assert not marker.exists()
+
+
+def test_the_pod_env_example_names_the_tokens_without_values() -> None:
+    text = (ROOT / "scripts" / "pod.env.example").read_text()
+    settings = [line for line in text.splitlines() if line and line[0] != "#"]
+    assert settings == ["HF_TOKEN=", "GITHUB_TOKEN="]
 
 
 def test_cloud_setup_makes_uv_use_the_system_certificates() -> None:
