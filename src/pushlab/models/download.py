@@ -108,7 +108,8 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
     only a warning: when the Hub cannot list the commit's files it returns the
     folder as it is, and when a file's update check fails it keeps the old
     copy. So a dry run then checks every file before the download counts as
-    finished, and files that the commit no longer has are deleted.
+    finished. Files that Hugging Face downloaded for an earlier commit and
+    this one lacks are deleted; anything else in the folder is kept.
 
     Example:
         >>> spec = REGISTRY["qwen3.5-4b"]
@@ -141,19 +142,33 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
             f"could not check the files of {spec.hf_id} at {commit} with "
             "Hugging Face, probably a connection problem"
         ) from error
+    listed = {f.filename for f in files}
+    # A wrong revision, such as a commit from before the weights were
+    # uploaded, must not empty the folder. Both models ship safetensors.
+    if "config.json" not in listed or not any(
+        n.endswith(".safetensors") for n in listed
+    ):
+        raise IncompleteDownloadError(
+            f"commit {commit} of {spec.hf_id} has no config.json or no "
+            ".safetensors weights; check its revision in "
+            "src/pushlab/models/registry.py"
+        )
     stale = [f.filename for f in files if f.will_download or f.commit_hash != commit]
     if stale:
         names = ", ".join(stale[:3]) + (" and more" if len(stale) > 3 else "")
         raise IncompleteDownloadError(
             f"files of {spec.hf_id} missing or not from commit {commit}: {names}"
         )
-    listed = {f.filename for f in files}
+    # Hugging Face keeps a note for each file it downloads, so only its own
+    # files from an earlier commit are deleted, never anyone else's.
+    notes = folder / ".cache" / "huggingface" / "download"
     for path in sorted(folder.rglob("*")):
         name = path.relative_to(folder).as_posix()
-        if path.is_file() and name not in listed and name != MARKER:
-            if not name.startswith(".cache/"):
-                path.unlink()
-                print(f"{spec.name}: removed {name}, which commit {commit} lacks")
+        note = notes / f"{name}.metadata"
+        if name not in listed and path.is_file() and note.is_file():
+            path.unlink()
+            note.unlink()
+            print(f"{spec.name}: removed {name}, which commit {commit} lacks")
     return commit
 
 

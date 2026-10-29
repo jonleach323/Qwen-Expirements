@@ -62,7 +62,9 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   that was still downloading starts over. Partial files that a killed
   download leaves behind are deleted first. A new revision in the registry
   downloads again: `snapshot_download` fetches only the files that changed,
-  and the files that the new commit no longer has are deleted.
+  and the files it downloaded earlier that the new commit no longer has are
+  deleted. Hugging Face keeps a note for each file it downloads, so nothing
+  else in the folder is touched.
 - **Checking the result.** `snapshot_download` can return before the folder
   matches the commit, with only a warning: when the Hub cannot list the
   commit's files it returns the folder as it is, perhaps half full, and when
@@ -71,7 +73,9 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   reports every file's commit and whether it still needs downloading, and
   stops if any file is missing or from another commit. The dry run uses an
   empty cache, so a copy in Hugging Face's shared cache cannot stand in for
-  a missing file. Files that the commit no longer has are then deleted.
+  a missing file. A commit without `config.json` or `.safetensors` weights,
+  such as one from before the weights were uploaded, is refused before
+  anything is deleted, so a wrong revision cannot empty the folder.
 - **Fresh or warm.** A run counts as warm, with the 3-minute target, when
   `/workspace/.pushlab-setup-done` exists. Only a run that passes every step
   writes it.

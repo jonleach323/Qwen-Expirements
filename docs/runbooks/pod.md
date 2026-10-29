@@ -219,6 +219,9 @@ deletes `/workspace`.
   CPU-only one.
 - Never type a token into a command or save it in a file. The pod already has
   both tokens as environment variables.
+- Keep your own files out of `/workspace/models`. The script manages those
+  folders; it leaves files it did not download alone, but they don't belong
+  there.
 
 ## If something goes wrong
 
