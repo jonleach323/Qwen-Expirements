@@ -220,8 +220,9 @@ deletes `/workspace`.
 - Never type a token into a command or save it in a file. The pod already has
   both tokens as environment variables.
 - Keep your own files out of `/workspace/models`. The script manages those
-  folders; it leaves files it did not download alone, but they don't belong
-  there.
+  folders: when it downloads again, it replaces or deletes any file Hugging
+  Face put there, including files you edited or fetched yourself with
+  `hf download`. It leaves other files alone, but they don't belong there.
 
 ## If something goes wrong
 
@@ -274,6 +275,11 @@ continue with "Every time you start the pod again" once it is running.
   script again; the files that finished are kept. Anything else, such as
   "No space left on device", fails again until it is fixed, so ask Claude
   about the message and the log in `/workspace/logs` first.
+- **"The download stopped: ValueError: commit ... has no config.json or no
+  .safetensors weights".** The revision in `src/pushlab/models/registry.py`
+  points at the wrong commit, so running the script again will not help.
+  Ask Claude to fix it in a cloud session, merge it, then `git pull` on the
+  pod and run the script again.
 - **`git clone` or `git pull` fails with "Authentication failed" or
   "Repository not found".** The `GITHUB_TOKEN` variable is missing, the
   token has expired (after 90 days) or it can't see this repository.

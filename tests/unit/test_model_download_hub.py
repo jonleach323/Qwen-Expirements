@@ -211,6 +211,8 @@ def test_files_a_new_commit_dropped_are_removed(
     weights = sorted(path.name for path in folder.glob("*.safetensors"))
     assert weights == ["model.safetensors"]
     assert "removed model-00001-of-00002.safetensors" in capsys.readouterr().out
+    notes = folder / ".cache" / "huggingface" / "download"
+    assert not (notes / "model-00001-of-00002.safetensors.metadata").exists()
     assert json.loads((folder / MARKER).read_text())["commit"] == merged
 
 
@@ -230,12 +232,23 @@ def test_your_own_files_in_the_model_folder_are_kept(
     assert (folder / "notes" / "todo.md").exists()
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        [".gitattributes", "README.md"],  # the repository's first commit
+        [".gitattributes", "config.json"],  # no weights
+        [".gitattributes", "model.safetensors"],  # no config
+    ],
+)
 def test_a_commit_without_weights_is_refused(
-    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    hub: FakeHubServer,
+    capsys: pytest.CaptureFixture[str],
+    names: list[str],
 ) -> None:
-    # A revision pinned by mistake to the repository's first commit.
+    # A revision pinned by mistake to a commit that holds no usable model.
     first = "c" * 40
-    hub.commits[first] = {".gitattributes": b"*.safetensors filter=lfs"}
+    hub.commits[first] = {name: b"content of " + name.encode() for name in names}
     models = tmp_path / "models"
     folder = models / "qwen3.5-4b"
     assert main([_config(tmp_path), str(models)]) == 0
@@ -243,7 +256,8 @@ def test_a_commit_without_weights_is_refused(
     hub.main = first
     assert main([_config(tmp_path), str(models)]) == 1
     assert "registry.py" in capsys.readouterr().err
-    assert len(list(folder.glob("*.safetensors"))) == 2
+    for name in FILES:  # nothing of the finished download was deleted
+        assert (folder / name).exists(), name
     assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
 
 

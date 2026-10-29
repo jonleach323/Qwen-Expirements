@@ -148,7 +148,7 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
     if "config.json" not in listed or not any(
         n.endswith(".safetensors") for n in listed
     ):
-        raise IncompleteDownloadError(
+        raise ValueError(
             f"commit {commit} of {spec.hf_id} has no config.json or no "
             ".safetensors weights; check its revision in "
             "src/pushlab/models/registry.py"
@@ -159,8 +159,9 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
         raise IncompleteDownloadError(
             f"files of {spec.hf_id} missing or not from commit {commit}: {names}"
         )
-    # Hugging Face keeps a note for each file it downloads, so only its own
-    # files from an earlier commit are deleted, never anyone else's.
+    # Hugging Face keeps a note for each file it downloads into the folder,
+    # even if the file was edited since. Unlisted files with a note are
+    # deleted; files without one are kept.
     notes = folder / ".cache" / "huggingface" / "download"
     for path in sorted(folder.rglob("*")):
         name = path.relative_to(folder).as_posix()
