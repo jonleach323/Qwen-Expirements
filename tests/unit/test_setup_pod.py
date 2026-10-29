@@ -22,6 +22,7 @@ GITHUB_SECRET = "github_pat_test_secret_value_456"
 GPU = "NVIDIA GeForce RTX 4090, 24564 MiB"
 PINNED_UV = "uv 0.11.32 (x86_64-unknown-linux-gnu)"  # how uv prints its version
 IMAGE_UV = "uv 0.13.4 (x86_64-unknown-linux-gnu)"  # the uv in Runpod's image
+WARNING = "the pod does not set UV_NO_SYNC=1 itself"
 SYSTEM_TOOLS = ("bash", "sh", "env", "date", "dirname", "mkdir", "tee", "cat")
 SYSTEM_TOOLS += ("grep", "chmod")
 STEPS = [
@@ -40,14 +41,15 @@ def _run(
     tmp_path: Path,
     *args: str,
     hf_token: bool = True,
-    pod_uv_no_sync: bool | None = True,
+    pod_uv_no_sync: bool | str | None = True,
     tools: dict[str, str | None] | None = None,
     **shell_env: str,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Run setup_pod.sh with fake tools; return the result and the tool calls.
 
-    `pod_uv_no_sync` says whether the pod sets UV_NO_SYNC=1, as Runpod records
-    it in /etc/rp_environment; None means there is no such file. `tools`
+    `pod_uv_no_sync` is what the pod sets UV_NO_SYNC to, as Runpod records it in
+    /etc/rp_environment: True means "1", False means not at all, a string means
+    that value, and None means there is no such file. `tools`
     replaces the shell code of some fake tools by name, or leaves a tool out
     entirely when given None. Every fake logs to calls.log, which the shell
     code can name as CALLS. `shell_env` adds variables to the calling shell.
@@ -75,9 +77,15 @@ def _run(
             tool.chmod(0o755)
     rp_environment = tmp_path / "rp_environment"
     rp_environment.unlink(missing_ok=True)
-    if pod_uv_no_sync is not None:
-        line = 'export UV_NO_SYNC="1"' if pod_uv_no_sync else 'export LANG="C.UTF-8"'
-        rp_environment.write_text(line + "\n")
+    value = "1" if pod_uv_no_sync is True else pod_uv_no_sync
+    if value is not None:
+        # Runpod's start script writes every pod variable there, tokens too.
+        lines = [f'export GITHUB_TOKEN="{GITHUB_SECRET}"']
+        if hf_token:
+            lines.append(f'export HF_TOKEN="{HF_SECRET}"')
+        if value is not False:
+            lines.append(f'export UV_NO_SYNC="{value}"')
+        rp_environment.write_text("\n".join(lines) + "\n")
     # BASH_ENV, ENV and exported functions could bring back real tools.
     env = {k: v for k, v in os.environ.items() if not k.startswith("BASH_FUNC_")}
     for name in ("HF_TOKEN", "UV_NO_SYNC", "BASH_ENV", "ENV"):
@@ -91,8 +99,8 @@ def _run(
     }
     if hf_token:
         env["HF_TOKEN"] = HF_SECRET
-    if pod_uv_no_sync:
-        env["UV_NO_SYNC"] = "1"
+    if isinstance(value, str):
+        env["UV_NO_SYNC"] = value
     env |= shell_env
     for name, body in fakes.items():  # a fake must never resolve to a real tool
         found = shutil.which(name, path=env["PATH"])
@@ -163,7 +171,7 @@ def test_full_run_calls_the_tools_in_order_and_logs_each_step(
     assert f"{GPU} of memory" in result.stdout
     beat = r"Finished in \d+m \d\ds: beat the 20-minute target for a fresh pod\."
     assert re.search(beat, result.stdout)
-    assert "warning" not in result.stdout
+    assert WARNING not in result.stdout
 
 
 def test_never_prints_or_logs_secret_values(tmp_path: Path) -> None:
@@ -182,16 +190,19 @@ def test_new_shells_keep_the_cuda_build(tmp_path: Path) -> None:
     assert bashrc.count(f"source {pod_env}") == 1
 
 
-def test_warns_when_the_pod_does_not_set_uv_no_sync(tmp_path: Path) -> None:
-    result, _ = _run(tmp_path, pod_uv_no_sync=False)
+@pytest.mark.parametrize("pod_value", [False, "0", "", "10"])
+def test_warns_when_the_pod_does_not_set_uv_no_sync_to_1(
+    tmp_path: Path, pod_value: bool | str
+) -> None:
+    result, _ = _run(tmp_path, pod_uv_no_sync=pod_value)
     assert result.returncode == 0, _output(result)
-    assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == 2
+    assert result.stdout.count(WARNING) == 2
 
 
 def test_warns_even_when_the_shell_has_loaded_pushlab_env(tmp_path: Path) -> None:
     # A terminal that loaded pushlab.env has UV_NO_SYNC=1, but the pod may not.
     result, _ = _run(tmp_path, pod_uv_no_sync=False, UV_NO_SYNC="1")
-    assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == 2
+    assert result.stdout.count(WARNING) == 2
 
 
 @pytest.mark.parametrize(("shell_value", "warnings"), [("1", 0), ("", 2)])
@@ -200,7 +211,7 @@ def test_without_runpods_record_the_shell_decides(
 ) -> None:
     result, _ = _run(tmp_path, pod_uv_no_sync=None, UV_NO_SYNC=shell_value)
     assert result.returncode == 0, _output(result)
-    assert result.stdout.count("the pod does not set UV_NO_SYNC=1 itself") == warnings
+    assert result.stdout.count(WARNING) == warnings
 
 
 def test_second_run_counts_as_warm_and_repeats_nothing(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ the HF_TOKEN environment variable.
 import argparse
 import json
 import sys
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -107,7 +108,7 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
     only a warning: when the Hub cannot list the commit's files it returns the
     folder as it is, and when a file's update check fails it keeps the old
     copy. So a dry run then checks every file before the download counts as
-    finished.
+    finished, and files that the commit no longer has are deleted.
 
     Example:
         >>> spec = REGISTRY["qwen3.5-4b"]
@@ -123,12 +124,22 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
         )
     snapshot_download(spec.hf_id, revision=commit, local_dir=folder)
     try:
-        files = snapshot_download(
-            spec.hf_id, revision=commit, local_dir=folder, dry_run=True
-        )
-    except DryRunError as error:
+        # With an empty cache, a copy in Hugging Face's shared cache (HF_HOME)
+        # cannot stand in for a file the folder lacks.
+        with tempfile.TemporaryDirectory() as empty_cache:
+            files = snapshot_download(
+                spec.hf_id,
+                revision=commit,
+                local_dir=folder,
+                cache_dir=empty_cache,
+                dry_run=True,
+            )
+    except (DryRunError, AssertionError) as error:
+        # AssertionError: the library's own check trips when a file without
+        # download records cannot be checked either.
         raise IncompleteDownloadError(
-            f"Hugging Face did not list the files of {spec.hf_id} at {commit}"
+            f"could not check the files of {spec.hf_id} at {commit} with "
+            "Hugging Face, probably a connection problem"
         ) from error
     stale = [f.filename for f in files if f.will_download or f.commit_hash != commit]
     if stale:
@@ -136,6 +147,13 @@ def hub_download(spec: ModelSpec, folder: Path) -> str:
         raise IncompleteDownloadError(
             f"files of {spec.hf_id} missing or not from commit {commit}: {names}"
         )
+    listed = {f.filename for f in files}
+    for path in sorted(folder.rglob("*")):
+        name = path.relative_to(folder).as_posix()
+        if path.is_file() and name not in listed and name != MARKER:
+            if not name.startswith(".cache/"):
+                path.unlink()
+                print(f"{spec.name}: removed {name}, which commit {commit} lacks")
     return commit
 
 
@@ -195,8 +213,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except HfHubHTTPError as error:
         print(f"Hugging Face refused the download: {error}", file=sys.stderr)
         print(
-            "If it mentions 401, check that HF_TOKEN holds a valid token "
-            "(docs/runbooks/pod.md).",
+            "If it mentions 401, check that HF_TOKEN holds a valid token. If it "
+            "mentions 429 or a 5xx server error, run the script again in a few "
+            "minutes (docs/runbooks/pod.md).",
             file=sys.stderr,
         )
         return 1

@@ -100,11 +100,12 @@ stops. Never copy it to `/workspace` or into the repository.
    `uv run` from replacing the CUDA build of torch with the CPU-only one, in
    every terminal and notebook from the moment the pod starts. The script
    still installs the environment, because `uv sync` ignores it.
-4. **GPU:** choose **RTX 4090**. Under **Filter**, set **Cloud type** to
-   **Secure**. Then check **CUDA versions** in the same panel: the template
-   fills it with 13.0 to 13.4, but choosing a cloud type can empty it. If it
-   is empty, select 13.0, 13.1, 13.2, 13.3 and 13.4 again before
-   **Apply filters**.
+4. **GPU:** choose **RTX 4090**. Open **Filter**. **Cloud type** should
+   already say **Secure**: leave it, because choosing a cloud type, even the
+   one already shown, resets the other filters. (If it says **Community**,
+   choose **Secure**.) **CUDA versions** should say **5 items selected**:
+   13.0 to 13.4, set by the template. If it says **Any**, open it and tick
+   13.0, 13.1, 13.2, 13.3 and 13.4. Then select **Apply filters**.
 5. **Storage:** leave the container disk at its default. Under persistent
    storage, choose **Volume disk**, set it to 100 GB and keep the mount path
    `/workspace`.
@@ -231,17 +232,22 @@ continue with "Every time you start the pod again" once it is running.
   Runpod then offers to start it with CPUs only. Stop the pod and either
   start it again later, or accept Runpod's offer to migrate the pod's data
   when it says no GPU is free. Migrating makes a new pod, with a new ID, on a
-  machine with a free GPU and copies `/workspace` to it. To avoid this,
+  machine with a free GPU and copies `/workspace` to it. If the old pod is
+  still listed afterwards, it keeps its own copy of `/workspace` and its
+  storage bill: terminate it once the new pod has run the script. To avoid
+  this,
   consider a **Network volume** instead of a volume disk next time: it is not
   tied to one machine (Secure Cloud only, created at
   <https://www.console.runpod.io/user/storage>).
 - **"The NVIDIA driver is ..., but pushlab's CUDA 13.0 build of torch needs
   driver 580 or newer".** The machine's driver is too old. On a fresh pod,
   terminate it so it stops costing money (nothing on it is needed yet). On
-  a warm volume, for example after a migration, terminating deletes
-  `/workspace`, so copy off what you need first. Then deploy a new pod with
-  CUDA 13.0 chosen as in steps 2 and 4 of "Deploy the pod".
-- **The pod never finishes starting, and its system log says
+  a warm volume disk, for example after a migration, terminating deletes
+  `/workspace`, so copy off what you need first (a network volume is kept).
+  Then deploy a new pod with CUDA 13.0 chosen as in steps 2 and 4 of
+  "Deploy the pod".
+- **The pod never finishes starting: its page says "Minimum CUDA version
+  requirement not met (13.0)", or its system log says
   `unsatisfied condition: cuda>=13.0`.** The pod landed on a machine whose
   driver is too old for the CUDA 13.0 image, so the script cannot even run.
   Terminate it and deploy again with **CUDA versions** set as in step 4 of
@@ -257,6 +263,9 @@ continue with "Every time you start the pod again" once it is running.
 - **"Hugging Face refused the download: Client error '401 Unauthorized'
   ..."** The token is wrong or was deleted. Create a new one, update the
   `hf_token` secret with **Edit Secret Value**, and restart the pod.
+- **"Hugging Face refused the download: Server error '5..'" or "429 Too
+  Many Requests".** The trouble is on Hugging Face's side. Wait a few
+  minutes and run the script again; the files that finished are kept.
 - **"The download stopped: ..."** If the message mentions a connection, a
   timeout or missing files, the connection to Hugging Face failed: run the
   script again; the files that finished are kept. Anything else, such as

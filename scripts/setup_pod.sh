@@ -119,12 +119,13 @@ check_gpu() {
   done <<<"$gpus"
   local major=${first_driver%%.*}
   if [[ ! $major =~ ^[0-9]+$ ]] || ((major < MIN_DRIVER)); then
-    local advice="Terminate this pod (nothing on it is needed yet) and deploy a new one"
+    local advice=("Terminate this pod (nothing on it is needed yet) and deploy a new one;")
     if [[ $KIND == "warm volume" ]]; then
-      advice="Terminating this pod deletes /workspace: copy off what you need first"
+      advice=("Terminating this pod deletes /workspace unless it is a network volume,"
+        "so copy off what you need first;")
     fi
     fail "The NVIDIA driver is ${first_driver:-unknown}, but pushlab's CUDA 13.0 build of torch" \
-      "needs driver $MIN_DRIVER or newer. $advice;" \
+      "needs driver $MIN_DRIVER or newer." "${advice[@]}" \
       "see \"The NVIDIA driver is\" under \"If something goes wrong\" in docs/runbooks/pod.md."
   fi
 }

@@ -46,9 +46,9 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   deploy settings (runbook, "Deploy the pod", step 3). `pushlab.env` sets it
   too, but `~/.bashrc` only loads that file once the script has run since
   the pod started, while the image's uv works in every shell from the start.
-  Notebooks never read `~/.bashrc`: their kernels start with the pod. Only a
-  pod variable covers notebooks, and terminals opened before the script
-  runs. The script warns when the pod does not set it. It reads the pod's
+  Notebooks never read `~/.bashrc`: their kernels inherit the environment of
+  the Jupyter server, which starts with the pod. Only a pod variable covers
+  notebooks, and terminals opened before the script runs. The script warns when the pod does not set it. It reads the pod's
   own variables from `/etc/rp_environment`, where Runpod's start script
   copies them, because its own shell may have the value from `pushlab.env`.
 - **Models.** `configs/models.yaml` names models from the registry.
@@ -61,15 +61,17 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   next run downloads it again: the files that finished are kept, and a file
   that was still downloading starts over. Partial files that a killed
   download leaves behind are deleted first. A new revision in the registry
-  downloads again, and `snapshot_download` fetches only the files that
-  changed.
+  downloads again: `snapshot_download` fetches only the files that changed,
+  and the files that the new commit no longer has are deleted.
 - **Checking the result.** `snapshot_download` can return before the folder
   matches the commit, with only a warning: when the Hub cannot list the
   commit's files it returns the folder as it is, perhaps half full, and when
   a file's update check fails it keeps the old copy. So before it writes the
   record, the module runs `snapshot_download` again as a dry run, which
   reports every file's commit and whether it still needs downloading, and
-  stops if any file is missing or from another commit.
+  stops if any file is missing or from another commit. The dry run uses an
+  empty cache, so a copy in Hugging Face's shared cache cannot stand in for
+  a missing file. Files that the commit no longer has are then deleted.
 - **Fresh or warm.** A run counts as warm, with the 3-minute target, when
   `/workspace/.pushlab-setup-done` exists. Only a run that passes every step
   writes it.
@@ -108,8 +110,8 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 - Never run plain `uv sync` on the pod. CLAUDE.md and the runbook say so. To
   update the environment, rerun the script.
 - On a pod deployed without the `UV_NO_SYNC` variable, notebooks are never
-  protected, and terminals only once the script has run since the pod
-  started. The script's warning and the runbook point this out.
+  protected, and terminals only if they were opened after the script ran
+  since the pod started. The script's warning and the runbook point this out.
 - A warm start after a restart should take about a minute: reinstalling uv
   and Claude Code, checking the environment and running the smoke tests.
 - To drop a model, remove it from `configs/models.yaml` and delete its

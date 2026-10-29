@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from huggingface_hub import set_client_factory
+from huggingface_hub import constants, set_client_factory
 from huggingface_hub.utils._http import default_client_factory
 
 from pushlab.models import download
@@ -108,12 +108,13 @@ def _oid(data: bytes) -> str:
 
 
 @pytest.fixture
-def hub(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHubServer]:
+def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHubServer]:
     # huggingface_hub 2.x sends every request through an httpx2 client. Its
     # default client factory is private, but it is the only way to put the
-    # library back as it was.
+    # library back as it was. Its shared cache moves to the test's folder.
     server = FakeHubServer()
     monkeypatch.setenv("HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
     transport = httpx2.MockTransport(server.handle)
     set_client_factory(lambda: httpx2.Client(transport=transport))
     yield server
@@ -235,11 +236,15 @@ def test_a_finished_download_needs_no_requests(
     hub.requests.clear()
     assert main([_config(tmp_path), str(models)]) == 0
     assert hub.requests == []
+    # Without the record, Hugging Face's own notes still spare every file.
+    (models / "qwen3.5-4b" / MARKER).unlink()
+    assert main([_config(tmp_path), str(models)]) == 0
+    assert not [request for request in hub.requests if request.startswith("GET /Qwen")]
 
 
 @pytest.mark.parametrize(
     ("listing_failures", "message"),
-    [(1, "missing or not from commit"), (2, "did not list the files")],
+    [(1, "missing or not from commit"), (2, "probably a connection problem")],
 )
 def test_a_half_full_folder_is_not_recorded_when_listing_fails(
     tmp_path: Path,
@@ -258,6 +263,58 @@ def test_a_half_full_folder_is_not_recorded_when_listing_fails(
     assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
     assert message in capsys.readouterr().err
     assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+
+
+def test_a_file_that_cannot_be_checked_is_called_a_connection_problem(
+    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # config.json is there without Hugging Face's notes, and checking it
+    # fails every time, which trips an assertion inside huggingface_hub.
+    folder = tmp_path / "models" / "qwen3.5-4b"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_bytes(FILES["config.json"])
+    hub.unreachable = {"config.json"}
+    assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
+    assert "probably a connection problem" in capsys.readouterr().err
+    assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+
+
+def test_a_copy_in_the_shared_cache_does_not_count(
+    tmp_path: Path, hub: FakeHubServer
+) -> None:
+    # Loading the model by its Hugging Face ID filled the shared cache, but
+    # the model folder is still half full.
+    for name, data in FILES.items():
+        cached = tmp_path / "hub" / "models--Qwen--Qwen3.5-4B" / "snapshots"
+        (cached / COMMIT).mkdir(parents=True, exist_ok=True)
+        (cached / COMMIT / name).write_bytes(data)
+    folder = tmp_path / "models" / "qwen3.5-4b"
+    folder.mkdir(parents=True)
+    (folder / "config.json").write_bytes(FILES["config.json"])
+    hub.listing_failures = 1
+    assert main([_config(tmp_path), str(tmp_path / "models")]) == 1
+    assert not is_downloaded(REGISTRY["qwen3.5-4b"], folder)
+
+
+def test_files_a_new_commit_dropped_are_removed(
+    tmp_path: Path, hub: FakeHubServer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The new commit merges the two weight files into one.
+    merged = "a" * 40
+    hub.commits[merged] = {
+        "config.json": FILES["config.json"],
+        "model.safetensors": b"all of the weights",
+    }
+    models = tmp_path / "models"
+    folder = models / "qwen3.5-4b"
+    assert main([_config(tmp_path), str(models)]) == 0
+    (folder / MARKER).unlink()
+    hub.main = merged
+    assert main([_config(tmp_path), str(models)]) == 0
+    weights = sorted(path.name for path in folder.glob("*.safetensors"))
+    assert weights == ["model.safetensors"]
+    assert "removed model-00001-of-00002.safetensors" in capsys.readouterr().out
+    assert json.loads((folder / MARKER).read_text())["commit"] == merged
 
 
 def test_a_file_kept_from_an_older_commit_is_not_recorded(
