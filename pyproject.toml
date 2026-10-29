@@ -20,6 +20,10 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+# The pushlab command (src/pushlab/cli.py), installed by uv sync.
+[project.scripts]
+pushlab = "pushlab.cli:main"
+
 [project.optional-dependencies]
 # GPU pod only: CUDA torch plus the fast kernels for Qwen3.5's linear-attention
 # layers. Install with `uv sync --no-group cpu --extra gpu`.

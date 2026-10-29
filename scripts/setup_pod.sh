@@ -156,15 +156,17 @@ install_uv() {
 write_pod_env() {
   cat >"$POD_ENV" <<EOF
 # Written by scripts/setup_pod.sh; new shells load it through ~/.bashrc.
-# uv's cache, the Python it installs and Hugging Face's files stay on the
-# volume. UV_NO_SYNC=1 stops uv run from swapping the CUDA build of torch for
-# the CPU-only one (docs/decisions/0002-torch-builds.md).
+# uv's cache, the Python it installs, Hugging Face's files and the GPU kernels
+# Triton compiles for Qwen3.5 stay on the volume. UV_NO_SYNC=1 stops uv run
+# from swapping the CUDA build of torch for the CPU-only one
+# (docs/decisions/0002-torch-builds.md).
 export PATH="\$HOME/.local/bin:\$PATH"
 export UV_CACHE_DIR="$WORKSPACE/.cache/uv"
 export UV_PYTHON_INSTALL_DIR="$WORKSPACE/.local/share/uv/python"
 export UV_PYTHON_PREFERENCE=only-managed
 export UV_NO_SYNC=1
 export HF_HOME="$WORKSPACE/.cache/huggingface"
+export TRITON_CACHE_DIR="$WORKSPACE/.cache/triton"
 EOF
   local line="source $POD_ENV"
   if ! grep -qxF "$line" "$HOME/.bashrc" 2>/dev/null; then

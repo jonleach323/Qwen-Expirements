@@ -190,6 +190,15 @@ def test_new_shells_keep_the_cuda_build(tmp_path: Path) -> None:
     assert bashrc.count(f"source {pod_env}") == 1
 
 
+def test_compiled_gpu_kernels_stay_on_the_volume(tmp_path: Path) -> None:
+    # Triton compiles flash-linear-attention's kernels on first use; on the
+    # container disk they would be lost, and compiled again, at every stop.
+    _run(tmp_path)
+    pod_env = (tmp_path / "workspace" / "pushlab.env").read_text()
+    cache = tmp_path / "workspace" / ".cache" / "triton"
+    assert f'export TRITON_CACHE_DIR="{cache}"' in pod_env
+
+
 @pytest.mark.parametrize("pod_value", [False, "0", "", "10"])
 def test_warns_when_the_pod_does_not_set_uv_no_sync_to_1(
     tmp_path: Path, pod_value: bool | str
@@ -364,6 +373,6 @@ def test_the_smoke_test_command_selects_only_the_gpu_smoke_tests(
         str(ROOT / "tests"),
     )
     (call,) = recorder.getcalls("pytest_collection_finish")
-    selected = [item.nodeid for item in call.session.items]
-    assert selected
-    assert all(node.startswith("tests/gpu/test_smoke.py::") for node in selected)
+    selected = {item.nodeid.split("::")[0] for item in call.session.items}
+    # The GPU check, and one reply from the real model with pushlab baseline.
+    assert selected == {"tests/gpu/test_smoke.py", "tests/gpu/test_baseline_smoke.py"}

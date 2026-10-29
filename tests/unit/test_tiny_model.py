@@ -1,7 +1,10 @@
-"""The tiny_model fixture: shape, precision, determinism and no downloads."""
+"""The tiny test models: shape, precision, determinism, no downloads, and
+Qwen3.5 on PyTorch code in every CPU test."""
 
+import importlib
 from collections.abc import Callable
 
+import pytest
 import torch
 from transformers import Qwen3ForCausalLM
 
@@ -51,3 +54,21 @@ def test_tests_cannot_download_from_hugging_face() -> None:
     import huggingface_hub.constants
 
     assert huggingface_hub.constants.HF_HUB_OFFLINE
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "causal_conv1d_fn",
+        "causal_conv1d_update",
+        "torch_chunk_gated_delta_rule",
+        "torch_recurrent_gated_delta_rule",
+    ],
+)
+def test_cpu_tests_run_qwen3_5_on_pytorch_code(name: str) -> None:
+    # tests/conftest.py switches these from the GPU kernels, which refuse the
+    # CPU tensors of the unit tests on the pod, to transformers' own code.
+    # A transformers release that hides that code fails here, not on the pod.
+    module = importlib.import_module("transformers.models.qwen3_5.modeling_qwen3_5")
+    code = getattr(module, name).__code__
+    assert (code.co_name, code.co_filename) == (name, module.__file__)

@@ -11,7 +11,10 @@ pushlab research. It runs eight steps:
 4. It installs the Claude Code CLI if it is missing.
 5. It checks that your Hugging Face token is set.
 6. It downloads the models in `configs/models.yaml` to `/workspace/models`.
-7. It runs the GPU smoke tests.
+7. It runs the GPU smoke tests: checks that torch can use the GPU and that
+   the fast kernels for Qwen3.5 load, and one reply from Qwen3.5-4B with
+   `pushlab baseline`. That test loads the 9 GB model, so step 7 can show
+   nothing for a minute or two.
 8. It prints the total time and whether it beat the target.
 
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
@@ -174,7 +177,7 @@ paste the code back into the terminal.
 ## Check that it worked
 
 - Step 1 shows `NVIDIA GeForce RTX 4090` and about 24,000 MiB of memory.
-- Step 7 ends with `2 passed`.
+- Step 7 ends with `5 passed`.
 - Step 8 says `beat the 20-minute target`.
 - The output never says `the pod does not set UV_NO_SYNC=1 itself`.
 - `ls /workspace/models/qwen3.5-4b` lists `config.json` and the
@@ -200,7 +203,8 @@ paste the code back into the terminal.
    ```
 
    It reinstalls uv and Claude Code, checks everything else and skips the
-   finished work. It should beat the 3-minute target for a warm volume.
+   finished work. Step 7 loads the model again for its test reply, so it is
+   the slowest step on a warm volume.
 3. Run `source /workspace/pushlab.env` and `claude` again, as the script
    says.
 
@@ -208,11 +212,58 @@ Stop the pod whenever you are not using it, because the GPU is billed for
 every second the pod runs. Terminate it only when you are done for good: that
 deletes `/workspace`.
 
+## Generate the baseline reply
+
+`pushlab baseline` loads a downloaded model, asks it one question with
+thinking off, always picks the most likely next token, and saves the reply
+as a run. It is a GPU job, so you start it yourself:
+
+```bash
+cd /workspace/Qwen-Expirements
+uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/s0-baseline
+```
+
+Its first line should say `Loading qwen3.5-4b in bfloat16 on the GPU...`.
+If it says `float32 on the CPU`, torch cannot use the GPU: press Ctrl-C and
+run `bash scripts/setup_pod.sh`. `--model` works only for a model that
+`configs/models.yaml` lists, because the setup script downloads only those.
+
+It prints the reply and writes two files into the `--out` folder:
+
+- `runs.parquet`, the run `s0-baseline-000001`: the reply's text and token
+  IDs, the model and its commit, and the decoding settings.
+- `manifest.json`, what produced it: the code commit, the lockfile's hash,
+  the model's ID and commit, the GPU, the CUDA and driver versions, the
+  versions of torch, transformers and the GPU kernels, and the start and
+  end times.
+
+The question comes from `experiments/p0/s0_baseline.yaml`; `--prompt "..."`
+asks another one, and `--max-new-tokens` caps the reply (200 by default). It
+refuses to replace an earlier run in the same folder unless you add
+`--overwrite`. Keep outputs under `/workspace/runs`, outside the repository:
+run outputs never go in git.
+
+To look at the run, start Python with `uv run python` and type:
+
+```python
+from pathlib import Path
+from pushlab.store.records import read_runs
+
+print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
+```
+
 ## Rules on the pod
 
 - **Never run plain `uv sync` on the pod.** It would replace the CUDA build
-  of torch with the CPU-only one. To update the environment after
-  `uv.lock` changes, run `bash scripts/setup_pod.sh` again.
+  of torch with the CPU-only one. After a `git pull` that changes `uv.lock`,
+  `pyproject.toml` or `configs/models.yaml`, run `bash scripts/setup_pod.sh`
+  again: it updates the environment, installs the `pushlab` command and
+  downloads new models.
+- Don't edit files of the repository on the pod, such as
+  `configs/models.yaml`. Change them through a pull request from a cloud
+  session, then `git pull`. An edit made on the pod makes every manifest
+  record uncommitted code (`code_dirty: true`) and can stop a later
+  `git pull`.
 - `uv run ...` is safe wherever `UV_NO_SYNC=1` is set, and the pod variable
   from step 3 of "Deploy the pod" sets it in every terminal and notebook.
   Without it, a plain `uv run` replaces the CUDA build of torch with the
@@ -229,7 +280,9 @@ deletes `/workspace`.
 The last step number on screen shows where the script stopped, and the log
 file in `/workspace/logs` has everything. Fix the cause and run the script
 again; it skips the work already finished. If a fix restarts the pod,
-continue with "Every time you start the pod again" once it is running.
+continue with "Every time you start the pod again" once it is running. If
+no entry below matches, or the fix is not something you can do on the pod,
+start a Claude Code cloud session and give it the message and the log.
 
 - **"No GPU is visible".** The pod has no GPU. This happens when a stopped
   pod is started again after someone else rented its machine's GPUs:
@@ -293,6 +346,30 @@ continue with "Every time you start the pod again" once it is running.
 - **"needs to be updated, but `--locked` was provided".** Someone changed
   `pyproject.toml` without `uv.lock`. Fix it in a cloud session with
   `uv lock`, merge it, then `git pull` on the pod.
+- **Step 7 fails, with `FAILED` lines from pytest.** Running the script
+  again loads the model again and fails the same way, so don't. Give
+  Claude, in a cloud session, the `FAILED` lines and the log. A failed
+  `test_the_qwen3_5_kernels_import` means causal-conv1d or
+  flash-linear-attention is installed but does not load; step 3 has just
+  checked them, so the fix needs Claude. "the reply ran to
+  --max-new-tokens" means the model's reply did not end within 200 tokens;
+  the log shows the reply.
+- **`git pull` says "Your local changes to the following files would be
+  overwritten by merge".** A file of the repository was edited on the pod.
+  The change belongs in a pull request instead, so throw the local copy
+  away with `git checkout -- <the file it names>`, then run `git pull` and
+  `bash scripts/setup_pod.sh` again. If the edit was worth keeping, ask
+  Claude in a cloud session to make it through a pull request.
+- **"error: Failed to spawn: `pushlab`".** First run
+  `cd /workspace/Qwen-Expirements`: uv finds the command only inside the
+  repository. If it still fails, the command is not installed yet, because
+  the setup script has not run since a `git pull` added it. Run
+  `bash scripts/setup_pod.sh`, then the command again.
+- **"pushlab baseline: ... is not downloaded into /workspace/models/...".**
+  If `configs/models.yaml` lists the model, run `bash scripts/setup_pod.sh`;
+  it downloads the model, or its new revision after a pull that changed
+  one. If the file does not list it, add it through a pull request from a
+  cloud session, `git pull` on the pod, and then run the script.
 - **You pressed Ctrl-C.** Run the script again.
 - **The browser lost its connection.** The script keeps running on the pod.
   Reopen its terminal from **Running Terminals and Kernels** and let it

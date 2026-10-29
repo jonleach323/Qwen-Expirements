@@ -31,6 +31,7 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 | The Python 3.11 that uv installs | `/workspace/.local/share/uv/python` | kept |
 | Models | `/workspace/models/<registry name>` | kept |
 | Hugging Face's own files (`HF_HOME`) | `/workspace/.cache/huggingface` | kept |
+| GPU kernels Triton compiles for Qwen3.5 (`TRITON_CACHE_DIR`) | `/workspace/.cache/triton` | kept |
 | Setup logs | `/workspace/logs` | kept |
 | Settings for new shells | `/workspace/pushlab.env`, loaded from `~/.bashrc` | the file is kept; each run adds the `~/.bashrc` line again |
 | uv 0.11.32 and the Claude Code CLI | `~/.local/bin`, ahead of the image's `/bin/uv` on PATH | lost; each run reinstalls them in seconds |
@@ -82,8 +83,11 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 - **Driver.** Step 1 stops unless the NVIDIA driver is 580 or newer, which
   the CUDA 13.0 build of torch needs (decision 0002). Stopping there, before
   3 GB of downloads, makes the error cheap.
-- **GPU kernels** come as prebuilt wheels pinned in `uv.lock`
-  (decision 0002), so nothing compiles on the pod.
+- **GPU kernels.** causal-conv1d comes as a prebuilt CUDA wheel pinned in
+  `uv.lock` (decision 0002), so nothing is built from source when
+  installing. flash-linear-attention's kernels are compiled by Triton the
+  first time they run (in step 7, since decision 0004), and the compiled
+  kernels are kept in `/workspace/.cache/triton`.
 - **Secrets.** The script checks `HF_TOKEN` without expanding its value and
   never prints the environment. `huggingface_hub` reads `HF_TOKEN` by itself.
   Git reads `GITHUB_TOKEN` through a credential helper at the moment it needs
@@ -116,8 +120,10 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
 - On a pod deployed without the `UV_NO_SYNC` variable, notebooks are never
   protected, and terminals only if they were opened after the script ran
   since the pod started. The script's warning and the runbook point this out.
-- A warm start after a restart should take about a minute: reinstalling uv
-  and Claude Code, checking the environment and running the smoke tests.
+- A warm start after a restart reinstalls uv and Claude Code, checks the
+  environment and runs the smoke tests. Since decision 0004 these load
+  Qwen3.5-4B once to write a test reply, which is the slowest part; prompt 8
+  measures it against the 3-minute target.
 - To drop a model, remove it from `configs/models.yaml` and delete its
   folder under `/workspace/models`.
 - `configs/` is a new top-level folder for machine settings. Experiment
