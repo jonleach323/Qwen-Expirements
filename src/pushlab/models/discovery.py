@@ -70,6 +70,44 @@ def find_mlp_modules(model: nn.Module) -> list[tuple[int, nn.Module]]:
     return [(index, module) for index, _, module in found]
 
 
+def find_decoder_layers(model: nn.Module) -> list[nn.Module]:
+    """Each layer's decoder block, in layer order: the module around its MLP.
+
+    A block's output is the residual stream leaving that layer. The block of
+    "model.layers.14.mlp" is "model.layers.14": the MLP's name up to its
+    layer number. So it is found inside Qwen3.5's vision-language wrapper
+    too, and an MLP with no block around it raises ValueError.
+
+    Example:
+        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
+        >>> config = Qwen3Config(
+        ...     vocab_size=512,
+        ...     hidden_size=64,
+        ...     intermediate_size=128,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_key_value_heads=2,
+        ...     head_dim=16,
+        ... )
+        >>> model = Qwen3ForCausalLM(config)
+        >>> find_decoder_layers(model) == list(model.model.layers)
+        True
+    """
+    modules = dict(model.named_modules())
+    names = {id(module): name for name, module in modules.items()}
+    blocks = []
+    for _, mlp in find_mlp_modules(model):
+        parts = names[id(mlp)].split(".")
+        last_number = max(i for i, part in enumerate(parts) if part.isdigit())
+        block = modules[".".join(parts[: last_number + 1])]
+        if block is mlp:
+            raise ValueError(
+                f"MLP module {names[id(mlp)]!r} is not inside a decoder layer"
+            )
+        blocks.append(block)
+    return blocks
+
+
 def model_info(model: nn.Module) -> ModelInfo:
     """Read the layer count, hidden size and MLP size from a model's MLPs.
 

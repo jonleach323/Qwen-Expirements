@@ -3,6 +3,9 @@
 /outputs/
 /models/
 /logs/
+# Files from `pushlab calibrate`, one per model revision. The pod writes them
+# in its clone of the repository; ignored, they never block a `git pull`.
+/calibration/
 
 # Secrets, such as a filled-in copy of scripts/pod.env.example
 .env

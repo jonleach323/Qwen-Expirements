@@ -257,6 +257,26 @@ from pushlab.store.records import read_runs
 print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
 ```
 
+## Measure the residual sizes
+
+A dose is measured in each layer's typical residual size, so each model
+needs its sizes measured once before any neuron is pushed. `pushlab
+calibrate` runs the 32 prompts in `prompts/calibration.jsonl` through the
+model and saves the median size leaving each layer. It is a GPU job, so you
+start it yourself:
+
+```bash
+cd /workspace/Qwen-Expirements
+uv run pushlab calibrate --model qwen3.5-4b
+```
+
+Its first line should say `Loading qwen3.5-4b in bfloat16 on the GPU...`,
+as for the baseline. It prints one size per layer and saves them in
+`calibration/qwen3.5-4b-<commit>.json`, a folder that git ignores, so the
+file never counts as a change to the repository. A model is measured once:
+running it again stops unless you add `--overwrite`. Decision
+`docs/decisions/0007-calibration.md` says what the numbers mean.
+
 ## Rules on the pod
 
 - **Never run plain `uv sync` on the pod.** It would replace the CUDA build

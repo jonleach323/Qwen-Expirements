@@ -4,6 +4,9 @@
 project's run-record format: OUT/runs.parquet with one run, and
 OUT/manifest.json saying what produced it. Its experiment file,
 experiments/p0/s0_baseline.yaml, names the experiment, seed and prompt.
+
+`pushlab calibrate` measures each layer's median residual size, the scale
+of a dose, and saves it in calibration/ (pushlab.units.calibrate).
 """
 
 import argparse
@@ -146,6 +149,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help="replace runs.parquet and manifest.json if OUT already has them",
+    )
+    calibrate = commands.add_parser(
+        "calibrate",
+        help="measure each layer's median residual size, the scale of a dose",
+        description="Run the prompts in prompts/calibration.jsonl through the "
+        "model, in the chat template with thinking off, and measure the median "
+        "length of the residual stream leaving each layer, leaving out each "
+        "prompt's first token. Doses are scaled by these sizes. Saves "
+        "calibration/<model>-<revision>.json and prints the sizes. It uses the "
+        "GPU in bfloat16 if there is one, otherwise the CPU in float32. The "
+        "model must already be downloaded, as scripts/setup_pod.sh does on the "
+        "GPU pod.",
+    )
+    calibrate.add_argument(
+        "--model", required=True, choices=models, help="registry name of the model"
+    )
+    calibrate.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="measure again and replace the model revision's calibration file",
     )
     return parser
 
@@ -298,6 +321,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         0
     """
     args = build_parser().parse_args(argv)
+    if args.command == "calibrate":
+        # Imported here, so that --help answers without first loading torch.
+        from pushlab.units.calibrate import run_calibrate
+
+        return run_calibrate(args.model, args.overwrite)
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite
     )

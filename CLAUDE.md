@@ -16,6 +16,8 @@ Current sprint: S0 (Bootstrap).
 - One unsteered reply saved as a run (a GPU job: the owner runs it on the pod):
   uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/baseline-$(date -u +%Y%m%d-%H%M%S)
   (never use /workspace/runs/s0-baseline as --out: it holds the S0 reference run)
+- Each layer's residual size for doses, once per model (a GPU job: the owner
+  runs it on the pod): uv run pushlab calibrate --model qwen3.5-4b
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 
