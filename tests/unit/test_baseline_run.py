@@ -219,11 +219,22 @@ def test_only_an_existing_run_earns_the_overwrite_advice(
 
 @pytest.mark.usefixtures("cpu_only")
 def test_a_custom_prompt_is_used_and_recorded(
-    tiny_downloads: dict[str, ModelSpec], tmp_path: Path
+    tiny_downloads: dict[str, ModelSpec],
+    tiny_tokenizer: PreTrainedTokenizerBase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    prompts_given = []
+
+    def recording(model: object, ids: list[int], count: int, stops: list[int]) -> list:
+        prompts_given.append(ids)
+        return greedy_generate(model, ids, count, stops)
+
+    monkeypatch.setattr(generate, "greedy_generate", recording)
     out = tmp_path / "out"
     argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
     assert main([*argv, "--prompt", "Say hi.", "--max-new-tokens", "3"]) == 0
+    assert prompts_given == [chat_prompt_ids(tiny_tokenizer, "Say hi.", thinking=False)]
     (run,) = read_runs(out)
     assert run.prompt_id == custom_prompt_id("Say hi.")
     assert json.loads((out / "manifest.json").read_text())["prompt"] == "Say hi."

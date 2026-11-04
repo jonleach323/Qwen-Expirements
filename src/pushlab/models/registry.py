@@ -29,13 +29,16 @@ class ModelSpec:
     kind: Kind
 
 
-# TODO(prompt 8): pin each Hugging Face model's revision to a commit hash
-# instead of "main". The tiny test model has nothing to pin.
+# Each Hugging Face model gets pinned to a commit hash rather than "main", so
+# a new upload cannot change results unnoticed. Qwen3.5-4B is pinned to the
+# model commit the S0 baseline used (docs/decisions/0005-s0-baseline.md).
+# TODO: pin qwen3-8b, still on "main", once it is first downloaded and run.
+# The tiny test model has nothing to pin.
 _SPECS = [
     ModelSpec(
         name="qwen3.5-4b",
         hf_id="Qwen/Qwen3.5-4B",
-        revision="main",
+        revision="851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
         layers=32,
         hidden_size=2560,
         mlp_size=9216,

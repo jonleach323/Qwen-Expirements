@@ -220,7 +220,7 @@ as a run. It is a GPU job, so you start it yourself:
 
 ```bash
 cd /workspace/Qwen-Expirements
-uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/s0-baseline
+uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/baseline-$(date -u +%Y%m%d-%H%M%S)
 ```
 
 Its first line should say `Loading qwen3.5-4b in bfloat16 on the GPU...`.
@@ -238,12 +238,17 @@ It prints the reply and writes two files into the `--out` folder:
   end times.
 
 The question comes from `experiments/p0/s0_baseline.yaml`; `--prompt "..."`
-asks another one, and `--max-new-tokens` caps the reply (200 by default). It
-refuses to replace an earlier run in the same folder unless you add
-`--overwrite`. Keep outputs under `/workspace/runs`, outside the repository:
-run outputs never go in git.
+asks another one, and `--max-new-tokens` caps the reply (200 by default).
+The command above gives every run a new folder, named after the date and
+time. It refuses a folder that already holds a run unless you add
+`--overwrite`, which replaces that run for good. Never use
+`/workspace/runs/s0-baseline` as `--out`: it holds the S0 reference run
+(`docs/decisions/0005-s0-baseline.md`), and its `runs.parquet` is the only
+copy of that reply's token IDs. Keep outputs under `/workspace/runs`,
+outside the repository: run outputs never go in git.
 
-To look at the run, start Python with `uv run python` and type:
+To look at a run, start Python with `uv run python` and type this. It reads
+the S0 reference run; give your own `--out` folder to read another.
 
 ```python
 from pathlib import Path
@@ -256,9 +261,10 @@ print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
 
 - **Never run plain `uv sync` on the pod.** It would replace the CUDA build
   of torch with the CPU-only one. After a `git pull` that changes `uv.lock`,
-  `pyproject.toml` or `configs/models.yaml`, run `bash scripts/setup_pod.sh`
-  again: it updates the environment, installs the `pushlab` command and
-  downloads new models.
+  `pyproject.toml`, `configs/models.yaml` or a model's revision in
+  `src/pushlab/models/registry.py`, run `bash scripts/setup_pod.sh` again: it
+  updates the environment, installs the `pushlab` command and downloads new
+  models and revisions.
 - Don't edit files of the repository on the pod, such as
   `configs/models.yaml`. Change them through a pull request from a cloud
   session, then `git pull`. An edit made on the pod makes every manifest
@@ -356,10 +362,12 @@ start a Claude Code cloud session and give it the message and the log.
   the log shows the reply.
 - **`git pull` says "Your local changes to the following files would be
   overwritten by merge".** A file of the repository was edited on the pod.
-  The change belongs in a pull request instead, so throw the local copy
-  away with `git checkout -- <the file it names>`, then run `git pull` and
-  `bash scripts/setup_pod.sh` again. If the edit was worth keeping, ask
-  Claude in a cloud session to make it through a pull request.
+  The change belongs in a pull request instead. If the edit may be worth
+  keeping, first save it outside the repository with
+  `git diff HEAD > /workspace/pod-edit.patch`, and give that file's text to
+  Claude in a cloud session to make the change through a pull request. Then
+  throw the local copy away with `git checkout HEAD -- <the file it names>`,
+  and run `git pull` and `bash scripts/setup_pod.sh` again.
 - **"error: Failed to spawn: `pushlab`".** First run
   `cd /workspace/Qwen-Expirements`: uv finds the command only inside the
   repository. If it still fails, the command is not installed yet, because

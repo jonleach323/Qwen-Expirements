@@ -179,6 +179,22 @@ def test_out_must_be_a_folder(
     assert f"{tmp_path / 'results'} is a file" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("out", ["latest", "latest/run-1"])
+def test_out_through_a_broken_link_is_refused(
+    tmp_path: Path,
+    out: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Such as a "latest" link to a run folder that was deleted since: no
+    # folder can be made there, so the command must refuse before loading.
+    (tmp_path / "latest").symlink_to(tmp_path / "deleted-run")
+    monkeypatch.setattr(load, "load_model", _no_loading)
+    argv = ["baseline", "--model", "qwen3.5-4b", "--out", str(tmp_path / out)]
+    assert main(argv) == 1
+    assert f"{tmp_path / 'latest'} is a link to nothing" in capsys.readouterr().err
+
+
 def test_a_model_that_is_not_downloaded_is_explained(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

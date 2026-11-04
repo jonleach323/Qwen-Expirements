@@ -13,9 +13,11 @@ permissions:
 
 # A newer push to the same branch or pull request cancels the older run,
 # which saves Actions minutes. Runs on main are never cancelled, so every
-# merge gets a full result.
+# merge gets a full result: each push to main gets a group of its own,
+# because GitHub cancels a run waiting in a group when a newer one joins,
+# even with cancel-in-progress off.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
