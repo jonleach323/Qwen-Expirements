@@ -13,24 +13,28 @@ Finish the models module as the plan describes it, and show on the GPU
 that both main models load with the right shape.
 
 BUILD
-- load_model's result also carries the list of MLP modules in layer
-  order, as the plan's interface asks. Find them with find_mlp_modules;
-  later prompts hook into them.
+- LoadedModel, load_model's result, also carries the list of MLP modules
+  in layer order. Find them with find_mlp_modules; later prompts hook
+  into them. The plan's interface puts this list in ModelInfo, but in the
+  code ModelInfo is the shape that load_model and the tests compare with
+  the registry, so it stays as it is.
 - configs/models.yaml lists qwen3-8b as well as qwen3.5-4b, so the pod
   downloads it. It is about 16 GB more on the 100 GB volume.
 - tests/gpu/test_model_shapes.py (marked gpu and slow) loads every model
-  that configs/models.yaml lists, on the GPU in bfloat16. It checks the
+  that configs/models.yaml lists, on the GPU in bfloat16, one per test and
+  freed before the next, never through a shared fixture: together their
+  weights (8.7 + 15.3 GiB) fill the RTX 4090's 24 GiB. It checks the
   registry's shape: 32 layers × 9,216 neurons for Qwen3.5-4B, 36 × 12,288
   for Qwen3-8B. It also checks that the MLP list has one module per layer.
   Its name must not contain "smoke": setup step 7 selects tests with
   `-k smoke` and should stay fast.
-- docs/runbooks/pod.md, step 6: one line saying the download is now
-  about 16 GB larger.
+- docs/runbooks/pod.md: where it says the first run downloads "the 9 GB
+  Qwen3.5-4B model" (after the eight steps), add Qwen3-8B's 16 GB.
 - docs/runbooks/experiments.md (prompt 1 starts it): how to run this test.
 
 CONSTRAINTS
-- Don't register Qwen3-4B or Qwen3.5-2B yet. S3's replication tests bring
-  them in.
+- Don't register Qwen3-4B or Qwen3.5-2B yet. Later sprints bring them in
+  (Qwen3-4B with S3's replication tests).
 - Qwen3-8B stays on revision "main" until it has been downloaded. Prompt 8
   pins it to the commit in its download record.
 - tests/unit/test_model_download.py::test_the_pod_downloads_qwen3_5_4b
@@ -57,5 +61,6 @@ DONE WHEN
 REPORT BACK
 End with a plain-language summary for a beginner: what changed, why, how I
 can check it myself, and anything I must do by hand. List the exact pod
-commands. Say what to paste back: the test's last line, and the "commit"
+commands, and say they are for S1's first pod session, after prompt 4,
+not for now. Say what to paste back: the test's last line, and the "commit"
 in /workspace/models/qwen3-8b/.pushlab-download.json, which prompt 8 pins.

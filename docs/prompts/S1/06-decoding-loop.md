@@ -69,5 +69,6 @@ GPU comparison with the S0 reference reply runs in prompt 7's pod session.
 
 REPORT BACK
 End with a plain-language summary for a beginner: what changed, why, how I
-can check it myself, and anything I must do by hand. Explain left padding
-and why positions must not shift.
+can check it myself, and anything I must do by hand. Explain left padding,
+and why each row's positions start at its first real token. (With rotary
+embeddings, a shift would change rounding, not the maths.)

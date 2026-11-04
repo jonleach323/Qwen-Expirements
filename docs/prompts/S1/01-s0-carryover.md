@@ -10,7 +10,11 @@ Close the S0 items that need only documentation or a decision, so the
 rest of S1 starts from a clean base.
 
 BUILD
-- CLAUDE.md: change the current sprint line to "S1 (Engine v1)".
+- CLAUDE.md:
+  - change the current sprint line to "S1 (Engine v1)";
+  - add a rule: no GPU test's file name, test name or parameter ID
+    contains "smoke" unless the test belongs in the setup's quick check
+    (setup step 7 runs `pytest -q -m gpu -k smoke`).
 - docs/runbooks/experiments.md, a new page for running and copying runs.
   docs/runbooks/pod.md is already 384 lines, so S1's later prompts add to
   this page, not to pod.md.
@@ -23,10 +27,11 @@ BUILD
   - Keep the baseline section in pod.md: tests/unit/test_docs.py checks
     that pod.md shows the baseline command.
 - docs/runbooks/pod.md, under "If something goes wrong":
-  - An entry for `Syntax error: "(" unexpected` (or bash's `syntax error
-    near unexpected token '('`) when cloning. The straight quotes became
-    curly ones, which phones and some apps do. Say how to paste the command
-    safely, and how to turn off Smart Punctuation on an iPhone or iPad.
+  - An entry for `Syntax error: "(" unexpected` (in bash, `!f: event not
+    found` or `syntax error near unexpected token '('`) when cloning. The
+    straight quotes became curly ones, which phones and some apps do. Say
+    how to paste the command safely, and how to turn off Smart Punctuation
+    on an iPhone or iPad.
   - An entry for the RTX 4090 being out of capacity:
     - Waiting and trying again later often works.
     - First choices: an L40S or RTX 6000 Ada (48 GB, the 4090's
@@ -37,11 +42,12 @@ BUILD
       generation (they lack bfloat16).
     - Always keep Secure Cloud and the CUDA 13.0 to 13.4 filter.
 - docs/runbooks/pod.md, "Deploy the pod": how to save the deploy settings
-  as the owner's own Runpod template, with the GPU filter, the three
-  environment variables and the 100 GB volume. Then a new pod needs fewer
-  steps. This is the "pod template" the plan's S0 entry asks for. Follow
-  Runpod's documentation; if you can't confirm the steps, say so instead
-  of guessing.
+  as the owner's own Runpod template, with the three environment variables
+  and the 100 GB volume. Say which deploy choices (the GPU, Secure Cloud,
+  the CUDA filter) it keeps and which the owner still makes each time.
+  Then a new pod needs fewer steps. This is the "pod template" the plan's
+  S0 entry asks for. Follow Runpod's documentation; if you can't confirm
+  the steps, say so instead of guessing.
 - docs/runbooks/cloud-sessions.md, under "If something goes wrong": a
   session whose tests collect nothing, or whose /home/user is empty, was
   started without the repository. Start a new session with
@@ -57,32 +63,35 @@ BUILD
   - If yes, add it with uv add and a version floor, and commit uv.lock
     with pyproject.toml.
   - If no, add a comment in pyproject.toml saying it comes in through
-    transformers.
+    transformers and accelerate.
 
 CONSTRAINTS
 - Change no Python code under src/ or tests/, and no scripts.
 - Every command in a doc must be one you have run, or one the runbooks
   already use.
-- Short entries. pod.md must stay under about 400 lines (CLAUDE.md).
+- Short entries. pod.md must stay under about 400 lines (CLAUDE.md); if
+  it would not, move its "To look at a run" snippet to experiments.md.
 - Pod steps stay the owner's (CLAUDE.md).
 
 TESTS FIRST
 No new code, so no new unit tests. Run `uv run pytest -q` and
 `uv run pre-commit run --all-files` before and after the change. Both must
-pass, and tests/unit/test_docs.py also checks the runbooks' commands.
+pass; tests/unit/test_docs.py also checks the `pushlab baseline --out`
+commands in README.md, CLAUDE.md and pod.md.
 
 DONE WHEN
 - The new page, the runbook entries, the template steps (or the stated
-  reason there are none), the decision note and the CLAUDE.md line are in
-  a pull request whose checks pass.
+  reason there are none), the decision note and the CLAUDE.md changes are
+  in a pull request whose checks pass.
 - The huggingface-hub question has the owner's answer, acted on.
 
 REPORT BACK
 End with a plain-language summary for a beginner: what changed, why, how I
 can check it myself, and anything I must do by hand. Put these first:
-- As soon as this is merged, start the pod and copy
-  /workspace/runs/s0-baseline off it, following the new page. Don't pull,
-  and don't run anything else.
+- If you haven't already, start the pod now and copy
+  /workspace/runs/s0-baseline off it, following the new page on GitHub
+  (the pod's checkout doesn't have it until it pulls). Don't pull or run
+  anything else, then stop the pod.
 - Until S1's first pod session, don't run `pushlab baseline` on the pod.
   Its checkout is still S0's, whose docs write into the reference folder.
 - Check branch protection under Settings → Rules → Rulesets.

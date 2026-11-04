@@ -32,7 +32,11 @@ BUILD
   - greedy decoding, thinking off, at most 200 new tokens, seed 0.
 - `pushlab run EXPERIMENT --out DIR [--dry-run] [--overwrite]`, the first
   form of the plan's runner, with its logic in src/pushlab/runs/. In S1 it
-  runs only constant pushes; S2 adds run expansion, resume and --limit.
+  runs only constant pushes; S2 adds run expansion, resume, --limit and
+  max_gpu_hours. A decision note (the next free number) says why it starts
+  in S1 (decision 0004 put it in S2), why it takes --out and --overwrite
+  like `pushlab baseline`, and records the experiment file's format and
+  how a push from the prompt pass to the end is stored as one segment.
   - It loads the model and its calibration cache. A missing cache is an
     error that names `pushlab calibrate`.
   - It runs each condition as one batch of the 5 prompts, in the same
@@ -51,15 +55,22 @@ BUILD
     The plan names a slow Qwen3.5 as one of S1's two biggest risks.
   - It writes a labeling sheet in the run folder, with one row per run,
     the reply text and an empty "hostile" column.
-  - --dry-run lists the 15 runs without loading the model.
-- A gpu test, marked gpu and slow, whose name must not contain "smoke".
-  On the GPU, the batched loop with a batch of one must give exactly
-  greedy_generate's reply to the S0 prompt. When the GPU is an RTX 4090,
-  the reply's SHA-256 must also equal decision 0005's. Prompt 8 records
+  - --dry-run lists the 15 runs without loading the model or needing it
+    downloaded or calibrated, so it works in a cloud session.
+- tests/gpu/test_batched_loop.py, marked gpu and slow. Neither the file
+  nor any test or parameter ID in it may contain "smoke" (`-k smoke`
+  matches all three), and test_setup_pod.py's selection test must still
+  pass unchanged. On the GPU, the batched loop with a batch of one must
+  give exactly greedy_generate's reply to the S0 prompt. When the GPU is
+  an RTX 4090, the reply's SHA-256 must also equal decision 0005's.
+  Prompt 8 records
   whether `pushlab baseline` should switch to the loop; an S2 prompt
   makes the switch.
-- tests/unit/test_docs.py: also check that no documented `pushlab run`
-  writes into a reference folder.
+- tests/unit/test_docs.py: a new test that docs/runbooks/experiments.md
+  shows a `pushlab run` with --out, and that no `pushlab run` in
+  README.md, CLAUDE.md, pod.md or experiments.md writes into a reference
+  folder. (The existing test needs a `pushlab baseline` in every file it
+  reads, so don't just add experiments.md to its list.)
 - docs/runbooks/experiments.md: how to run the experiment, label it and
   copy it off the pod.
 - What counts as hostile, written in the experiment file's comments:
@@ -104,13 +115,16 @@ DONE WHEN
     and it reports 5 of 5 dose-0 replies identical to no hooks;
   - labels the 5 dose-1 replies 5 of 5 hostile, and the 5 no-hook replies
     not hostile;
-  - copies the run folder off the pod the same day.
+  - copies the run folder off the pod the same day, then stops the pod.
 
 REPORT BACK
 End with a plain-language summary for a beginner: what changed, why, how I
 can check it myself, and anything I must do by hand. Give the second pod
-session as one numbered list, and say what to paste back:
+session as one numbered list, and say what to paste back, the same day, as
+a comment on this prompt's GitHub issue (never the labeling sheet, which
+holds the reply text):
 - the command's summary and speed lines;
 - the hash table, with the owner's hostile labels added;
 - manifest.json;
-- the gpu tests' last lines.
+- the gpu tests' last lines;
+- whether the run folder is copied off the pod.

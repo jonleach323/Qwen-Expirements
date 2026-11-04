@@ -33,14 +33,19 @@ BUILD
   Qwen3.5-4B in bfloat16. The owner runs it in S1's second pod session.
   It checks:
   - pushing the neuron's MLP value matches adding the same amount along
-    its write direction to the MLP output, within bfloat16 tolerance (the
-    units module's done-when in the plan);
+    its write direction to the MLP output (the units module's done-when
+    in the plan). Compare at that MLP output, and allow a difference
+    whose length is under about 1% of the push's own length (torch's
+    default bfloat16 tolerances are too tight). Try the check on
+    tiny_vl_model in bfloat16 on the CPU first;
   - a zero dose gives exactly the output with no hooks.
   Its name must not contain "smoke".
 - A decision note (the next free number) covering:
   - where the push enters (the down_proj input);
   - how padding and the batch rows are handled;
-  - why the amount is added in the activations' own data type.
+  - why the amount is added in the activations' own data type, and
+    whether it is rounded to that type before the add (in bfloat16,
+    22.21 becomes 22.25) or the sum is rounded once, as occcat does.
 
 CONSTRAINTS
 - Constant pushes only. Schedules, regions and per-step amounts come in
@@ -57,7 +62,7 @@ All on tiny_model and tiny_vl_model, in float32:
   as adding c · W_down[:, n] to that layer's MLP output, within float32
   tolerance.
 - In a batch where row 0 is pushed and row 1 has amount 0, row 1's logits
-  equal the unpushed run's.
+  equal those of the same batch run without hooks.
 - Layers before the pushed one are unchanged, and padding positions'
   MLP values are untouched.
 - Two neurons in one layer use one hook and add independently.

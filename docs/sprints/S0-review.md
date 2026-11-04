@@ -24,12 +24,12 @@ minutes, and one unsteered Qwen3.5-4B reply is generated and stored."
   - It succeeded in 35 seconds: ruff lint, ruff formatting, then the
     tests.
   - The tests ended with `284 passed, 6 skipped in 5.61s`.
-- The 6 skipped tests need a GPU. Five of them are the GPU smoke tests,
-  which passed on the pod (check 2). The sixth only checks that GPU tests
-  are skipped when no GPU is asked for.
+- The 6 skipped tests are the ones marked gpu. Five of them are the GPU
+  smoke tests, which passed on the pod (check 2). The sixth only checks
+  that GPU tests are skipped when no GPU is asked for.
 - Every merge into `main` since the workflow arrived passed the same check:
-  runs #7, #11, #19, #25 and #29, for pull requests #4 to #8. The workflow
-  came with pull request #4, so #1 to #3 had no check.
+  runs #7, #11, #19, #25, #29 and #32, for pull requests #4 to #9. The
+  workflow came with pull request #4, so #1 to #3 had no check.
 - The same suite passes in a Claude Code cloud session: `284 passed,
   6 skipped` on 2026-11-04.
 
@@ -97,12 +97,12 @@ the fresh pod, so the warm target is at risk.
 | #1 S0 bootstrap skeleton | 2026-10-28 | Repository layout, locked Python environment (decisions 0001, 0002) |
 | #2 S0 quality tooling | 2026-10-28 | ruff, pre-commit, pytest settings, GPU markers, fixed seeds |
 | #3 S0 models discovery | 2026-10-28 | Tiny test model, model registry, MLP discovery |
-| #4 Lint and tests on GitHub | 2026-10-28 | The **Lint and test** workflow and the branch-protection runbook |
+| #4 S0: run lint and tests on GitHub for every push and pull request | 2026-10-28 | The **Lint and test** workflow and the branch-protection runbook |
 | #5 S0 cloud setup | 2026-10-28 | Cloud-session setup script and runbook |
 | #6 S0 pod setup | 2026-10-29 | Pod setup script, one-time model download, pod runbook (decision 0003) |
 | #7 S0 baseline | 2026-10-29 | `pushlab baseline`: loading, chat prompt, greedy loop, run records, manifest (decision 0004) |
 | #8 S0 bug fixes | 2026-11-04 | The baseline record and the Qwen3.5-4B pin (decision 0005), and fixes from a review of all of S0 |
-| #9 S0 review | 2026-11-04 | The first version of this review and of the S1 prompts |
+| #9 S0: sprint review and the S1 prompts | 2026-11-04 | The first version of this review and of the S1 prompts |
 
 S0's plan entry also lists CLAUDE.md, pre-commit and connected cloud
 sessions; all three exist. It differs from the plan in two places:
@@ -142,9 +142,9 @@ None of these is part of S0's done-when.
    `main`).
 5. **huggingface-hub** is imported directly by
    `src/pushlab/models/download.py`, but it only gets installed because
-   transformers needs it. Whether to list it as a dependency of its own is
-   the owner's call (CLAUDE.md: "Ask before adding a dependency"). This has
-   been open since the pod setup.
+   transformers and accelerate need it. Whether to list it as a dependency
+   of its own is the owner's call (CLAUDE.md: "Ask before adding a
+   dependency"). This has been open since the pod setup.
 6. **Branch protection.**
    - GitHub lists `main` as protected (2026-11-04).
    - Settings → Rules → Rulesets shows whether **Lint and test** must pass
@@ -165,8 +165,8 @@ None of these is part of S0's done-when.
 ## What slowed us down
 
 1. **Review rounds.**
-   - S0 has 8 commits that add features and 16 that fix or tidy them, 15
-     of those after a review.
+   - Pull requests #1 to #8 have 8 commits that add features and 16 that
+     fix or tidy them, 15 of those after a review.
    - The pod setup (pull request #6) went through five review rounds over
      about three hours, and the baseline command (#7) through three.
    - The late rounds found mostly wording and rare edge cases. Several were
@@ -199,7 +199,7 @@ None of these is part of S0's done-when.
    - The pod ran the setup and the baseline about 19 hours later, on
      2026-10-30 at 01:53 to 02:18.
    - Nothing then happened for about five days: no commit and no workflow
-     run until 2026-11-04 at 05:14, when the record was written.
+     run until 2026-11-04 at 05:14, when the record was committed.
    - Nothing in the repository says why. The S1 lesson: plan each pod
      session ahead, and record its results the same day.
 
@@ -245,8 +245,10 @@ a day; most of the rest was the pause.
      Qwen3-8B, check both models' shapes and calibrate residual sizes;
    - after prompt 7: the zero-dose and evil-neuron checks.
 
-   Each prompt says what the owner runs on the pod and what to paste back.
-   Record each session's results the same day.
+   Prompts 2, 4 and 7 say what the owner runs on the pod and what to paste
+   back. Paste each session's results the same day into the GitHub issue
+   of prompt 4 or 7, which list the whole session; prompt 8 records them
+   in git.
 6. **Close S0's open items early.**
    - Prompt 1 adds the missing runbook help and asks the huggingface-hub
      question.
