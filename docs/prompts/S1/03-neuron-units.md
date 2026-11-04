@@ -47,8 +47,9 @@ TESTS FIRST
   negative or non-numeric numbers, or a model not in the registry.
 - Range checks use the registry's shape. For qwen3.5-4b, layer 31 and
   index 9215 are accepted; layer 32 and index 9216 are refused.
-- On tiny_model and tiny_vl_model, write_direction() equals that layer's
-  down_proj weight column.
+- On tiny_model (registry name tiny) and tiny_vl_model (tiny-vl, which
+  the tiny_downloads fixture registers), write_direction() equals that
+  layer's down_proj weight column.
 - amount() matches hand-worked numbers. With r̃ = 10 and a column of
   length 2: amount(1) = 5, amount(0) = 0, amount(-0.5) = -2.5.
 - On the tiny models' real columns, the push the amount adds,
