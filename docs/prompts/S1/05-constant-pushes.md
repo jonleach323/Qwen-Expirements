@@ -29,7 +29,7 @@ BUILD
 - The hook state has a step counter: the prompt pass, then 0, 1, 2 and so
   on for reply tokens. Constant pushes ignore it, prompt 6's loop advances
   it, and S2's schedules will use it.
-- tests/gpu/test_push_equivalence.py (marked gpu) uses L14 N8949 on
+- tests/gpu/test_push_equivalence.py (marked gpu and slow) uses L14 N8949 on
   Qwen3.5-4B in bfloat16. The owner runs it in S1's second pod session.
   It checks:
   - pushing the neuron's MLP value matches adding the same amount along

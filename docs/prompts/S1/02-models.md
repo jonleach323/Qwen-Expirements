@@ -24,8 +24,9 @@ BUILD
   for Qwen3-8B. It also checks that the MLP list has one module per layer.
   Its name must not contain "smoke": setup step 7 selects tests with
   `-k smoke` and should stay fast.
-- docs/runbooks/pod.md: mention the larger download, and show how to run
-  this test.
+- docs/runbooks/pod.md, step 6: one line saying the download is now
+  about 16 GB larger.
+- docs/runbooks/experiments.md (prompt 1 starts it): how to run this test.
 
 CONSTRAINTS
 - Don't register Qwen3-4B or Qwen3.5-2B yet. S3's replication tests bring

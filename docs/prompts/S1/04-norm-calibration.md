@@ -5,48 +5,61 @@ Read CLAUDE.md and these parts of the plans:
 - docs/plan/development-plan.md: the "2. units" module, whose decisions
   say each layer's median residual size is "measured once per model by
   `calibrate_norms` and cached";
-- docs/plan/research-plan.md: the dose rule under "Concepts", and "What
-  the October 2026 wave established".
+- docs/plan/research-plan.md: the dose rule under "Concepts", "What the
+  October 2026 wave established", and "Dosing rules", which want doses in
+  "the same rule as the evil recipe".
 
 Prompt 3 built neuron units, whose amount(alpha) needs these residual
-sizes. S0's load_model and chat_prompt_ids load a model and format a
-prompt.
+sizes. Two public replications of the recipe show how it is measured.
+Clone them if the session can reach them:
+- github.com/occcat/qwen35-evil-neuron (see steer_qwen35.py and
+  RESULTS.md);
+- github.com/Mr-Neutr0n/qwen3.5-4b-neuron-steering (see lab.py).
 
 GOAL
-Measure each layer's median residual size once per model, keep it in a
-cache, and give it to the dose rule.
+Measure each layer's median residual size once per model, in the
+recipe's units, keep it in a cache, and give it to the dose rule.
 
 BUILD
-- src/pushlab/units/norms.py: calibrate_norms runs each calibration prompt
-  through the model once, without generating. Format the prompts as the
-  baseline does: chat template, thinking off. For each layer, it takes the
-  median, over all real tokens, of the length of the residual stream at
-  that layer. Padding tokens never count.
-- Which residual stream "at a layer" means: match the published recipe.
-  Read how occcat's and Mr-Neutr0n's repositories, linked in the research
-  plan, compute it; clone them if the session can reach them. If it can't,
-  use the stream leaving each layer, and say so in the decision note.
-- prompts/calibration-v1.yaml: a versioned prompt set of about 64 short,
-  neutral, everyday requests, with an ID and a version. Prompts never go
-  in code (CLAUDE.md). The owner reviews them in the pull request.
+- src/pushlab/units/norms.py: calibrate_norms, using the recipe's rule:
+  "median(‖resid‖ leaving layer L, tokens 1:)". In practice:
+  - Capture the stream leaving each decoder layer with a forward hook on
+    that layer, as both replications do. Don't use the model's
+    output_hidden_states: in transformers 5.21 its last entry is the
+    output of the final norm, not of the last layer.
+  - Take each token's length in float32, from the activations in their own
+    data type (bfloat16 on the pod).
+  - Drop the first token of every passage, and never count padding.
+  - Take the median over all remaining tokens, per layer.
+- prompts/calibration-v1.yaml: a versioned set of neutral prose passages,
+  a few hundred tokens each and a few thousand in all, with an ID and a
+  version. Use plain text with no chat template, as both replications do;
+  occcat used 578 tokens from 4 neutral passages. Text never goes in code
+  (CLAUDE.md). The owner reviews the passages in the pull request.
+- Any choice that differs from the replications changes the dose's units.
+  The decision note must say so.
 - A cache, one JSON file per model, model commit and data type, in a
   folder on the pod volume such as /workspace/calibration. An environment
   variable can point elsewhere, as PUSHLAB_MODELS_DIR does for models.
-  - The file holds the medians, the prompt set's ID and SHA-256, the token
+  - The file holds the medians, the text set's ID and SHA-256, the token
     count, the code commit and the time.
   - load_norms reads it, and refuses a file made for another model commit,
-    data type or prompt set.
-- `pushlab calibrate --model NAME [--prompts FILE] [--dry-run] [--overwrite]`.
-  It is a GPU job: the owner runs it.
-  - --dry-run prints the model, prompt count and output file without
-    loading the model.
+    data type or text set.
+- `pushlab calibrate --model NAME [--texts FILE] [--dtype bfloat16]
+  [--dry-run] [--overwrite]`. It is a GPU job: the owner runs it.
+  - --dtype defaults to bfloat16, as on the pod.
+  - --dry-run prints the model, the text set, the token count and the
+    output file, without loading the model. It must also work in a cloud
+    session, which has no downloaded models: take the model commit from
+    the download record when there is one, and otherwise print that it is
+    known only after the download.
   - Keep cli.py thin by putting the command's logic in the module.
-- docs/runbooks/pod.md: how to run it, and where the file goes.
+- docs/runbooks/experiments.md (prompt 1 starts it): how to run it, and
+  where the file goes.
 - A decision note (the next free number) covering:
-  - the definition of the median residual size;
-  - the prompt set and the cache;
-  - why the values are measured in bfloat16 on the GPU, the data type
-    every run uses.
+  - the definition, with the replications it matches;
+  - the text set and the cache;
+  - why the values are measured in bfloat16 on the GPU.
 
 CONSTRAINTS
 - The plan says "measured once": calibrating never happens silently
@@ -60,26 +73,40 @@ CONSTRAINTS
 
 TESTS FIRST
 - On tiny_model and tiny_vl_model, the medians equal a hand calculation
-  from the model's hidden states on the same prompts. There is one
-  positive value per layer.
-- A left-padded batch gives the same medians as the prompts run one at a
-  time.
+  from forward hooks on each layer, with the first token of each passage
+  dropped. There is one positive value per layer.
+- The last layer's median is the stream leaving that layer, not the final
+  norm's output.
+- Dropping the first token changes the result when that token's length
+  is unusual. Write a test where it is.
+- A batch with left padding gives the same medians as the passages run one
+  at a time.
 - The cache round-trips. load_norms refuses another model commit, data
-  type or prompt set, and an existing file is refused without --overwrite.
-- A prompt set file without an ID or version, or with no prompts or
+  type or text set, and an existing file is refused without --overwrite.
+- A text set file without an ID or version, or with no passages or
   duplicates, is refused.
 - `pushlab calibrate --help` lists the options. --dry-run never loads a
-  model: replace load_model with one that fails, as S0's command tests do.
+  model (replace load_model with one that fails, as S0's command tests
+  do), and works when the model isn't downloaded.
 - End to end on tiny-vl (the tiny_downloads fixture), the command writes a
   cache that load_norms reads and prompt 3's amount() uses.
 
 DONE WHEN
 - `uv run pytest -q` passes on CPU, and the pull request's checks pass.
-- The pull request shows `pushlab calibrate --help` and a dry run's output.
+- The pull request shows `pushlab calibrate --help`, and the dry run's
+  output for qwen3.5-4b and qwen3-8b.
 - On the pod (the owner, in S1's first pod session),
   `uv run pushlab calibrate --model qwen3.5-4b` and
-  `uv run pushlab calibrate --model qwen3-8b` each write their cache with
+  `uv run pushlab calibrate --model qwen3-8b` each write their cache, with
   one finite, positive value per layer.
+- Qwen3.5-4B's layer-14 median and its amount(1) for L14 N8949 are close
+  to the replications', which used the same model commit in bfloat16:
+  - occcat: median 10.49, amount +22.57;
+  - Mr-Neutr0n: median 10.32, amount +22.21;
+  - both: a column length of 0.4647.
+
+  A gap over about 10% is reported before pod session 2, because S1's
+  done-when runs at dose 1.
 
 REPORT BACK
 End with a plain-language summary for a beginner: what changed, why, how I
@@ -87,14 +114,20 @@ can check it myself, and anything I must do by hand.
 
 This is the last prompt before S1's first pod session, so give the whole
 session as one numbered list:
-1. Start the pod and, before pulling, run `bash scripts/setup_pod.sh`.
-   Note its step times: they are the warm-start row for decision 0005, on a
+1. Start the pod. Before pulling, run `bash scripts/setup_pod.sh`, and note
+   its step times. They are the warm-start row for decision 0005, on a
    restarted pod with nothing new to download.
-2. `git pull`, then run the setup script again. This run downloads
-   Qwen3-8B, so its time doesn't count as warm.
-3. Copy /workspace/runs/s0-baseline off the pod.
+2. If /workspace/runs/s0-baseline isn't copied off the pod yet, copy it now
+   (docs/runbooks/experiments.md).
+3. `git pull`, then run the setup script again. This run downloads
+   Qwen3-8B, so its time doesn't count as warm. It is also the first GPU
+   run of the code merged since S0's baseline.
 4. Prompt 2's model shape test.
 5. Both calibrations.
 
-Say exactly what to paste back: the warm run's step times, the shape test's
-last line, Qwen3-8B's download commit, and both calibration files.
+Say exactly what to paste back:
+- the warm run's step times;
+- the shape test's last line;
+- Qwen3-8B's download commit;
+- both calibration files, and the layer-14 comparison with the
+  replications.

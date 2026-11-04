@@ -34,9 +34,14 @@ BUILD
 - Each forward pass first sets the hooks' step counter, then tells them
   which positions are padding: the prompt pass, then reply steps 0, 1, 2
   and so on, the same for every row however much padding it has.
-- greedy_generate stays as it is. `pushlab baseline` keeps using it unless
-  this loop, with a batch of one, reproduces the S0 reference reply on the
-  GPU token for token. Prompt 7's pod session checks that.
+- greedy_generate stays as it is, and `pushlab baseline` keeps using it.
+  Prompt 7's pod session checks two things:
+  - on the GPU, this loop with a batch of one gives exactly
+    greedy_generate's reply;
+  - on an RTX 4090, the reply's SHA-256 also equals decision 0005's.
+
+  Prompt 8 records whether the baseline should switch, and an S2 prompt
+  makes the switch.
 
 CONSTRAINTS
 - Greedy only. Sampling, with seeds, comes in a later sprint.
