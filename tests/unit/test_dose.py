@@ -128,13 +128,25 @@ def test_norms_need_one_value_per_layer(
         amount(UNIT, 1.0, tiny_model, norms)
 
 
+@pytest.mark.parametrize("position", [0, 1])
 @pytest.mark.parametrize("bad", [0.0, -7.0, float("nan"), float("inf"), True, "7"])
 def test_every_norm_must_be_a_finite_number_above_0(
-    tiny_model: Qwen3ForCausalLM, bad: object
+    tiny_model: Qwen3ForCausalLM, bad: object, position: int
 ) -> None:
-    # The bad value is in layer 0, not the pushed layer: it is still refused.
-    with pytest.raises(ValueError, match=r"norms\[0\] must be a finite number"):
-        amount(UNIT, 1.0, tiny_model, [bad, 10.0])  # type: ignore[list-item]
+    # UNIT is in layer 1: position 1 is the norm its dose uses, and position 0
+    # another layer's, which is refused too.
+    norms: list[object] = list(NORMS)
+    norms[position] = bad
+    with pytest.raises(ValueError, match=rf"norms\[{position}\] must be a finite"):
+        amount(UNIT, 1.0, tiny_model, norms)  # type: ignore[arg-type]
+
+
+def test_a_bad_norm_after_the_pushed_layer_is_refused(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    # Every layer is checked, not only those up to the pushed one.
+    with pytest.raises(ValueError, match=r"norms\[1\] must be a finite"):
+        amount(NeuronUnit("tiny", 0, 5), 1.0, tiny_model, [7.0, 0.0])
 
 
 def test_a_column_of_zeros_is_refused(tiny_model: Qwen3ForCausalLM) -> None:

@@ -37,7 +37,7 @@ class NeuronUnit:
 
     Layers and indexes count from 0. str() gives the unit's ID and parse()
     reads it back. Creating a unit checks that its model is in the registry
-    and that layer and index are whole numbers from 0; validate() checks
+    and that layer and index are Python ints from 0; validate() checks
     them against a model's shape.
 
     Example:
@@ -63,7 +63,7 @@ class NeuronUnit:
             value = getattr(self, name)
             # bool is a kind of int in Python, but True would be written LTrue.
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"{name} must be a whole number from 0, not {value!r}")
+                raise ValueError(f"{name} must be a Python int from 0, not {value!r}")
 
     def __str__(self) -> str:
         """The unit's ID, such as qwen3.5-4b:L14:N8949, which parse() reads."""
@@ -98,8 +98,10 @@ class NeuronUnit:
         """Raise ValueError unless a model of this shape has the neuron.
 
         model_info is a model's shape, as discovery.model_info() or
-        LoadedModel.info gives it. Only the numbers are checked here;
-        write_direction() also checks that a model is the unit's own.
+        LoadedModel.info gives it. Only the numbers are checked here.
+        write_direction() also checks that a model has the registry's shape
+        for the unit's model, but it cannot tell apart two models of the
+        same shape (decision 0006).
 
         Example:
             >>> qwen3_5_4b = ModelInfo(layers=32, hidden_size=2560, mlp_size=9216)

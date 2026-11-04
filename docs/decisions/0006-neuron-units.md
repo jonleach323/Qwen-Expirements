@@ -1,4 +1,4 @@
-# 0006: A neuron is named model:L<layer>:N<index>, and its dose is scaled by its layer's residual size
+# 0006: A neuron is named `model:L<layer>:N<index>`, and its dose is scaled by its layer's residual size
 
 Date: 2026-11-04 · Sprint: S1 · Status: accepted
 
@@ -28,8 +28,8 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
 - **A unit names a registered model.** Creating a unit refuses a model
   that is not in `src/pushlab/models/registry.py`, so a typo such as
   `Qwen3.5-4B` fails at once with the list of valid names. It also refuses
-  a layer or index that is not a whole number from 0, including `True`,
-  `14.0` and NumPy integers.
+  a layer or index that is not a Python int from 0: `True`, `14.0` and
+  NumPy integers are refused too.
 - **Three checks, each in its own place.**
   - Creating a unit: the spelling and the registry.
   - `validate(model_info)`: the range only, against a model's shape. For
@@ -80,6 +80,14 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
 
 ## Why this shape
 
+- **Explicit arguments, not a bound unit.** The development plan sketches
+  `write_direction()` and `amount(alpha)` on a unit bound to its model and
+  residual sizes, and `docs/prompts/S1/05-constant-pushes.md` speaks of a
+  "bound neuron". The S1 task asked for `write_direction(model)` and
+  `amount(unit, alpha, model, norms)` instead. A unit then stays a plain
+  value that can be compared, hashed and written to a CSV, and nothing
+  holds on to a model or to norms. A bound neuron in later steps is a
+  unit, `loaded.model` and the calibrated norms, passed together.
 - **Refuse other spellings rather than correct them.** If `L014` were read
   as `L14`, one neuron could appear under two IDs, and a text comparison
   (a join, or "is this a known unit?") would miss it.

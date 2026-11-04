@@ -11,7 +11,6 @@ other way.
 
 import math
 import numbers
-from collections.abc import Sequence
 
 import torch
 from torch import nn
@@ -30,7 +29,10 @@ def _is_finite_number(value: object) -> bool:
 
 
 def amount(
-    unit: NeuronUnit, alpha: float, model: nn.Module, norms: Sequence[float]
+    unit: NeuronUnit,
+    alpha: float,
+    model: nn.Module,
+    norms: list[float] | tuple[float, ...],
 ) -> float:
     """The number to add to unit's neuron for dose alpha: alpha * r_L / length.
 

@@ -97,14 +97,21 @@ def test_models_outside_the_registry_are_refused(text: str) -> None:
     assert "qwen3.5-4b" in str(error.value)  # it lists the registered names
 
 
+@pytest.mark.parametrize("name", ["Qwen3.5-4B", "qwen3.5-9b"])
+def test_creating_a_unit_refuses_a_model_outside_the_registry(name: str) -> None:
+    # Not only parse(): a unit made directly, as code that draws units will.
+    with pytest.raises(ValueError, match="not in the model registry"):
+        NeuronUnit(name, 14, 8949)
+
+
 @pytest.mark.parametrize(
     ("layer", "index"),
     [(-1, 0), (0, -1), (True, 0), (0, False), (14.0, 0), ("14", 0), (np.int64(14), 0)],
 )
-def test_layer_and_index_must_be_whole_numbers_from_0(
+def test_layer_and_index_must_be_python_ints_from_0(
     layer: object, index: object
 ) -> None:
-    with pytest.raises(ValueError, match="whole number from 0"):
+    with pytest.raises(ValueError, match="must be a Python int from 0"):
         NeuronUnit("qwen3.5-4b", layer, index)  # type: ignore[arg-type]
 
 
@@ -129,6 +136,15 @@ def test_validate_refuses_layer_32_of_qwen3_5_4b() -> None:
 def test_validate_refuses_neuron_9216_of_qwen3_5_4b() -> None:
     with pytest.raises(ValueError, match="neuron 9216 is out of range.* 0 to 9215"):
         NeuronUnit("qwen3.5-4b", 14, 9216).validate(QWEN3_5_4B)
+
+
+def test_validate_checks_the_shape_it_is_given() -> None:
+    # Both shapes are smaller than the registry's for qwen3.5-4b, so only the
+    # shape passed in can refuse these neurons.
+    with pytest.raises(ValueError, match="layer 20 is out of range.* 0 to 15"):
+        NeuronUnit("qwen3.5-4b", 20, 0).validate(ModelInfo(16, 2560, 9216))
+    with pytest.raises(ValueError, match="neuron 5000 is out of range.* 0 to 4095"):
+        NeuronUnit("qwen3.5-4b", 0, 5000).validate(ModelInfo(32, 2560, 4096))
 
 
 @pytest.mark.parametrize(("layer", "index"), [(0, 0), (0, 127), (1, 5), (1, 64)])
@@ -195,6 +211,20 @@ def test_write_direction_refuses_another_models_shape(
     # as Qwen3.5-4B's L14 N8949 is in range for Qwen3-8B.
     with pytest.raises(ValueError, match="another model"):
         NeuronUnit("tiny", 1, 5).write_direction(tiny_vl_model)
+
+
+@pytest.mark.parametrize(
+    "size", [{"hidden_size": 32}, {"mlp_size": 96}], ids=["hidden_size", "mlp_size"]
+)
+def test_write_direction_refuses_a_model_that_differs_in_one_size(
+    tiny_model: Qwen3ForCausalLM, monkeypatch: pytest.MonkeyPatch, size: dict[str, int]
+) -> None:
+    # The same layer count as tiny_model but one other size, as Qwen3-4B and
+    # Qwen3-8B both have 36 layers: every size of the shape is compared.
+    spec = dataclasses.replace(REGISTRY["tiny"], name="tiny-other", **size)
+    monkeypatch.setitem(REGISTRY, "tiny-other", spec)
+    with pytest.raises(ValueError, match="another model"):
+        NeuronUnit("tiny-other", 1, 5).write_direction(tiny_model)
 
 
 def test_write_direction_takes_the_model_not_what_load_model_returns(
