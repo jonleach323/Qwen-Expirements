@@ -8,13 +8,22 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
   the median size of the residual stream leaving layer L, is measured once
   per model, and it sets the unit of every dose.
 - The evil-Qwen recipe defines it as "median(‖resid‖ leaving layer L,
-  tokens 1:)" but names no text to measure it on. Both public replications
-  used long plain prose with no chat template: occcat 4 passages (578
-  tokens), Mr-Neutr0n the reference text from the recipe author's own tool
-  (119 tokens). Both leave out each text's first token. hedwigai mixed plain
-  and chat-formatted texts.
-- The S1 task asks for 32 short everyday prompts in the chat template with
-  thinking off, the way pushlab shows the model text in its runs.
+  tokens 1:)". Its author, lyra, has since published these sizes for
+  Qwen3.5-4B, "so a dose means the same thing everywhere"
+  (`norms/Qwen__Qwen3.5-4B.json` in github.com/lyramakesmusic/neuronary).
+  She measured them in bfloat16 on her neuron explorer's reference text:
+  about 120 tokens of prose and code, with no chat template.
+- Both public replications measured on plain text too: Mr-Neutr0n on the
+  same reference text, and occcat on 4 prose passages (578 tokens). Every
+  one of these leaves out each text's first token.
+- The Neuron Persona Library (Qwen3-8B) measures the way this decision does,
+  "over the prompt's tokens (first token excluded)", with the prompt "Who
+  are you?" "in the chat template, thinking off" (neuronpersonas.com,
+  "Method"). It uses that one prompt and publishes no sizes.
+- So the two references measure on different text. The S1 task asks for 32
+  short everyday prompts in the chat template with thinking off. That is
+  the library's procedure on more prompts, and it is the way pushlab's runs
+  show the model its prompts.
 - Two traps in transformers 5.21, both checked on the tiny models:
   - the last entry of `output_hidden_states` is the final norm's output,
     not the last layer's;
@@ -59,40 +68,49 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
   wrong number of layers, and sizes that are not finite and above 0. A
   measured revision is measured again only with `--overwrite`.
 
-## The measurement, checked against the replications
+## The measurement, checked against the published sizes
 
 Qwen3.5-4B at commit `851bf6e` in bfloat16, on the CPU of a cloud session.
 The pod's GPU will differ slightly.
 
-| Layer 14 | Published | pushlab's code, on the replication's own text |
+| Layer 14 | Published | pushlab's code, on the same text |
 | --- | --- | --- |
+| lyra's table | 10.353 | 10.337 |
 | Mr-Neutr0n's median | 10.322 | 10.337 |
 | occcat's median | 10.488 | 10.476 |
 | Column length of N8949 | 0.46472 | 0.46472 |
 
-With the replications' texts, pushlab reproduces both within 0.15%. The
-text this decision chooses gives other numbers, because the median depends
-on the text:
+- On lyra's reference text, pushlab's code matches her table within 0.4%
+  at every one of the 32 layers.
+- It matches both replications within 0.15% at layer 14.
+
+The text this decision chooses gives other numbers, because the median
+depends on the text:
 
 | Text | Layer 13 | Layer 14 | Dose +1 on L14 N8949 adds |
 | --- | --- | --- | --- |
+| lyra's reference text, plain | 9.745 | 10.337 | +22.24 |
 | occcat's passages, plain | 9.763 | 10.476 | +22.54 |
 | The 32 prompts in the chat template (this decision) | 9.636 | 10.917 | +23.49 |
 | The same 32 prompts, plain | 10.919 | 11.978 | +25.77 |
 
-- At layer 14, dose 1 here is 4% more than in occcat's units and 6% more
-  than in Mr-Neutr0n's. At layer 13 it is 1% less.
-- Layers 17 to 29 are 2 to 15% lower than with occcat's passages.
+- Against lyra's table, 22 of the 32 layers are within 5%.
+  - Layer 14 is 5.4% higher, so dose 1 there pushes 5% harder than in the
+    recipe. Layer 13 is 1.1% lower.
+  - Layers 0 to 10 are 3 to 12% higher, and layers 27 to 31 are 4 to 8%
+    lower.
 - Half of the 698 measured tokens are the template's own: `user`, the line
   breaks, the assistant's header and the empty thinking block. They pull
   the medians down, and short questions push them up compared with prose.
 
 ## Why this shape
 
-- **The chat template,** as the S1 task asks. pushlab's runs show the model
-  its prompts in the template, so these sizes describe the stream that the
-  pushes act on. The cost is the table above: doses here are not exactly
-  the replications' doses.
+- **The chat template,** as the S1 task asks. It is the Persona Library's
+  procedure. pushlab's runs also show the model its prompts in the
+  template, so these sizes describe the stream that the pushes act on. The
+  cost is the second table: doses here are not exactly the recipe's.
+  Measuring on lyra's reference text instead would match her table within
+  0.4%.
 - **Forward hooks rather than `output_hidden_states`,** whose last entry is
   the final norm's output.
 - **A git-ignored folder in the repository.** The task names
@@ -107,7 +125,7 @@ on the text:
 
 - Every dose in pushlab is in these units. Comparing a dose with another
   project's means comparing the calibrations: layer 14 is about 10.9 here
-  and 10.3 to 10.5 in the replications.
+  and 10.35 in lyra's table.
 - Changing the prompt set (a new version) needs a new calibration with
   `--overwrite`. `load_calibration` does not compare the file's hash with
   the current prompt set; code that runs experiments should.
