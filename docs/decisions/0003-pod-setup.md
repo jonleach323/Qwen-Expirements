@@ -56,8 +56,9 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   `python -m pushlab.models.download` fetches each one with
   `huggingface_hub.snapshot_download` into its own folder. It first turns
   the registry's revision into a commit, so every file comes from the same
-  commit, and writes `.pushlab-download.json` (ID, revision, commit) only
-  after the download finishes. A model whose record matches the registry's
+  commit. It deletes any older record before a download starts and writes
+  `.pushlab-download.json` (ID, revision, commit) only after the download
+  finishes. A model whose record matches the registry's
   ID and revision is skipped. An interrupted download has no record, so the
   next run downloads it again: the files that finished are kept, and a file
   that was still downloading starts over. Partial files that a killed
@@ -122,11 +123,12 @@ Date: 2026-10-29 · Sprint: S0 · Status: accepted
   since the pod started. The script's warning and the runbook point this out.
 - A warm start after a restart reinstalls uv and Claude Code, checks the
   environment and runs the smoke tests. Since decision 0004 these load
-  Qwen3.5-4B once to write a test reply, which is the slowest part; prompt 8
-  measures it against the 3-minute target.
+  Qwen3.5-4B once to write a test reply, which is the slowest part; decision
+  0005 tracks it against the 3-minute target.
 - To drop a model, remove it from `configs/models.yaml` and delete its
   folder under `/workspace/models`.
 - `configs/` is a new top-level folder for machine settings. Experiment
   settings still belong in `experiments/`.
-- The script has only run with fake tools so far. Its first real run is the
-  S0 pod task (prompt 8), which should record the measured times here.
+- The script's first real run, on 2026-10-30, readied a fresh RTX 4090 pod
+  in 5m 40s. Decision 0005 records its times; the warm time is still to be
+  measured.

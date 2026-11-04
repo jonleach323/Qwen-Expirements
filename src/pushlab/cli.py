@@ -162,12 +162,14 @@ def _refuse(message: str) -> int:
 def _file_in_the_way(out: Path) -> Path | None:
     """The file, if any, at out or above it that stops out being a folder.
 
+    A link to something missing counts too, since no folder can be made there.
+
     Example:
         >>> _file_in_the_way(Path("/no/such/folder")) is None
         True
     """
     for path in (out, *out.parents):
-        if path.exists():
+        if path.is_symlink() or path.exists():  # exists() alone misses a broken link
             return None if path.is_dir() else path
     return None
 
@@ -189,8 +191,12 @@ def run_baseline(
         0
     """
     if (in_the_way := _file_in_the_way(out)) is not None:
-        return _refuse(f"--out must be a folder, but {in_the_way} is a file")
-    already_there = f"{out} already holds a run; pass --overwrite to replace it"
+        what = "a file" if in_the_way.exists() else "a link to nothing"
+        return _refuse(f"--out must be a folder, but {in_the_way} is {what}")
+    already_there = (
+        f"{out} already holds a run; choose another --out, or pass --overwrite "
+        "to replace it"
+    )
     existing = [out / name for name in (RUNS_FILE, MANIFEST_FILE)]
     if not overwrite and any(path.exists() for path in existing):
         return _refuse(already_there)

@@ -103,5 +103,5 @@ same torch.
 - `uv.lock` holds four torch entries: CPU, CPU for macOS, CUDA 13.0, and PyPI's
   default for when neither `cpu` nor `gpu` is selected. Only one is ever
   installed.
-- The `gpu` extra resolves in the lockfile but has not yet been installed on a
-  GPU. Its first real test is the S0 pod task.
+- The `gpu` extra was first installed on a GPU on 2026-10-30, on the RTX 4090
+  pod, where the GPU smoke tests passed (decision 0005).

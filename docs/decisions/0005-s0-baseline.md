@@ -148,5 +148,6 @@ pod, step 7 alone took 2m 25s of that 3-minute budget.
 - To move to a newer Qwen3.5-4B commit later, change the revision in
   `src/pushlab/models/registry.py`, and the comments there and in
   `configs/models.yaml`, through a pull request. Then run the setup script
-  on the pod, run the baseline again and record what changed in a new
-  decision note.
+  on the pod, run the baseline again into a new folder (never
+  `/workspace/runs/s0-baseline`, which keeps this run) and record what
+  changed in a new decision note.

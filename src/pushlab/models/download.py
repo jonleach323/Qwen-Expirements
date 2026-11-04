@@ -180,10 +180,12 @@ def ensure_models(
 
     Returns the model folders in the order given. A folder only counts as
     finished once download returns, so an interrupted download is retried.
+    An older record goes first, so a folder that was halfway through a
+    switch to another revision never counts as finished.
 
     Example:
         >>> ensure_models(["qwen3.5-4b"], Path("models"))  # doctest: +SKIP
-        qwen3.5-4b: downloading Qwen/Qwen3.5-4B at main into models/qwen3.5-4b
+        qwen3.5-4b: downloading Qwen/Qwen3.5-4B at 851bf6e... into models/qwen3.5-4b
         qwen3.5-4b: finished, commit ...
         [PosixPath('models/qwen3.5-4b')]
     """
@@ -197,6 +199,9 @@ def ensure_models(
             continue
         print(f"{name}: downloading {spec.hf_id} at {spec.revision} into {folder}")
         folder.mkdir(parents=True, exist_ok=True)
+        # The download changes the folder, so a record of another revision
+        # must not outlive it: a failed switch would then count as finished.
+        (folder / MARKER).unlink(missing_ok=True)
         commit = download(spec, folder)
         record = {"hf_id": spec.hf_id, "revision": spec.revision, "commit": commit}
         (folder / MARKER).write_text(json.dumps(record, indent=2) + "\n")

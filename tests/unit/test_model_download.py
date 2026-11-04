@@ -5,6 +5,7 @@ tests that run the real huggingface_hub library are in
 test_model_download_hub.py.
 """
 
+import dataclasses
 import doctest
 import json
 from pathlib import Path
@@ -95,6 +96,32 @@ def test_an_interrupted_download_is_retried(tmp_path: Path) -> None:
     with pytest.raises(KeyboardInterrupt):
         ensure_models(["qwen3.5-4b"], tmp_path, download=interrupted)
     assert not is_downloaded(REGISTRY["qwen3.5-4b"], tmp_path / "qwen3.5-4b")
+    fake = FakeDownloader()
+    ensure_models(["qwen3.5-4b"], tmp_path, download=fake)
+    assert len(fake.calls) == 1
+
+
+def test_a_failed_switch_to_another_revision_is_downloaded_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pull request moves the pin, and the new commit's download stops after
+    # it replaced a file. Going back to the old pin must download it again,
+    # not trust a folder that now holds files of both commits.
+    ensure_models(["qwen3.5-4b"], tmp_path, download=FakeDownloader())
+
+    def stops_halfway(spec: ModelSpec, folder: Path) -> str:
+        # Gone before the folder changes, so a killed process cannot keep it.
+        assert not (folder / MARKER).exists()
+        (folder / "config.json").write_text('{"from": "the new commit"}')
+        raise KeyboardInterrupt
+
+    pinned = REGISTRY["qwen3.5-4b"]
+    switched = dataclasses.replace(pinned, revision="b" * 40)
+    monkeypatch.setitem(REGISTRY, "qwen3.5-4b", switched)
+    with pytest.raises(KeyboardInterrupt):
+        ensure_models(["qwen3.5-4b"], tmp_path, download=stops_halfway)
+    monkeypatch.setitem(REGISTRY, "qwen3.5-4b", pinned)
+    assert not is_downloaded(pinned, tmp_path / "qwen3.5-4b")
     fake = FakeDownloader()
     ensure_models(["qwen3.5-4b"], tmp_path, download=fake)
     assert len(fake.calls) == 1
