@@ -1,0 +1,39 @@
+{
+  "code_commit": "be276d0ba7f3d5eed1bd18a9717e5b554c3cd326",
+  "code_dirty": false,
+  "cuda": "13.0",
+  "device": "cuda",
+  "driver": "595.91.07",
+  "dtype": "bfloat16",
+  "experiment": "s0-baseline",
+  "experiment_file": "experiments/p0/s0_baseline.yaml",
+  "experiment_sha256": "45b08b1838eda8f93021355bc1ea316181a1e354c264d6dc52f411933b7ec4b1",
+  "finished_at": "2026-10-30T02:18:54+00:00",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "lockfile_sha256": "eaecb8c1980ca1a73476d5912517911707758b6e192ff5bb9b774a318a105435",
+  "model": "qwen3.5-4b",
+  "model_id": "Qwen/Qwen3.5-4B",
+  "model_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "packages": {
+    "accelerate": "1.15.0",
+    "causal-conv1d": "1.7.0+cu.13.0.torch.2.14",
+    "fla-core": "0.6.0",
+    "flash-linear-attention": "0.6.0",
+    "numpy": "2.4.6",
+    "safetensors": "0.8.0",
+    "tokenizers": "0.23.3",
+    "torch": "2.14.1+cu130",
+    "transformers": "5.21.0",
+    "triton": "3.8.0"
+  },
+  "prompt": "Explain what a neuron in a language model is, in three sentences.",
+  "prompt_id": "s0-neuron-explainer",
+  "python": "3.11.15",
+  "run_count": 1,
+  "runs_by_status": {
+    "ok": 1
+  },
+  "started_at": "2026-10-30T02:18:17+00:00",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.21.0"
+}

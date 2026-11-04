@@ -24,6 +24,7 @@ from pushlab.models.registry import REGISTRY, ModelSpec
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+PINNED = REGISTRY["qwen3.5-4b"].revision  # the commit Qwen3.5-4B is pinned to
 
 
 class FakeDownloader:
@@ -72,7 +73,7 @@ def test_downloads_a_missing_model_and_records_it(tmp_path: Path) -> None:
     assert folders == [folder]
     assert fake.calls == [("qwen3.5-4b", folder)]
     record = json.loads((folder / MARKER).read_text())
-    assert record == {"hf_id": "Qwen/Qwen3.5-4B", "revision": "main", "commit": COMMIT}
+    assert record == {"hf_id": "Qwen/Qwen3.5-4B", "revision": PINNED, "commit": COMMIT}
     assert is_downloaded(REGISTRY["qwen3.5-4b"], folder)
 
 
@@ -103,7 +104,7 @@ def test_an_interrupted_download_is_retried(tmp_path: Path) -> None:
     "marker",
     [
         {"hf_id": "Qwen/Qwen3.5-4B", "revision": "an-older-revision"},
-        {"hf_id": "Qwen/Qwen3-4B", "revision": "main"},
+        {"hf_id": "Qwen/Qwen3-4B", "revision": PINNED},
         ["not", "a", "record"],
     ],
 )

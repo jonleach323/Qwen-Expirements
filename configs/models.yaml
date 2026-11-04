@@ -6,4 +6,6 @@
 # Change this file through a pull request, not on the pod, so the pod's copy of
 # the repository has no uncommitted changes.
 models:
+  # Pinned in the registry to commit 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a,
+  # the one the S0 baseline ran with (docs/decisions/0005-s0-baseline.md).
   - qwen3.5-4b

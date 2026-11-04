@@ -4,6 +4,7 @@ A fake Hub server answers the library's requests inside this process, so
 nothing is downloaded and no request leaves the machine.
 """
 
+import dataclasses
 import hashlib
 import json
 from collections.abc import Iterator
@@ -92,6 +93,11 @@ def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHubServ
     server = FakeHubServer()
     monkeypatch.setenv("HF_TOKEN", FAKE_TOKEN)
     monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
+    # The registry pins Qwen3.5-4B to a real commit, which this server does
+    # not have. These tests move "main" to stand in for a new commit, so the
+    # model follows "main" here.
+    unpinned = dataclasses.replace(REGISTRY["qwen3.5-4b"], revision="main")
+    monkeypatch.setitem(REGISTRY, "qwen3.5-4b", unpinned)
     transport = httpx2.MockTransport(server.handle)
     set_client_factory(lambda: httpx2.Client(transport=transport))
     yield server
