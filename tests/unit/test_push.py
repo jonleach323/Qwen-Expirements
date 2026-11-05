@@ -101,11 +101,13 @@ def _hook_counts(model: nn.Module) -> list[tuple[int, int]]:
     return [(len(m._forward_hooks), len(m._forward_pre_hooks)) for m in model.modules()]
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("name", MODELS)
 def test_alpha_0_leaves_every_output_bit_identical(
-    name: str, request: pytest.FixtureRequest
+    name: str, dtype: torch.dtype, request: pytest.FixtureRequest
 ) -> None:
     model, unit, norms = _case(name, request)
+    model = model.to(dtype)  # float64 must not pass through float32 either
     unsteered = _run(model, StepState())
     state = StepState()
     with pushes_active(model, [_push(unit, alpha=0.0)], norms, state):
@@ -323,6 +325,10 @@ def test_a_padding_mask_of_the_wrong_shape_is_refused(
     with pushes_active(tiny_model, [_push()], NORMS, state):
         state.at_prompt(padding=torch.zeros(1, len(PROMPT) + 1, dtype=torch.bool))
         with pytest.raises(ValueError, match="padding"), torch.no_grad():
+            tiny_model(input_ids=torch.tensor([PROMPT]))
+        # Set without at_prompt: a 0/1 mask, whose ~ would flip the push's sign.
+        state.padding = torch.zeros(1, len(PROMPT), dtype=torch.int64)
+        with pytest.raises(ValueError, match="bool"), torch.no_grad():
             tiny_model(input_ids=torch.tensor([PROMPT]))
 
 

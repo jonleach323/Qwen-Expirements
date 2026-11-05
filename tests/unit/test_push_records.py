@@ -69,3 +69,17 @@ def test_include_prompt_must_be_chosen() -> None:
 def test_a_bad_step_is_refused(call: object, problem: str) -> None:
     with pytest.raises(ValueError, match=problem):
         call(StepState())  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    ("fields", "problem"),
+    [
+        ({"reply_token": -1}, "reply token"),
+        ({"padding": torch.zeros(1, 5, dtype=torch.int64)}, "bool"),
+    ],
+)
+def test_a_step_state_checks_what_it_is_made_with(
+    fields: dict[str, object], problem: str
+) -> None:
+    with pytest.raises(ValueError, match=problem):
+        StepState(**fields)  # type: ignore[arg-type]

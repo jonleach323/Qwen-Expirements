@@ -40,6 +40,10 @@ class Push:
     no default, because a constant push like the evil-Qwen recipe's needs
     True and a window late in the reply needs False.
 
+    A push on reply token k changes the pass that reads token k, so it first
+    changes the choice of token k + 1. Only include_prompt reaches token 0.
+    The research plan's pulse on tokens 0 to 15 is start=0, end=16.
+
     Example:
         >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
         >>> recipe = Push(unit=unit, alpha=1.0, include_prompt=True)
@@ -130,6 +134,17 @@ class StepState:
     reply_token: int | None = None
     padding: torch.Tensor | None = None
 
+    def __post_init__(self) -> None:
+        """Check the fields as at_prompt and at_reply_token do."""
+        if self.reply_token is not None and (
+            not _is_whole(self.reply_token) or self.reply_token < 0
+        ):
+            raise ValueError(
+                "the reply token must be None or a whole number from 0, "
+                f"not {self.reply_token!r}"
+            )
+        _checked_padding(self.padding)
+
     @property
     def in_prompt(self) -> bool:
         """True during the prompt pass."""
@@ -183,21 +198,25 @@ def _down_proj_hook(
                 "expected (rows, positions, neurons)"
             )
         rows, positions = values.shape[0], values.shape[1]
-        real = torch.ones(rows, positions, dtype=torch.float32, device=values.device)
-        if state.padding is not None:
-            if tuple(state.padding.shape) != (rows, positions):
+        # float32, or float64 for a float64 model: never less exact than the
+        # activations, so a dose of 0 changes nothing in any type.
+        compute = torch.promote_types(values.dtype, torch.float32)
+        real = torch.ones(rows, positions, dtype=compute, device=values.device)
+        padding = _checked_padding(state.padding)  # also when set directly
+        if padding is not None:
+            if tuple(padding.shape) != (rows, positions):
                 raise ValueError(
-                    f"the padding mask is {tuple(state.padding.shape)}, but this "
+                    f"the padding mask is {tuple(padding.shape)}, but this "
                     f"pass has {rows} rows of {positions} positions"
                 )
-            real = (~state.padding).to(device=values.device, dtype=torch.float32)
+            real = (~padding).to(device=values.device, dtype=compute)
         pushed = values.clone()  # every other value stays exactly as it was
         for index, total in totals.items():
             # One amount per row. In S1 every row gets the same; S2's per-row
             # schedules will fill this column with each row's own amount.
-            per_row = torch.full((rows, 1), total, device=values.device)
-            # Added in float32 and rounded once to the activations' type.
-            column = values[..., index].float() + per_row * real
+            per_row = torch.full((rows, 1), total, dtype=compute, device=values.device)
+            # Added at that precision, then rounded once to the activations' type.
+            column = values[..., index].to(compute) + per_row * real
             pushed[..., index] = column.to(values.dtype)
         return (pushed, *args[1:])
 

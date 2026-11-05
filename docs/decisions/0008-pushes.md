@@ -46,9 +46,10 @@ Date: 2026-11-05 · Sprint: S1 · Status: accepted
 - **One hook per pushed layer,** shared by that layer's pushes. Pushes add
   up: amounts for the same neuron are summed, and different neurons are
   pushed independently, in one layer or several.
-- **Precision:** the amount and the value are added in float32, and the
-  sum is rounded once to the activations' type, as occcat does. Rounding the
-  amount to bfloat16 first would turn 22.21 into 22.25 before the add.
+- **Precision:** the amount and the value are added in float32 (float64
+  for a float64 model), and the sum is rounded once to the activations'
+  type, as occcat does. Rounding the amount to bfloat16 first would turn
+  22.21 into 22.25 before the add.
 - **Only the pushed neurons change.** The hook copies down_proj's input
   and changes only the pushed neurons' columns, so nothing else moves, not
   even by rounding.
@@ -101,3 +102,6 @@ bfloat16 tolerance."
   (`score_text`, later) will need a reply token per position. StepState
   holds one per pass for now.
 - `pushes_active` hands back each push's amount, for the run's record.
+- A record kept per reply token must take the pushes behind a token's
+  choice from the pass before it: the prompt pass for token 0, and the pass
+  of token k − 1 for token k.
