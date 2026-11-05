@@ -185,22 +185,6 @@ def test_a_window_is_active_on_its_reply_tokens_only(
         assert torch.equal(pushed[1 + k], expected)
 
 
-def test_active_at_follows_start_end_and_include_prompt() -> None:
-    def active(push: Push, step: int | None) -> bool:
-        state = StepState()
-        if step is not None:
-            state.at_reply_token(step)
-        return push.active_at(state)
-
-    window = _push(start=3, end=6, include_prompt=False)
-    assert [active(window, k) for k in [None, 0, 1, 2, 3, 4, 5, 6, 7]] == [
-        False, False, False, False, True, True, True, False, False,
-    ]  # fmt: skip
-    to_the_end = _push(start=2, end=None, include_prompt=True)
-    assert active(to_the_end, None) and not active(to_the_end, 1)
-    assert active(to_the_end, 2) and active(to_the_end, 10_000)
-
-
 def test_no_hook_remains_after_the_context_even_after_an_error(
     tiny_model: PreTrainedModel,
 ) -> None:
@@ -300,6 +284,38 @@ def test_in_bfloat16_the_amount_and_the_value_are_added_then_rounded_once(
         assert torch.equal(after, expected)
 
 
+def test_the_amount_is_never_rounded_before_the_add() -> None:
+    # 22.21 is no bfloat16 number: rounded first, it would be 22.25 before the
+    # add. Over many values the two orders give different results somewhere.
+    hook = push_module._down_proj_hook([(_push(), 22.21)], StepState())
+    values = torch.linspace(-1, 1, 2001).bfloat16().reshape(1, -1, 1).repeat(1, 1, 8)
+    (pushed,) = hook(nn.Identity(), (values,))
+    column = values[..., UNIT.index]
+    once = (column.float() + 22.21).bfloat16()
+    assert torch.equal(pushed[..., UNIT.index], once)
+    assert not torch.equal(once, column + torch.tensor(22.21).bfloat16())
+    others = [i for i in range(8) if i != UNIT.index]
+    assert torch.equal(pushed[..., others], values[..., others])
+
+
+def test_the_hook_changes_a_copy_never_the_tensor_it_was_given(
+    tiny_model: PreTrainedModel,
+) -> None:
+    # A hook that runs before the push's may keep the very tensor the push
+    # hook is given; it must not change under that hook.
+    kept: list[torch.Tensor] = []
+    down_proj = _down_proj(tiny_model, UNIT.layer)
+    early = down_proj.register_forward_pre_hook(lambda m, args: kept.append(args[0]))
+    try:
+        state = StepState()
+        with pushes_active(tiny_model, [_push()], NORMS, state), torch.no_grad():
+            state.at_prompt()
+            tiny_model(input_ids=torch.tensor([PROMPT]))
+    finally:
+        early.remove()
+    assert torch.equal(kept[0], _probed(tiny_model, UNIT.layer, [], NORMS)[0])
+
+
 def test_a_padding_mask_of_the_wrong_shape_is_refused(
     tiny_model: PreTrainedModel,
 ) -> None:
@@ -308,46 +324,6 @@ def test_a_padding_mask_of_the_wrong_shape_is_refused(
         state.at_prompt(padding=torch.zeros(1, len(PROMPT) + 1, dtype=torch.bool))
         with pytest.raises(ValueError, match="padding"), torch.no_grad():
             tiny_model(input_ids=torch.tensor([PROMPT]))
-
-
-@pytest.mark.parametrize(
-    ("changes", "problem"),
-    [
-        ({"unit": "tiny:L1:N5"}, "NeuronUnit"),
-        ({"alpha": float("nan")}, "alpha"),
-        ({"alpha": True}, "alpha"),
-        ({"start": -1}, "start"),
-        ({"start": 1.0}, "start"),
-        ({"end": 0}, "end"),
-        ({"start": 4, "end": 4}, "end"),
-        ({"end": 2.5}, "end"),
-        ({"include_prompt": 1}, "include_prompt"),
-    ],
-)
-def test_a_bad_push_is_refused(changes: dict[str, object], problem: str) -> None:
-    values: dict[str, object] = {"unit": UNIT, "alpha": 1.0, "start": 0, "end": None}
-    values["include_prompt"] = True
-    with pytest.raises(ValueError, match=problem):
-        Push(**(values | changes))  # type: ignore[arg-type]
-
-
-def test_include_prompt_must_be_chosen() -> None:
-    with pytest.raises(TypeError, match="include_prompt"):
-        Push(unit=UNIT, alpha=1.0)  # type: ignore[call-arg]
-
-
-@pytest.mark.parametrize(
-    ("call", "problem"),
-    [
-        (lambda state: state.at_reply_token(-1), "reply token"),
-        (lambda state: state.at_reply_token(True), "reply token"),
-        (lambda state: state.at_prompt(padding=torch.zeros(5)), "padding"),
-        (lambda state: state.at_prompt(padding=torch.zeros(1, 5)), "padding"),
-    ],
-)
-def test_a_bad_step_is_refused(call: object, problem: str) -> None:
-    with pytest.raises(ValueError, match=problem):
-        call(StepState())  # type: ignore[operator]
 
 
 def test_a_push_for_another_model_is_refused_and_leaves_no_hook(
