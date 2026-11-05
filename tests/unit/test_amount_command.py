@@ -10,7 +10,7 @@ import torch
 from pushlab.cli import main
 from pushlab.models import load
 from pushlab.models.load import load_model
-from pushlab.units import amount_command
+from pushlab.units import amount_command, dose
 from pushlab.units.dose import amount
 from pushlab.units.neuron import NeuronUnit
 
@@ -45,9 +45,27 @@ def test_amount_prints_what_a_dose_adds_to_the_neuron(
     expected = amount(NeuronUnit.parse(UNIT), float(alpha), model, norms)
     out = capsys.readouterr().out
     assert f"adds {expected:+.4f} to the neuron's value" in out
-    # A push of |alpha| times layer 2's size, 8.0, along the write direction.
-    assert f"{abs(float(alpha)) * 8.0:.4f}" in out
+    # A push of |alpha| times layer 2's size along the write direction.
+    assert f"{abs(float(alpha)) * norms[2]:.4f}" in out
     assert str(tiny_vl_calibration) in out
+
+
+def test_a_dose_whose_amount_is_not_finite_is_refused(
+    tiny_vl_calibration: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A dose so large that alpha * r_L / length overflows to infinity.
+    monkeypatch.setattr(dose, "amount", lambda *args: float("inf"))
+    assert main(["amount", "--unit", UNIT, "--alpha", "1e300"]) == 1
+    assert "smaller dose" in capsys.readouterr().err
+
+
+def test_the_dose_is_printed_as_given(
+    tiny_vl_calibration: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["amount", "--unit", UNIT, "--alpha=1.0000004"]) == 0
+    assert "at dose +1.0000004 adds" in capsys.readouterr().out
 
 
 def test_without_a_calibration_amount_stops_and_names_the_command(

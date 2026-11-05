@@ -312,8 +312,9 @@ section above). Then, from `/workspace/Qwen-Expirements`:
    ```
 
    By default a push starts on the prompt and lasts the whole reply, as
-   in the evil-Qwen recipe; `--start`, `--end` and `--no-include-prompt`
-   narrow it. Replies at dose 1 can be hostile; like every run output,
+   in the evil-Qwen recipe. `--start`, `--end` and `--no-include-prompt`
+   narrow it: a push on reply token k first changes token k + 1, so for a
+   push that starts late, add `--no-include-prompt`. Replies at dose 1 can be hostile; like every run output,
    they stay on the pod.
 
 3. Lay the folders side by side in one Markdown table:
@@ -322,7 +323,8 @@ section above). Then, from `/workspace/Qwen-Expirements`:
    uv run pushlab report --runs /workspace/runs/s1-smoke-none /workspace/runs/s1-smoke-dose0 /workspace/runs/s1-smoke-dose1 /workspace/runs/s1-smoke-control --out /workspace/runs/s1-smoke-report.md
    ```
 
-   Open the file in JupyterLab's file browser to read it.
+   To read it, right-click the file in JupyterLab's file browser and choose
+   **Open With > Markdown Preview**; a double-click shows its raw text.
 
 Compare dose 0 with the folder made without `--unit`: both run the same
 prompts in the same batch, so their replies must be identical. `pushlab

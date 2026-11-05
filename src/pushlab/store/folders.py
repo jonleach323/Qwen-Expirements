@@ -65,7 +65,8 @@ def folder_problem(out: Path, overwrite: bool) -> str | None:
 
 
 def shown_path(path: Path) -> str:
-    """path relative to the repository when it is inside it, as manifests name files.
+    """How a manifest names path: from the repository's root when it is inside
+    it, else in full, so a path typed from another folder still says where.
 
     Example:
         >>> shown_path(PROJECT_ROOT / "prompts" / "smoke.jsonl")
@@ -76,4 +77,4 @@ def shown_path(path: Path) -> str:
     resolved = path.resolve()
     if resolved.is_relative_to(PROJECT_ROOT):
         return resolved.relative_to(PROJECT_ROOT).as_posix()
-    return str(path)
+    return str(resolved)

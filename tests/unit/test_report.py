@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -12,7 +14,13 @@ from pushlab.analysis import report
 from pushlab.analysis.report import side_by_side
 from pushlab.cli import main
 from pushlab.prompts import PROMPTS_DIR
-from pushlab.store.records import RunRecord, make_run_id, write_runs
+from pushlab.store.records import (
+    RUNS_FILE,
+    RUNS_SCHEMA,
+    RunRecord,
+    make_run_id,
+    write_runs,
+)
 
 DECODING = {"strategy": "greedy", "max_new_tokens": 8, "thinking": False, "dtype": "x"}
 PUSH = {
@@ -119,12 +127,67 @@ def test_a_reply_stays_readable_inside_its_cell(tmp_path: Path) -> None:
     assert row[1] == r"a \| b<br>next &lt;b&gt;bold&lt;/b&gt; &amp; co"
 
 
-def test_a_reply_cut_at_its_token_limit_says_so(tmp_path: Path) -> None:
+@pytest.mark.parametrize("line_break", ["\r", "\r\n", "\u2028", "\u2029", "\x85"])
+def test_no_kind_of_line_break_ends_a_row_early(
+    tmp_path: Path, line_break: str
+) -> None:
+    folder = _folder(tmp_path, "run", {"p1": f"one{line_break}two"})
+    markdown = side_by_side([folder])
+    assert markdown.splitlines()[-1] == "| **p1** | one<br>two |"
+
+
+def test_folders_that_give_a_prompt_two_texts_are_refused(tmp_path: Path) -> None:
+    old = _folder(tmp_path, "old", {"p1": "a"}, manifest={"prompts": {"p1": "Hi?"}})
+    new = _folder(tmp_path, "new", {"p1": "b"}, manifest={"prompts": {"p1": "Bye?"}})
+    with pytest.raises(ValueError, match="p1 reads differently"):
+        side_by_side([old, new])
+
+
+def test_the_legend_names_each_folders_prompt_set(tmp_path: Path) -> None:
+    manifest = {
+        "prompt_set": "prompts/smoke.jsonl",
+        "prompt_set_version": 1,
+        "prompt_set_sha256": "92ba015e867c" + "0" * 52,
+    }
+    folder = _folder(tmp_path, "run", {"p1": "a"}, manifest=manifest)
+    legend = side_by_side([folder]).split("## Replies")[0]
+    assert (
+        "prompts from prompts/smoke.jsonl version 1 (SHA-256 92ba015e867c…)" in legend
+    )
+
+
+def test_a_reply_at_its_token_limit_says_so(tmp_path: Path) -> None:
     replies = {"p1": "a long reply", "p2": "short"}
     folder = _folder(tmp_path, "run", replies, cut=frozenset({"p1"}))
     _, cut, whole = _table(side_by_side([folder]))
-    assert cut[1].endswith("(stopped at the 8-token limit)")
+    assert cut[1].endswith("(reached the 8-token limit)")
     assert whole[1] == "short"
+
+
+def test_with_the_stop_tokens_known_only_a_cut_reply_says_so(tmp_path: Path) -> None:
+    # Each reply here is 8 tokens of 1; with 1 an end token, both ended
+    # their turn on their last token, and with 2 alone, both were cut off.
+    replies = {"p1": "ended", "p2": "also ended"}
+    cut = frozenset({"p1", "p2"})
+    ended = _folder(tmp_path, "a", replies, manifest={"stop_token_ids": [1]}, cut=cut)
+    others = _folder(tmp_path, "b", replies, manifest={"stop_token_ids": [2]}, cut=cut)
+    _, *rows = _table(side_by_side([ended, others]))
+    assert [row[1] for row in rows] == ["ended", "also ended"]
+    assert all(row[2].endswith("(cut off at the 8-token limit)") for row in rows)
+
+
+def test_a_push_that_never_came_is_marked(tmp_path: Path) -> None:
+    late = PUSH | {"start": 50, "include_prompt": False}
+    records = [
+        _record(1, "p1", "early end", [late | {"touched": 0}]),
+        _record(2, "p2", "pushed", [late | {"touched": 3}]),
+    ]
+    write_runs(records, tmp_path / "late")
+    header, first, second = _table(side_by_side([tmp_path / "late"]))
+    assert first[1].endswith("nothing was pushed)")
+    assert second[1] == "pushed"
+    # touched differs from run to run, but the folder's pushes do not.
+    assert "differ" not in side_by_side([tmp_path / "late"]).split("## Replies")[0]
 
 
 def test_the_folders_are_described_above_the_table(tmp_path: Path) -> None:
@@ -147,6 +210,43 @@ def test_the_folders_are_described_above_the_table(tmp_path: Path) -> None:
         "tiny-vl:L2:N77 at +1.5 (adds +12.3457) on reply tokens from 2 on, "
         "a random control for tiny-vl:L2:N100" in legend
     )
+
+
+def test_odd_folders_and_outs_are_refused_with_a_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = _folder(tmp_path, "run", {"p1": "a"})
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    pq.write_table(pa.Table.from_pylist([], schema=RUNS_SCHEMA), empty / RUNS_FILE)
+    blocked = tmp_path / "file"
+    blocked.write_text("x")
+    for argv, problem in [
+        (["--runs", str(empty), "--out", str(tmp_path / "r.md")], "holds no runs"),
+        (["--runs", str(folder), "--out", str(blocked / "r.md")], "cannot write"),
+        (["--runs", str(folder), "--out", str(tmp_path)], "must be a file"),
+    ]:
+        assert main(["report", *argv]) == 1
+        assert problem in capsys.readouterr().err
+
+
+def test_folders_of_one_name_get_numbered_columns(tmp_path: Path) -> None:
+    first = _folder(tmp_path / "a", "dose1", {"p1": "x", "p2": "y"})
+    second = _folder(tmp_path / "b", "dose1", {"p1": "z"})
+    markdown = side_by_side([first, second])
+    assert _table(markdown)[0] == ["Prompt", "dose1", "dose1 (2)"]
+    legend = markdown.split("## Replies")[0]
+    assert "**dose1**: " + str(first) + ", 2 runs of tiny-vl@main" in legend
+    assert "**dose1 (2)**: " + str(second) + ", 1 runs of tiny-vl@main" in legend
+
+
+def test_runs_given_twice_adds_the_folders(tmp_path: Path) -> None:
+    first = _folder(tmp_path, "first", {"p1": "a"})
+    second = _folder(tmp_path, "second", {"p1": "b"})
+    out = tmp_path / "side.md"
+    argv = ["report", "--runs", str(first), "--runs", str(second), "--out", str(out)]
+    assert main(argv) == 0
+    assert _table(out.read_text())[0] == ["Prompt", "first", "second"]
 
 
 def test_report_writes_the_file_and_keeps_an_existing_one(

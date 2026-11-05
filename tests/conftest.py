@@ -310,8 +310,10 @@ def tiny_downloads(
     return TINY_DOWNLOADS
 
 
-# Made-up residual sizes for tiny-vl's four layers.
-TINY_VL_NORMS = (3.0, 5.0, 8.0, 13.0)
+# tiny-vl's own residual sizes, as calibrate_norms measures them on
+# prompts/calibration.jsonl, so a test dose pushes as hard as a real one:
+# larger sizes would swamp the model, and every dose would give one reply.
+TINY_VL_NORMS = (0.1636, 0.1649, 0.1653, 0.1698)
 
 
 @pytest.fixture

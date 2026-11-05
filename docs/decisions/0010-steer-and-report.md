@@ -32,17 +32,26 @@ Date: 2026-11-05 · Sprint: S1 · Status: accepted
   - every prompt of the set in one left-padded batch, greedy, thinking off,
     at most `--max-new-tokens` (200) tokens each;
   - the same pushes on every prompt: each `--unit` with its own `--alpha`,
-    all in one window, `--start` to `--end` (end not included), and the
-    prompt pass unless `--no-include-prompt`. The default, the whole reply
-    and the prompt, is the evil-Qwen recipe's constant push;
+    all in one window, on the passes that read reply tokens `--start` to
+    `--end` (end not included), and on the prompt pass unless
+    `--no-include-prompt`. A push on reply token k first changes token
+    k + 1, and only the prompt pass changes token 0 (decision 0008). The
+    default, the prompt and the whole reply, is the evil-Qwen recipe's
+    constant push. A `--start` above 0 with the prompt pass on is allowed,
+    since the owner asked for it on by default, but `steer` points out that
+    the replies then change from their first token;
   - one run per prompt, in the set's order: `steer-000001` and on,
     `batch_key` `b000001:<row>`, seed 0, status `ok`, and `decoding` as
     `pushlab baseline` records it;
   - each run's schedule holds one segment per push: `unit`, `alpha`,
     `start`, `end`, `include_prompt`, `amount` (the number added, from
-    `units.dose.amount`) and `control_for` (null unless the push is a
-    control). `alpha` carries the plan's sign and dose; regions come with
-    S2's schedules.
+    `units.dose.amount`), `control_for` (null unless the push is a
+    control) and `touched`. `alpha` carries the plan's sign and dose;
+    regions come with S2's schedules;
+  - `touched` is that run's count from the engine (decision 0009): how many
+    of its reply tokens the push was on. A run whose reply ended before
+    the window shows 0, so a push that never came cannot pass for one that
+    did nothing.
 - **Random controls** (`--control random --control-seed N`) replace each
   unit by a neuron of the same model and layer, at the same dose:
   - draw k for a unit is a SHA-256 hash of the seed, the unit and k, as a
@@ -53,36 +62,59 @@ Date: 2026-11-05 · Sprint: S1 · Status: accepted
     `control_of` the run it mirrors: the steer run of the same prompt. Its
     seed is the control seed;
   - the manifest's `control` maps each unit to its control.
-- **The manifest** holds what `pushlab baseline` records, plus:
+- **The manifest** holds what any pushlab manifest records (code,
+  lockfile, GPU, CUDA and library versions, the model and its commit, the
+  device, data type, times and run counts), and:
+  - `command` and `experiment`;
   - the prompt set's file, version and SHA-256, and the prompts' texts;
-  - the schedule and the control;
-  - the calibration file and its SHA-256, both null with no push.
+  - the schedule, without the per-run `touched`, and the control;
+  - the calibration file and its SHA-256, both null with no push. The file
+    is hashed as it is read, and refused if it changes meanwhile;
+  - `decoding`, and `stop_token_ids`, the tokens that end a reply.
+
+  A file is named from the repository's root when it is inside it, and in
+  full otherwise. Unlike the baseline's, the manifest has no experiment
+  file: the options are the experiment.
 - **Refusals**, all before the model loads:
   - a folder that already holds runs, unless `--overwrite`;
   - a unit in the wrong form, of another model, out of range or given
     twice (push it once, with the doses added);
   - unequal numbers of `--unit` and `--alpha`, a dose that is not finite,
     an `--end` that does not come after `--start`;
+  - `--start`, `--end` or `--no-include-prompt` without a `--unit`, and a
+    window no pass can reach: with the prompt pass off, a `--start` past
+    reply token `--max-new-tokens` − 2, the last one a pass reads;
   - `--control` without a seed or without units, or a seed without
     `--control`;
   - a broken prompt set, or a model that is not downloaded;
   - with pushes, a missing calibration. The message gives the command to
     run: `uv run pushlab calibrate --model <name>`.
+
+  One check needs the model's weights, so it comes after loading but
+  before generating: an amount that is not finite, from a huge dose.
 - **`pushlab report --runs DIR ... --out FILE.md`** writes:
-  - a list of the folders: path, run count, model, decoding and the pushes
-    in words;
+  - a list of the folders: path, run count, model, prompt set, decoding
+    and the pushes in words;
   - one table with a row per prompt (its ID, and its text from the
     manifests) and a column per folder, named after the folder;
-  - in each cell, the reply. Pipes and backslashes are escaped, line
-    breaks become `<br>`, and `<`, `>` and `&` become entities, so HTML
-    shows as text; other Markdown in a reply, such as `**bold**`, still
-    shows as formatting. A reply that reached its token limit says so, and
-    a prompt a folder has no run of shows `—`. Rendered by markdown-it's
-    table parser, replies full of pipes, backslashes and line breaks keep
-    one cell per column.
+  - in each cell, the reply. Pipes and backslashes are escaped, every
+    kind of line break (`\n`, `\r`, U+2028 and the like) becomes `<br>`,
+    and `<`, `>` and `&` become entities, so HTML shows as text; other
+    Markdown in a reply, such as `**bold**`, still shows as formatting.
+    Rendered by markdown-it's table parser, replies full of pipes,
+    backslashes and line breaks keep one cell per column;
+  - under a reply, a note when it was cut off at its token limit (a reply
+    whose last token ends its turn was not, which the manifest's stop
+    tokens tell; without them the note says only that the reply reached
+    the limit), and when no push reached it. A prompt a folder has no run
+    of shows `—`.
 
   It refuses a folder without runs, a folder with two runs of one prompt,
-  and an existing file unless `--overwrite`.
+  folders that give one prompt ID different texts, an `--out` that is a
+  folder or cannot be written, and an existing file unless `--overwrite`.
+  `--runs` may be given more than once.
+- **Doses are printed as given,** such as `+1.0000004`, so two folders
+  never look alike when their doses differ.
 - **Code:**
   - `pushlab.cli_parser` holds every command's options, so `cli.py` stays
     under 400 lines and `--help` never loads torch;
@@ -93,17 +125,27 @@ Date: 2026-11-05 · Sprint: S1 · Status: accepted
 
 ## The commands checked
 
-On the tiny Qwen3.5 (tiny-vl), in float32 on the CPU:
+On the tiny Qwen3.5 (tiny-vl), in float32 on the CPU, with tiny-vl's own
+residual sizes as its calibration (larger made-up sizes swamped the model,
+so that every dose gave the same reply):
 
 - `steer` at dose 0 gives the same replies as `steer` with no push and as
   `pushlab baseline` with each prompt alone.
+- The engine gets exactly the pushes the options name, window, prompt pass,
+  every `--unit` and the calibration's sizes included, and the replies are
+  the ones `generate()` gives with them. Each run's `touched` is the
+  engine's count.
 - The schedule comes back from `runs.parquet` exactly, amounts included.
-- Random controls repeat with their seed, stay in their layer and skip
-  `units/known.csv`. The draws for two seeds are pinned in the tests.
+- Random controls repeat with their seed, another seed draws others, each
+  stays in its own unit's layer, and they skip `units/known.csv`. The draws
+  for two seeds are pinned in the tests.
+- The defaults push the prompt and every reply token, up to 200 tokens.
 - `report` builds one column per folder from `steer` folders.
-- The replies are the ones `generate()` gives with exactly the pushes the
-  options name, window and prompt pass included.
-- Each of 37 deliberate mistakes in the new code makes a test fail.
+- Each of 65 deliberate mistakes in the new code makes a test fail.
+- An adversarial review (three reviewers, then a skeptic per serious
+  finding trying to refute it) read the code, built awkward run folders and
+  rendered reports with markdown-it and marked (JupyterLab's renderer).
+  Every finding a skeptic confirmed is fixed and pinned by a test.
 
 On the real Qwen3.5-4B in bfloat16 on a cloud session's CPU, with the
 residual sizes measured there (decision 0007), 40 reply tokens per prompt,
@@ -154,3 +196,6 @@ and each command in a process of its own, as on the pod:
 - The schedule's keys are S1's. S2's schedule language adds what it needs,
   such as regions.
 - `seed` is 0 for greedy runs and the control seed for controls.
+- `units/known.csv` may list only units of models in the registry, as a
+  test checks: a published unit of another model is added together with
+  its model's registry entry, or every random control would be refused.

@@ -4,7 +4,8 @@ One call is one condition: the same pushes on every prompt of a prompt set,
 or none. It writes OUT/runs.parquet, one run per prompt in the set's order,
 and OUT/manifest.json, which also records the prompt set's and the
 calibration file's hashes. Each run's schedule lists its pushes: unit,
-alpha, start, end, include_prompt, the amount added, and control_for.
+alpha, start, end, include_prompt, the amount added, control_for, and
+touched, how many of that run's reply tokens the push was on.
 
 With --control random, each unit is replaced by a random neuron of its
 layer, at the same dose, drawn from --control-seed (pushlab.units.controls).
@@ -90,6 +91,32 @@ def _control_problem(
     return None
 
 
+def _window_problem(
+    pairs: Sequence[object],
+    start: int,
+    end: int | None,
+    include_prompt: bool,
+    max_new_tokens: int,
+) -> str | None:
+    """Why the window cannot be used, or None.
+
+    A push on reply token k is on the pass that reads token k, and no pass
+    reads a reply's last token, so the passes read reply tokens 0 to
+    max_new_tokens - 2.
+    """
+    if not pairs and (start != 0 or end is not None or not include_prompt):
+        return "--start, --end and --no-include-prompt shape pushes; give a --unit"
+    if end is not None and end <= start:
+        return f"--end ({end}) must come after --start ({start})"
+    if not include_prompt and start > max_new_tokens - 2:
+        return (
+            f"no pass would be pushed: with --max-new-tokens {max_new_tokens} the "
+            f"passes read reply tokens 0 to {max_new_tokens - 2}, so --start "
+            f"{start} is past the last one, and the prompt pass is off"
+        )
+    return None
+
+
 def run_steer(
     *,
     model_name: str,
@@ -127,8 +154,8 @@ def run_steer(
         return _refuse(pairs)
     if problem := _control_problem(pairs, control, control_seed):
         return _refuse(problem)
-    if end is not None and end <= start:
-        return _refuse(f"--end ({end}) must come after --start ({start})")
+    if problem := _window_problem(pairs, start, end, include_prompt, max_new_tokens):
+        return _refuse(problem)
     try:
         prompt_set = read_prompt_set(prompts_file)
     except (OSError, ValueError) as error:
@@ -139,20 +166,22 @@ def run_steer(
     from pushlab.engine.generate import generate
     from pushlab.engine.push import Push
     from pushlab.models import load
+    from pushlab.models.chat import stop_token_ids
     from pushlab.store.environment import environment_info, file_sha256
     from pushlab.units import calibrate, controls
     from pushlab.units.dose import amount
 
     try:
         revision = load.downloaded_revision(model_name)
-        calibration = (
-            calibrate.load_calibration(model_name, revision) if pairs else None
-        )
+        calibration_file = calibrate.calibration_path(model_name, revision)
+        calibration, calibration_sha256 = None, None
+        if pairs:
+            calibration_sha256 = file_sha256(calibration_file)
+            calibration = calibrate.load_calibration(model_name, revision)
     except (FileNotFoundError, ValueError) as error:
         return _refuse(str(error))  # names the command that makes a calibration
-    calibration_file = calibrate.calibration_path(model_name, revision)
-    # Hashed as soon as it is read, so the hash is of the sizes in use.
-    calibration_sha256 = file_sha256(calibration_file) if pairs else None
+    if pairs and file_sha256(calibration_file) != calibration_sha256:
+        return _refuse(f"{calibration_file} changed while it was read; run again")
     used = [unit for unit, _ in pairs]
     if control is not None:
         try:
@@ -190,7 +219,17 @@ def run_steer(
         for push, (unit, _) in zip(pushes, pairs, strict=True)
     ]
     for segment in schedule:
+        if not math.isfinite(segment["amount"]):
+            return _refuse(
+                f"--alpha {segment['alpha']} for {segment['unit']} gives an amount "
+                f"of {segment['amount']}; choose a smaller dose"
+            )
         print(f"Pushing {describe_push(segment)}.")
+    if pairs and start > 0 and include_prompt:
+        print(
+            "Note: the prompt pass is pushed too, so the replies change from their "
+            f"first token; add --no-include-prompt to start at reply token {start}."
+        )
     greedy = Decoding(strategy="greedy", max_new_tokens=max_new_tokens)
     clock_generation = time.perf_counter()
     replies = generate(
@@ -216,7 +255,10 @@ def run_steer(
             experiment=experiment,
             model=f"{model_name}@{loaded.revision}",
             prompt_id=prompt_id,
-            schedule=schedule,
+            schedule=[
+                segment | {"touched": touched}
+                for segment, touched in zip(schedule, reply.touched, strict=True)
+            ],
             decoding=decoding,
             seed=control_seed if control is not None else 0,
             batch_key=f"b000001:{row}",  # batch 1, this row
@@ -256,6 +298,7 @@ def run_steer(
         "calibration_file": shown_path(calibration_file) if pairs else None,
         "calibration_sha256": calibration_sha256,
         "decoding": decoding,
+        "stop_token_ids": stop_token_ids(loaded.model, loaded.tokenizer),
         "started_at": started.isoformat(timespec="seconds"),
         "finished_at": finished.isoformat(timespec="seconds"),
         "run_count": len(records),

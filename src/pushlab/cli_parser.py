@@ -96,7 +96,11 @@ def _add_amount(commands: argparse._SubParsersAction) -> None:
         "--unit", required=True, help="the neuron, such as qwen3.5-4b:L14:N8949"
     )
     amount.add_argument(
-        "--alpha", required=True, type=float, help="the dose, such as 1 or -0.5"
+        "--alpha",
+        required=True,
+        type=float,
+        help="the dose, such as 1 or -0.5 (write a number with an exponent as "
+        "--alpha=-1e-3)",
     )
 
 
@@ -140,27 +144,30 @@ def _add_steer(commands: argparse._SubParsersAction, models: list[str]) -> None:
         action="append",
         type=float,
         metavar="X",
-        help="the dose of the --unit given in the same place, such as 1 or -0.5",
+        help="the dose of the --unit given in the same place, such as 1 or -0.5 "
+        "(write a number with an exponent as --alpha=-1e-3)",
     )
     steer.add_argument(
         "--start",
         type=_whole_number,
         default=0,
-        help="first reply token the pushes change, counting from 0 "
-        "(default: %(default)s)",
+        help="first reply token whose pass is pushed, counting from 0 (default: "
+        "%(default)s). The pass that reads reply token k chooses token k + 1, so "
+        "a push on token k first changes token k + 1",
     )
     steer.add_argument(
         "--end",
         type=_whole_number,
-        help="first reply token the pushes no longer change (default: none, "
+        help="first reply token whose pass is no longer pushed (default: none, "
         "to the end of the reply)",
     )
     steer.add_argument(
         "--include-prompt",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="also push while reading the prompt (default: on); needed to change "
-        "the reply's first token",
+        help="also push the pass that reads the prompt (default: on); only it "
+        "changes the reply's first token. With --start above 0 it makes the "
+        "push start on the prompt; use --no-include-prompt for a late push",
     )
     steer.add_argument(
         "--control",
@@ -198,9 +205,11 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
         "--runs",
         required=True,
         nargs="+",
+        action="extend",
         type=Path,
         metavar="DIR",
-        help="run folders, as pushlab steer or baseline wrote them",
+        help="run folders, as pushlab steer or baseline wrote them; repeat "
+        "--runs to add more",
     )
     report.add_argument(
         "--out", required=True, type=Path, help="the Markdown file to write"

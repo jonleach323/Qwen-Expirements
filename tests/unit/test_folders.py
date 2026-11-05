@@ -41,9 +41,14 @@ def test_a_file_or_a_broken_link_in_the_way_is_refused(tmp_path: Path) -> None:
     assert "a link to nothing" in folder_problem(link, overwrite=True)
 
 
-def test_paths_in_the_repository_are_shown_from_its_root(tmp_path: Path) -> None:
+def test_paths_in_the_repository_are_shown_from_its_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert shown_path(PROJECT_ROOT / "units" / "known.csv") == "units/known.csv"
-    assert shown_path(tmp_path / "x.json") == str(tmp_path / "x.json")
+    assert shown_path(tmp_path / "x.json") == str(tmp_path.resolve() / "x.json")
+    # A path typed from another folder is shown in full.
+    monkeypatch.chdir(tmp_path)
+    assert shown_path(Path("x.json")) == str(tmp_path.resolve() / "x.json")
 
 
 @pytest.mark.parametrize("module", [folders, cli_parser])
