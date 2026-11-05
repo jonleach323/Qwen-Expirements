@@ -113,7 +113,8 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
   compare `unit.model_name` with `loaded.spec.name`.
 - `amount` cannot tell where norms came from. The calibration cache must
   refuse a file made for another model, model commit, data type or text
-  set.
+  set. (Decision 0007 narrows this: the cache refuses another model or
+  model commit, and the code that loads sizes for a run compares the rest.)
 - Units of models not yet in the registry, such as Liu's Qwen3-4B and
   Qwen3.5-2B neurons, cannot be written down until those models are
   registered. tiny-vl and tiny-lm units exist only inside the

@@ -9,13 +9,16 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
   per model, and it sets the unit of every dose.
 - The evil-Qwen recipe defines it as "median(‖resid‖ leaving layer L,
   tokens 1:)". Its author, lyra, has since published these sizes for
-  Qwen3.5-4B, "so a dose means the same thing everywhere"
-  (`norms/Qwen__Qwen3.5-4B.json` in github.com/lyramakesmusic/neuronary).
-  She measured them in bfloat16 on her neuron explorer's reference text:
-  about 120 tokens of prose and code, with no chat template.
-- Both public replications measured on plain text too: Mr-Neutr0n on the
-  same reference text, and occcat on 4 prose passages (578 tokens). Every
-  one of these leaves out each text's first token.
+  Qwen3.5-4B in `norms/Qwen__Qwen3.5-4B.json` of
+  github.com/lyramakesmusic/neuronary. Her `scripts/norms.py` says her tools
+  read that table "so a dose means the same thing everywhere". She measured
+  them in bfloat16 on her neuron explorer's reference text: about 120
+  tokens of prose and code, with no chat template.
+- The two replications with sizes in bfloat16 measured on plain text too:
+  Mr-Neutr0n on the same reference text, and occcat on 4 prose passages
+  (578 tokens). hedwigai, in 8-bit, measured six plain sentences plus three
+  of them in the chat template with thinking off, and got 11.02 at layer
+  14. Every one of these leaves out each text's first token.
 - The Neuron Persona Library (Qwen3-8B) measures the way this decision does,
   "over the prompt's tokens (first token excluded)", with the prompt "Who
   are you?" "in the chat template, thinking off" (neuronpersonas.com,
@@ -53,6 +56,10 @@ Date: 2026-11-04 · Sprint: S1 · Status: accepted
   questions and requests, version 1. Each is rendered with the chat
   template and thinking off, exactly as `pushlab baseline` renders its
   prompt. The file's SHA-256 is recorded, so any edit to it shows.
+- **A prompt set's format:** a JSON Lines file in `prompts/`, read by
+  `pushlab.prompts.read_prompt_set`. Each line holds a `prompt_id`, the
+  set's `version` and the `prompt`. Later prompt sets can use the same
+  format.
 - **No push may be active.** Calibration refuses a model with any forward
   hook other than transformers' recording hooks, and it removes its own
   hooks again, even after an error.
@@ -97,8 +104,8 @@ depends on the text:
 - Against lyra's table, 22 of the 32 layers are within 5%.
   - Layer 14 is 5.4% higher, so dose 1 there pushes 5% harder than in the
     recipe. Layer 13 is 1.1% lower.
-  - Layers 0 to 10 are 3 to 12% higher, and layers 27 to 31 are 4 to 8%
-    lower.
+  - Layers 0 to 10 are 3 to 12% higher, layer 26 is 6% higher, and layers
+    27 to 31 are 4 to 8% lower.
 - Half of the 698 measured tokens are the template's own: `user`, the line
   breaks, the assistant's header and the empty thinking block. They pull
   the medians down, and short questions push them up compared with prose.
@@ -126,9 +133,11 @@ depends on the text:
 - Every dose in pushlab is in these units. Comparing a dose with another
   project's means comparing the calibrations: layer 14 is about 10.9 here
   and 10.35 in lyra's table.
-- Changing the prompt set (a new version) needs a new calibration with
-  `--overwrite`. `load_calibration` does not compare the file's hash with
-  the current prompt set; code that runs experiments should.
+- This narrows the last consequence of decision 0006. `load_calibration`
+  refuses a file made for another model or model commit. With one file per
+  model revision, the data type and the prompt set's SHA-256 are only
+  recorded: the code that loads sizes for a run must compare them with its
+  own. A new prompt set needs a new calibration with `--overwrite`.
 - The CPU numbers above are a check, not the reference. Runs use the pod's
   calibration, measured on the GPU in bfloat16.
 - A calibration made on a CPU is in float32 and says so in the file, but it
