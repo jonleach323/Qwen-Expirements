@@ -101,6 +101,9 @@ On the tiny Qwen3.5 (tiny-vl), in float32 on the CPU:
 - Random controls repeat with their seed, stay in their layer and skip
   `units/known.csv`. The draws for two seeds are pinned in the tests.
 - `report` builds one column per folder from `steer` folders.
+- The replies are the ones `generate()` gives with exactly the pushes the
+  options name, window and prompt pass included.
+- Each of 37 deliberate mistakes in the new code makes a test fail.
 
 On the real Qwen3.5-4B in bfloat16 on a cloud session's CPU, with the
 residual sizes measured there (decision 0007), 40 reply tokens per prompt,

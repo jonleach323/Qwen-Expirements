@@ -151,6 +151,8 @@ def run_steer(
     except (FileNotFoundError, ValueError) as error:
         return _refuse(str(error))  # names the command that makes a calibration
     calibration_file = calibrate.calibration_path(model_name, revision)
+    # Hashed as soon as it is read, so the hash is of the sizes in use.
+    calibration_sha256 = file_sha256(calibration_file) if pairs else None
     used = [unit for unit, _ in pairs]
     if control is not None:
         try:
@@ -169,7 +171,6 @@ def run_steer(
     clock = time.monotonic()  # never steps back, unlike the system clock
     device = load.default_device()
     environment = environment_info(device)  # read before the checkout can change
-    calibration_sha256 = file_sha256(calibration_file) if pairs else None
     dtype = load.default_dtype(device)
     dtype_name = str(dtype).removeprefix("torch.")
     where = "GPU" if device == "cuda" else "CPU"

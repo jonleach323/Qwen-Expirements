@@ -7,6 +7,7 @@ made-up calibration (the tiny_vl_calibration fixture).
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -14,6 +15,9 @@ import pytest
 import torch
 
 from pushlab.cli import main
+from pushlab.engine.decoding import Decoding
+from pushlab.engine.generate import generate
+from pushlab.engine.push import Push
 from pushlab.models import load
 from pushlab.models.load import load_model
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
@@ -54,10 +58,10 @@ def cpu_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
 
-def _steer(out: Path, *options: str, prompts: Path = SMOKE) -> int:
+def _steer(out: Path, *options: str, prompts: Path = SMOKE, tokens: int = 4) -> int:
     return main(
         ["steer", "--model", "tiny-vl", "--prompts", str(prompts), "--out", str(out)]
-        + ["--max-new-tokens", "4", *options]
+        + ["--max-new-tokens", str(tokens), *options]
     )
 
 
@@ -146,6 +150,33 @@ def test_the_schedule_round_trips_exactly_through_runs_parquet(
         "thinking": False,
         "dtype": "float32",
     }
+
+
+def test_the_window_and_include_prompt_reach_the_pushes(
+    tiny_vl_calibration: Path, tmp_path: Path
+) -> None:
+    # The replies are the ones generate() gives with exactly these pushes,
+    # and pushing the prompt too, or past the end, would give others.
+    window = ["--start", "1", "--end", "3", "--no-include-prompt"]
+    assert (
+        _steer(tmp_path / "out", "--unit", UNIT, "--alpha", "3", *window, tokens=6) == 0
+    )
+    loaded = load_model("tiny-vl", torch.float32, device="cpu")
+    prompts = read_prompt_set(SMOKE).prompts
+    greedy = Decoding(strategy="greedy", max_new_tokens=6)
+    norms = _norms(tiny_vl_calibration)
+
+    def replies(push: Push) -> list[list[int]]:
+        made = generate(loaded.model, loaded.tokenizer, prompts, [push], greedy, norms)
+        return [list(reply.token_ids) for reply in made]
+
+    push = Push(
+        unit=NeuronUnit.parse(UNIT), alpha=3.0, start=1, end=3, include_prompt=False
+    )
+    expected = replies(push)
+    assert [run.output_tokens for run in read_runs(tmp_path / "out")] == expected
+    assert replies(replace(push, include_prompt=True)) != expected
+    assert replies(replace(push, end=None)) != expected
 
 
 def test_the_manifest_records_the_calibration_and_the_prompt_set(
@@ -258,6 +289,21 @@ def test_an_existing_run_folder_is_kept_unless_overwrite_is_given(
     monkeypatch.setattr(load, "load_model", load_model)
     assert _steer(out, "--unit", UNIT, "--alpha", "2", "--overwrite") == 0
     assert read_runs(out)[0].schedule[0]["alpha"] == 2.0
+
+
+def test_a_folder_with_only_a_manifest_is_refused_too(
+    tiny_vl_calibration: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / MANIFEST_FILE).write_text("{}")
+    monkeypatch.setattr(load, "load_model", _no_loading)
+    assert _steer(out, "--unit", UNIT, "--alpha", "1") == 1
+    assert "--overwrite" in capsys.readouterr().err
+    assert sorted(path.name for path in out.iterdir()) == [MANIFEST_FILE]
 
 
 @pytest.mark.parametrize(

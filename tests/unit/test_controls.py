@@ -63,6 +63,14 @@ def test_a_control_skips_known_units_the_units_and_other_controls() -> None:
     assert random_controls([TINY], seed=3, avoid=others) == [NeuronUnit("tiny", 1, 77)]
 
 
+def test_two_units_never_share_a_control() -> None:
+    # One neuron of the layer is free, so the second unit finds none left.
+    pair = [TINY, NeuronUnit("tiny", 1, 6)]
+    others = {NeuronUnit("tiny", 1, n) for n in range(128) if n not in (5, 6, 77)}
+    with pytest.raises(ValueError, match="no neuron left"):
+        random_controls(pair, seed=0, avoid=others)
+
+
 def test_a_layer_with_no_neuron_left_is_refused() -> None:
     every = {NeuronUnit("tiny", 1, n) for n in range(128)}
     with pytest.raises(ValueError, match="no neuron left"):
