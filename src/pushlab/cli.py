@@ -7,9 +7,13 @@ experiments/p0/s0_baseline.yaml, names the experiment, seed and prompt.
 
 `pushlab calibrate` measures each layer's median residual size, the scale
 of a dose, and saves it in calibration/ (pushlab.units.calibrate).
+`pushlab amount` prints what a dose adds to a neuron
+(pushlab.units.amount_command), `pushlab steer` saves pushed replies to a
+prompt set (pushlab.runs.steer), and `pushlab report` lays run folders'
+replies side by side (pushlab.analysis.report). The options of every
+subcommand are in pushlab.cli_parser.
 """
 
-import argparse
 import hashlib
 import sys
 import time
@@ -21,7 +25,8 @@ from pathlib import Path
 import yaml
 
 from pushlab import PROJECT_ROOT
-from pushlab.models.registry import REGISTRY
+from pushlab.cli_parser import build_parser
+from pushlab.store.folders import already_there, file_in_the_way
 from pushlab.store.records import (
     EXPERIMENT_NAME,
     MANIFEST_FILE,
@@ -96,83 +101,6 @@ def custom_prompt_id(prompt: str) -> str:
     return "custom-" + hashlib.sha256(prompt.encode()).hexdigest()[:12]
 
 
-def _positive_int(text: str) -> int:
-    if not text.isdigit() or int(text) < 1:
-        raise argparse.ArgumentTypeError(f"must be a whole number from 1, not {text!r}")
-    return int(text)
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """The pushlab command's arguments, with one subparser per subcommand.
-
-    Example:
-        >>> args = ["baseline", "--model", "qwen3.5-4b", "--out", "outputs/s0"]
-        >>> build_parser().parse_args(args).max_new_tokens
-        200
-    """
-    parser = argparse.ArgumentParser(
-        prog="pushlab",
-        description="Research code for pushing LLM neurons on schedules.",
-    )
-    commands = parser.add_subparsers(dest="command", required=True)
-    baseline = commands.add_parser(
-        "baseline",
-        help="generate one unsteered reply and save it as a run",
-        description="Generate one unsteered reply, with thinking off and greedy "
-        "decoding, and save it as one run in OUT/runs.parquet with "
-        "OUT/manifest.json. It uses the GPU in bfloat16 if there is one, "
-        "otherwise the CPU in float32. The model must already be downloaded, "
-        "as scripts/setup_pod.sh does on the GPU pod.",
-    )
-    models = sorted(name for name, spec in REGISTRY.items() if spec.kind != "test")
-    baseline.add_argument(
-        "--model", required=True, choices=models, help="registry name of the model"
-    )
-    baseline.add_argument(
-        "--out",
-        required=True,
-        type=Path,
-        help="folder for runs.parquet and manifest.json, created if missing",
-    )
-    baseline.add_argument(
-        "--prompt",
-        help="the user's message (default: the prompt in "
-        "experiments/p0/s0_baseline.yaml)",
-    )
-    baseline.add_argument(
-        "--max-new-tokens",
-        type=_positive_int,
-        default=200,
-        help="most tokens the reply may have (default: %(default)s)",
-    )
-    baseline.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="replace runs.parquet and manifest.json if OUT already has them",
-    )
-    calibrate = commands.add_parser(
-        "calibrate",
-        help="measure each layer's median residual size, the scale of a dose",
-        description="Run the prompts in prompts/calibration.jsonl through the "
-        "model, in the chat template with thinking off, and measure the median "
-        "length of the residual stream leaving each layer, leaving out each "
-        "prompt's first token. Doses are scaled by these sizes. Saves "
-        "calibration/<model>-<revision>.json and prints the sizes. It uses the "
-        "GPU in bfloat16 if there is one, otherwise the CPU in float32. The "
-        "model must already be downloaded, as scripts/setup_pod.sh does on the "
-        "GPU pod.",
-    )
-    calibrate.add_argument(
-        "--model", required=True, choices=models, help="registry name of the model"
-    )
-    calibrate.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="measure again and replace the model revision's calibration file",
-    )
-    return parser
-
-
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -180,21 +108,6 @@ def _now() -> datetime:
 def _refuse(message: str) -> int:
     print(f"pushlab baseline: {message}", file=sys.stderr)
     return 1
-
-
-def _file_in_the_way(out: Path) -> Path | None:
-    """The file, if any, at out or above it that stops out being a folder.
-
-    A link to something missing counts too, since no folder can be made there.
-
-    Example:
-        >>> _file_in_the_way(Path("/no/such/folder")) is None
-        True
-    """
-    for path in (out, *out.parents):
-        if path.is_symlink() or path.exists():  # exists() alone misses a broken link
-            return None if path.is_dir() else path
-    return None
 
 
 def run_baseline(
@@ -213,16 +126,12 @@ def run_baseline(
         >>> run_baseline("qwen3.5-4b", Path("outputs/s0"))  # doctest: +SKIP
         0
     """
-    if (in_the_way := _file_in_the_way(out)) is not None:
+    if (in_the_way := file_in_the_way(out)) is not None:
         what = "a file" if in_the_way.exists() else "a link to nothing"
         return _refuse(f"--out must be a folder, but {in_the_way} is {what}")
-    already_there = (
-        f"{out} already holds a run; choose another --out, or pass --overwrite "
-        "to replace it"
-    )
     existing = [out / name for name in (RUNS_FILE, MANIFEST_FILE)]
     if not overwrite and any(path.exists() for path in existing):
-        return _refuse(already_there)
+        return _refuse(already_there(out))
     if prompt is not None and not prompt.strip():
         return _refuse("--prompt is empty")
     try:
@@ -305,7 +214,7 @@ def run_baseline(
         manifest_path = write_manifest(out, info, overwrite=overwrite)
     except FileExistsError:
         if any(path.exists() for path in existing):  # written meanwhile
-            return _refuse(already_there)
+            return _refuse(already_there(out))
         raise
     print(f"Saved run {record.run_id} and its manifest:")
     print(f"  {runs_path}\n  {manifest_path}")
@@ -320,11 +229,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         0
     """
     args = build_parser().parse_args(argv)
+    # Each command is imported here, so that --help answers without first
+    # loading torch.
     if args.command == "calibrate":
-        # Imported here, so that --help answers without first loading torch.
         from pushlab.units.calibrate_command import run_calibrate
 
         return run_calibrate(args.model, args.overwrite)
+    if args.command == "amount":
+        from pushlab.units.amount_command import run_amount
+
+        return run_amount(args.unit, args.alpha)
+    if args.command == "steer":
+        from pushlab.runs.steer import run_steer
+
+        return run_steer(
+            model_name=args.model,
+            prompts_file=args.prompts,
+            out=args.out,
+            units=args.unit or [],
+            alphas=args.alpha or [],
+            start=args.start,
+            end=args.end,
+            include_prompt=args.include_prompt,
+            control=args.control,
+            control_seed=args.control_seed,
+            max_new_tokens=args.max_new_tokens,
+            overwrite=args.overwrite,
+        )
+    if args.command == "report":
+        from pushlab.analysis.report import run_report
+
+        return run_report(args.runs, args.out, args.overwrite)
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite
     )

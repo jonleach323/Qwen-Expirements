@@ -9,11 +9,10 @@ import sys
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from pathlib import Path
 
-from pushlab import PROJECT_ROOT
 from pushlab.models.chat import chat_prompt_ids
 from pushlab.prompts import read_prompt_set
+from pushlab.store.folders import shown_path
 from pushlab.units import calibrate
 
 
@@ -36,13 +35,6 @@ def summary_lines(norms: Sequence[float]) -> list[str]:
 def _refuse(message: str) -> int:
     print(f"pushlab calibrate: {message}", file=sys.stderr)
     return 1
-
-
-def _shown(path: Path) -> str:
-    """path relative to the repository when it is inside it."""
-    if path.is_relative_to(PROJECT_ROOT):
-        return path.relative_to(PROJECT_ROOT).as_posix()
-    return str(path)
 
 
 def run_calibrate(model_name: str, overwrite: bool = False) -> int:
@@ -92,7 +84,7 @@ def run_calibrate(model_name: str, overwrite: bool = False) -> int:
     info = {
         "model_id": loaded.spec.hf_id,
         "measure": calibrate.MEASURE,
-        "prompt_set": _shown(prompts_file),
+        "prompt_set": shown_path(prompts_file),
         "prompt_set_version": prompt_set.version,
         "prompt_count": len(prompt_set.prompts),
         "token_count": tokens,

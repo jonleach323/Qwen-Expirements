@@ -278,6 +278,58 @@ file never counts as a change to the repository. A model is measured once:
 running it again stops unless you add `--overwrite`. Decision
 `docs/decisions/0007-calibration.md` says what the numbers mean.
 
+## Push a neuron and compare the replies
+
+Pushes are measured against the residual sizes, so measure them first (the
+section above). Then, from `/workspace/Qwen-Expirements`:
+
+1. See what a dose adds to a neuron. The command loads the model, because
+   the amount depends on the neuron's weights:
+
+   ```bash
+   uv run pushlab amount --unit qwen3.5-4b:L14:N8949 --alpha 1
+   ```
+
+2. Reply to the five smoke prompts with no push, at dose 0, at dose 1, and
+   with a random neuron of the same layer at dose 1. Each command writes
+   one folder, and refuses a folder that already holds runs unless you add
+   `--overwrite`:
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-none
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-dose0 --unit qwen3.5-4b:L14:N8949 --alpha 0
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-dose1 --unit qwen3.5-4b:L14:N8949 --alpha 1
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-control --unit qwen3.5-4b:L14:N8949 --alpha 1 --control random --control-seed 1
+   ```
+
+   By default a push starts on the prompt and lasts the whole reply, as
+   in the evil-Qwen recipe; `--start`, `--end` and `--no-include-prompt`
+   narrow it. Replies at dose 1 can be hostile; like every run output,
+   they stay on the pod.
+
+3. Lay the folders side by side in one Markdown table:
+
+   ```bash
+   uv run pushlab report --runs /workspace/runs/s1-smoke-none /workspace/runs/s1-smoke-dose0 /workspace/runs/s1-smoke-dose1 /workspace/runs/s1-smoke-control --out /workspace/runs/s1-smoke-report.md
+   ```
+
+   Open the file in JupyterLab's file browser to read it.
+
+Compare dose 0 with the folder made without `--unit`: both run the same
+prompts in the same batch, so their replies must be identical. `pushlab
+baseline` runs one prompt alone, and on the GPU a batch can tip a near tie
+the other way (decision 0009). Decision `docs/decisions/0010-steer-and-report.md`
+says what each command records.
+
 ## Rules on the pod
 
 - **Never run plain `uv sync` on the pod.** It would replace the CUDA build

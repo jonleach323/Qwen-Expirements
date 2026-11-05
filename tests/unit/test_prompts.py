@@ -46,6 +46,15 @@ def test_prompt_sets_live_in_the_repositorys_prompts_folder() -> None:
     assert PROMPTS_DIR == PROJECT_ROOT / "prompts"
 
 
+def test_the_smoke_set_holds_the_five_neutral_prompts() -> None:
+    smoke = read_prompt_set(PROMPTS_DIR / "smoke.jsonl")
+    assert smoke.version == 1
+    assert smoke.prompt_ids == tuple(f"smoke-{n:02d}" for n in range(1, 6))
+    topics = ["pancake", "poem about the sea", "comfort", "photosynthesis", "cat"]
+    for topic, prompt in zip(topics, smoke.prompts, strict=True):
+        assert topic in prompt.lower()
+
+
 @pytest.mark.parametrize(
     ("lines", "problem"),
     [

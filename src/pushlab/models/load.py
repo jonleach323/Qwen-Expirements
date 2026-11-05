@@ -86,6 +86,39 @@ def loading_class(spec: ModelSpec) -> type:
     raise ValueError(f"{spec.name!r} is built by the tests, not loaded from disk")
 
 
+def _spec(name: str) -> ModelSpec:
+    spec = REGISTRY.get(name)
+    if spec is None:
+        known = ", ".join(sorted(REGISTRY))
+        raise ValueError(f"{name!r} is not in the model registry ({known})")
+    return spec
+
+
+def downloaded_revision(name: str, models_dir: Path | None = None) -> str:
+    """The commit the registered model name was downloaded at.
+
+    It reads only the download record in models_dir/<name> (default:
+    default_models_dir()), so it answers without loading the model. The
+    download must be finished, of the registry's ID and revision, as
+    load_model requires.
+
+    Example:
+        >>> downloaded_revision("qwen3.5-4b")  # doctest: +SKIP
+        '851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a'
+    """
+    spec = _spec(name)
+    folder = (models_dir or default_models_dir()) / name
+    if not is_downloaded(spec, folder):
+        raise FileNotFoundError(
+            f"{name} ({spec.hf_id} at {spec.revision}) is not downloaded into "
+            f"{folder}. On the GPU pod, run `bash scripts/setup_pod.sh`, which "
+            "downloads the models configs/models.yaml lists; if it does not list "
+            f"{name}, add it through a pull request first (docs/runbooks/pod.md). "
+            "Elsewhere, set PUSHLAB_MODELS_DIR to the folder that holds the models."
+        )
+    return json.loads((folder / MARKER).read_text()).get("commit", spec.revision)
+
+
 def load_model(
     name: str,
     dtype: torch.dtype,
@@ -105,21 +138,10 @@ def load_model(
         >>> loaded.info  # doctest: +SKIP
         ModelInfo(layers=32, hidden_size=2560, mlp_size=9216)
     """
-    spec = REGISTRY.get(name)
-    if spec is None:
-        known = ", ".join(sorted(REGISTRY))
-        raise ValueError(f"{name!r} is not in the model registry ({known})")
+    spec = _spec(name)
     model_class = loading_class(spec)
+    revision = downloaded_revision(name, models_dir)
     folder = (models_dir or default_models_dir()) / name
-    if not is_downloaded(spec, folder):
-        raise FileNotFoundError(
-            f"{name} ({spec.hf_id} at {spec.revision}) is not downloaded into "
-            f"{folder}. On the GPU pod, run `bash scripts/setup_pod.sh`, which "
-            "downloads the models configs/models.yaml lists; if it does not list "
-            f"{name}, add it through a pull request first (docs/runbooks/pod.md). "
-            "Elsewhere, set PUSHLAB_MODELS_DIR to the folder that holds the models."
-        )
-    revision = json.loads((folder / MARKER).read_text()).get("commit", spec.revision)
     model = model_class.from_pretrained(
         folder,
         dtype=dtype,

@@ -17,3 +17,11 @@ def test_no_documented_baseline_run_goes_into_the_reference_folder(doc: str) -> 
     outs = re.findall(r'pushlab baseline\b[^\n`]*?--out\s+"?([^\s`"]+)', text)
     assert outs, f"{doc} shows no pushlab baseline command with --out"
     assert REFERENCE_RUN not in [out.rstrip("/") for out in outs]
+
+
+@pytest.mark.parametrize("doc", ["CLAUDE.md", "docs/runbooks/pod.md"])
+def test_no_documented_steer_run_goes_into_the_reference_folder(doc: str) -> None:
+    text = (ROOT / doc).read_text()
+    outs = re.findall(r'pushlab steer\b[^\n`]*?--out\s+"?([^\s`"]+)', text)
+    assert outs, f"{doc} shows no pushlab steer command with --out"
+    assert REFERENCE_RUN not in [out.rstrip("/") for out in outs]

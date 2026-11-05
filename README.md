@@ -12,7 +12,9 @@ how the software gets built. So far it can load a model, measure each
 layer's residual size (`pushlab calibrate`), and generate replies to a batch
 of prompts with pushes on chosen neurons (`pushlab.engine.generate`).
 `pushlab baseline` generates one unsteered reply and stores it with its
-manifest. Running experiments from YAML files comes in later sprints.
+manifest; `pushlab steer` stores pushed replies to a whole prompt set, and
+`pushlab report` lays run folders' replies side by side. Running
+experiments from YAML files comes in later sprints.
 
 ## Getting started
 

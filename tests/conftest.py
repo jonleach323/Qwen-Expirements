@@ -310,6 +310,29 @@ def tiny_downloads(
     return TINY_DOWNLOADS
 
 
+# Made-up residual sizes for tiny-vl's four layers.
+TINY_VL_NORMS = (3.0, 5.0, 8.0, 13.0)
+
+
+@pytest.fixture
+def tiny_vl_calibration(
+    tiny_downloads: dict[str, ModelSpec],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """tiny-vl downloaded and calibrated with TINY_VL_NORMS; the calibration file.
+
+    The file goes in a fresh folder that stands in for calibration/.
+    """
+    from pushlab.units import calibrate
+
+    monkeypatch.setattr(calibrate, "CALIBRATION_DIR", tmp_path / "calibration")
+    calibration = calibrate.Calibration(
+        "tiny-vl", TINY_COMMIT, TINY_VL_NORMS, "0" * 64, {"note": "made up"}
+    )
+    return calibrate.save_calibration(calibration)
+
+
 @pytest.fixture
 def tiny_tokenizer(tiny_models_dir: Path) -> PreTrainedTokenizerBase:
     """The tiny models' tokenizer, loaded back from disk as pushlab loads it."""
