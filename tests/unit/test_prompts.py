@@ -2,6 +2,7 @@
 
 import doctest
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,23 @@ def test_a_prompt_set_keeps_its_prompts_in_order_with_the_files_hash(
     assert prompt_set.prompt_ids == ("a", "b")
     assert prompt_set.prompts == ("Hi", "Bye")
     assert prompt_set.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_only_a_line_feed_ends_a_line(tmp_path: Path) -> None:
+    # JSON allows these separators raw inside a string; splitlines() would
+    # also split there and cut the prompt in two.
+    prompt = "One line the same prompt still\u0085the same"
+    record = {"prompt_id": "a", "version": 1, "prompt": prompt}
+    path = tmp_path / "prompts.jsonl"
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert read_prompt_set(path).prompts == (prompt,)
+
+
+def test_windows_line_endings_are_accepted(tmp_path: Path) -> None:
+    second = '{"prompt_id": "b", "version": 1, "prompt": "Bye"}'
+    path = tmp_path / "prompts.jsonl"
+    path.write_bytes(f"{GOOD}\r\n{second}\r\n".encode())
+    assert read_prompt_set(path).prompts == ("Hi", "Bye")
 
 
 def test_prompt_sets_live_in_the_repositorys_prompts_folder() -> None:

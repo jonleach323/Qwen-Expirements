@@ -6,13 +6,13 @@ reference medians come from transformers' own hidden states.
 
 import doctest
 import hashlib
-import json
 import statistics
-from pathlib import Path
+from collections.abc import Callable
 
 import pytest
 import torch
 from torch import nn
+from torch.utils.hooks import RemovableHandle
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from pushlab import PROJECT_ROOT
@@ -21,15 +21,10 @@ from pushlab.models.discovery import find_decoder_layers
 from pushlab.prompts import read_prompt_set
 from pushlab.units import calibrate
 from pushlab.units.calibrate import (
-    CALIBRATION_DIR,
     PROMPTS_FILE,
-    Calibration,
     calibrate_norms,
-    calibration_path,
     layer_outputs,
-    load_calibration,
     median_norms,
-    save_calibration,
 )
 
 PROMPTS = ["What is a good name for a cat?", "How do I boil an egg?", "Why is it hot?"]
@@ -149,16 +144,74 @@ def test_lengths_are_taken_in_float32_from_bfloat16_outputs(
     assert median_norms(outputs) == median_norms(as_float32)
 
 
+@pytest.mark.parametrize(
+    ("add_push", "where"),
+    [
+        # A neuron push adds to an MLP value through a hook on down_proj.
+        (
+            lambda model: model.model.layers[1].mlp.down_proj.register_forward_pre_hook(
+                lambda module, args: None
+            ),
+            r"model\.layers\.1\.mlp\.down_proj",
+        ),
+        # A vector push adds to the stream leaving a layer.
+        (
+            lambda model: model.model.layers[1].register_forward_hook(
+                lambda module, args, output: None
+            ),
+            r"model\.layers\.1$",
+        ),
+    ],
+    ids=["neuron push", "residual push"],
+)
 def test_a_model_with_a_push_active_is_refused(
+    tiny_model: PreTrainedModel,
+    tiny_tokenizer: PreTrainedTokenizerBase,
+    add_push: Callable[[nn.Module], object],
+    where: str,
+) -> None:
+    add_push(tiny_model)
+    with pytest.raises(ValueError, match=rf"no pushes.*: {where}"):
+        calibrate_norms(tiny_model, tiny_tokenizer, PROMPTS)
+
+
+@pytest.mark.parametrize(
+    "register",
+    [
+        torch.nn.modules.module.register_module_forward_hook,
+        torch.nn.modules.module.register_module_forward_pre_hook,
+    ],
+    ids=["forward hook", "forward pre-hook"],
+)
+def test_a_global_hook_is_refused_too(
+    tiny_model: PreTrainedModel,
+    tiny_tokenizer: PreTrainedTokenizerBase,
+    register: Callable[[Callable[..., None]], RemovableHandle],
+) -> None:
+    # A global hook runs on every module of every model, so it could push too.
+    handle = register(lambda module, *args: None)
+    try:
+        with pytest.raises(ValueError, match="global forward hooks"):
+            calibrate_norms(tiny_model, tiny_tokenizer, PROMPTS)
+    finally:
+        handle.remove()
+
+
+def test_a_layer_that_does_not_run_is_noticed(
     tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
 ) -> None:
-    # A neuron push adds to an MLP value through a hook on down_proj.
-    down_proj = tiny_model.model.layers[1].mlp.down_proj
-    down_proj.register_forward_pre_hook(lambda module, args: None)
-    with pytest.raises(
-        ValueError, match=r"no pushes.*model\.layers\.1\.mlp\.down_proj"
-    ):
+    # The model now stops after layer 0, so nothing may stand in for layer 1.
+    tiny_model.config.num_hidden_layers = 1
+    with pytest.raises(RuntimeError, match="did not run"):
         calibrate_norms(tiny_model, tiny_tokenizer, PROMPTS)
+
+
+def test_a_single_string_is_not_taken_for_a_list_of_prompts(
+    tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
+) -> None:
+    # Text is a sequence of characters: each would run as a prompt of its own.
+    with pytest.raises(ValueError, match="list of prompts"):
+        calibrate_norms(tiny_model, tiny_tokenizer, "Who are you?")
 
 
 def test_transformers_own_recording_hooks_are_not_pushes(
@@ -214,120 +267,6 @@ def test_the_prompt_set_holds_32_short_prompts_of_one_version() -> None:
     assert len(set(prompt_set.prompt_ids)) == 32
     assert all(len(prompt) <= 80 for prompt in prompt_set.prompts)
     assert prompt_set.sha256 == hashlib.sha256(PROMPTS_FILE.read_bytes()).hexdigest()
-
-
-NORMS = (0.1 + 0.2, 10 / 3)  # floats whose shortest spelling is long
-HASH = hashlib.sha256(b"prompts").hexdigest()
-
-
-def _calibration(**changes: object) -> Calibration:
-    values: dict[str, object] = {
-        "model": "tiny",
-        "revision": "main",
-        "norms": NORMS,
-        "prompt_set_sha256": HASH,
-        "info": {"dtype": "float32", "packages": {"torch": "2.14.1"}},
-    }
-    return Calibration(**(values | changes))  # type: ignore[arg-type]
-
-
-def test_save_then_load_returns_identical_numbers_and_the_same_hash(
-    tmp_path: Path,
-) -> None:
-    calibration = _calibration()
-    path = save_calibration(calibration, tmp_path)
-    assert (
-        path
-        == tmp_path / "tiny-main.json"
-        == calibration_path("tiny", "main", tmp_path)
-    )
-    loaded = load_calibration("tiny", "main", tmp_path)
-    assert loaded == calibration
-    assert loaded.norms == NORMS
-    assert loaded.prompt_set_sha256 == HASH
-    assert json.loads(path.read_text())["norms"] == list(NORMS)
-
-
-def test_files_go_into_the_repositorys_calibration_folder() -> None:
-    assert CALIBRATION_DIR == PROJECT_ROOT / "calibration"
-    path = calibration_path("qwen3.5-4b", "851bf6e")
-    assert path == CALIBRATION_DIR / "qwen3.5-4b-851bf6e.json"
-
-
-def test_git_ignores_the_calibration_folder() -> None:
-    # The pod writes these files inside its clone of the repository; ignored,
-    # they never block a git pull or show up as changes.
-    ignored = (PROJECT_ROOT / ".gitignore").read_text().splitlines()
-    assert "/calibration/" in ignored
-
-
-def test_an_existing_calibration_is_replaced_only_when_asked(tmp_path: Path) -> None:
-    save_calibration(_calibration(), tmp_path)
-    with pytest.raises(FileExistsError, match="overwrite"):
-        save_calibration(_calibration(norms=(1.0, 2.0)), tmp_path)
-    assert load_calibration("tiny", "main", tmp_path).norms == NORMS
-    save_calibration(_calibration(norms=(1.0, 2.0)), tmp_path, overwrite=True)
-    assert load_calibration("tiny", "main", tmp_path).norms == (1.0, 2.0)
-
-
-@pytest.mark.parametrize(
-    ("changes", "problem"),
-    [
-        ({"model": "qwen3.5-9b"}, "registry"),
-        ({"revision": "../main"}, "revision"),
-        ({"revision": "refs/pr/1"}, "revision"),
-        ({"norms": (1.0,)}, "one per layer"),
-        ({"norms": (1.0, 0.0)}, r"norms\[1\]"),
-        ({"norms": (1.0, float("nan"))}, r"norms\[1\]"),
-        ({"norms": (1.0, True)}, r"norms\[1\]"),
-        ({"prompt_set_sha256": "abc"}, "SHA-256"),
-        ({"info": {"norms": [1.0]}}, "info"),
-        ({"info": {"when": object()}}, "JSON"),
-        ({"info": {"ratio": float("inf")}}, "JSON"),
-    ],
-)
-def test_a_bad_calibration_is_never_saved(
-    tmp_path: Path, changes: dict[str, object], problem: str
-) -> None:
-    with pytest.raises(ValueError, match=problem):
-        save_calibration(_calibration(**changes), tmp_path)
-    assert not tmp_path.exists() or not any(tmp_path.iterdir())
-
-
-def test_loading_a_missing_calibration_names_the_command(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="pushlab calibrate --model tiny"):
-        load_calibration("tiny", "main", tmp_path)
-
-
-def test_a_file_for_another_model_revision_is_refused(tmp_path: Path) -> None:
-    path = save_calibration(_calibration(), tmp_path)
-    path.rename(tmp_path / "tiny-0123abc.json")  # renamed by hand
-    with pytest.raises(ValueError, match="tiny at main, not tiny at 0123abc"):
-        load_calibration("tiny", "0123abc", tmp_path)
-
-
-@pytest.mark.parametrize(
-    ("edit", "problem"),
-    [
-        (lambda record: record.update(norms=[1.0, 2.0, 3.0]), "one per layer"),
-        (lambda record: record.update(norms=[1.0, -2.0]), r"norms\[1\]"),
-        (lambda record: record.update(norms="1, 2"), "norms"),
-        (lambda record: record.pop("prompt_set_sha256"), "lacks"),
-    ],
-)
-def test_a_damaged_file_is_refused(tmp_path: Path, edit: object, problem: str) -> None:
-    path = save_calibration(_calibration(), tmp_path)
-    record = json.loads(path.read_text())
-    edit(record)  # type: ignore[operator]
-    path.write_text(json.dumps(record))
-    with pytest.raises(ValueError, match=problem):
-        load_calibration("tiny", "main", tmp_path)
-
-
-def test_a_file_that_is_not_json_is_refused(tmp_path: Path) -> None:
-    calibration_path("tiny", "main", tmp_path).write_text("{")
-    with pytest.raises(ValueError, match="not valid JSON"):
-        load_calibration("tiny", "main", tmp_path)
 
 
 def test_docstring_examples_run() -> None:

@@ -5,19 +5,17 @@ layer (see units.dose). calibrate_norms measures that typical size once per
 model: it runs a fixed set of short prompts through the chat template with
 thinking off, takes the length of the residual stream leaving every decoder
 layer at each token, leaves out each prompt's first token, and keeps each
-layer's median. `pushlab calibrate` saves the result as
-calibration/<model>-<revision>.json.
+layer's median. save_calibration and load_calibration keep the result in
+calibration/<model>-<revision>.json, which `pushlab calibrate`
+(units.calibrate_command) writes.
 """
 
 import json
 import math
 import re
 import statistics
-import sys
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +27,7 @@ from pushlab import PROJECT_ROOT
 from pushlab.models.chat import chat_prompt_ids
 from pushlab.models.discovery import find_decoder_layers
 from pushlab.models.registry import REGISTRY
-from pushlab.prompts import PROMPTS_DIR, read_prompt_set
+from pushlab.prompts import PROMPTS_DIR
 from pushlab.store.records import _replace_atomically
 
 PROMPTS_FILE = PROMPTS_DIR / "calibration.jsonl"
@@ -48,20 +46,22 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 FIELDS = ("model", "revision", "norms", "prompt_set_sha256")
 
 
-def _push_hooks(model: nn.Module) -> list[str]:
-    """The modules with forward hooks that transformers did not add itself.
+def _may_push(hook: object) -> bool:
+    """False only for transformers' own hooks.
 
     transformers leaves hooks of its own on the decoder layers once a forward
     pass has asked for hidden states; they only record. Any other hook may
     change the residual stream, as a push does.
     """
+    return not str(getattr(hook, "__module__", "")).startswith("transformers.")
+
+
+def _push_hooks(model: nn.Module) -> list[str]:
+    """The modules with forward hooks that may push."""
     found = []
     for name, module in model.named_modules():
         hooks = [*module._forward_pre_hooks.values(), *module._forward_hooks.values()]
-        if any(
-            not str(getattr(h, "__module__", "")).startswith("transformers.")
-            for h in hooks
-        ):
+        if any(_may_push(hook) for hook in hooks):
             found.append(name or type(module).__name__)
     return found
 
@@ -83,12 +83,24 @@ def layer_outputs(
         >>> len(outputs[0]), outputs[0][14].shape  # doctest: +SKIP
         (32, torch.Size([13, 2560]))
     """
+    if isinstance(prompts, str):  # else each character would be a prompt
+        raise ValueError("prompts must be a list of prompts, not one text")
     if not prompts:
         raise ValueError("calibration needs at least one prompt")
     if hooked := _push_hooks(model):
         raise ValueError(
             "calibration measures the model with no pushes active, but these "
             f"modules have forward hooks: {', '.join(hooked)}"
+        )
+    torch_modules = torch.nn.modules.module  # keeps the hooks for every module
+    global_hooks = [
+        *torch_modules._global_forward_pre_hooks.values(),
+        *torch_modules._global_forward_hooks.values(),
+    ]
+    if any(_may_push(hook) for hook in global_hooks):
+        raise ValueError(
+            "calibration measures the model with no pushes active, but global "
+            "forward hooks are active; remove them first"
         )
     blocks = find_decoder_layers(model)
     device = next(model.parameters()).device
@@ -211,7 +223,9 @@ def _check(calibration: Calibration) -> None:
         raise ValueError(f"{calibration.model!r} is not in the model registry")
     calibration_path(calibration.model, calibration.revision)  # checks the revision
     norms = calibration.norms
-    if not isinstance(norms, tuple) or len(norms) != spec.layers:
+    if not isinstance(norms, tuple):
+        raise ValueError(f"norms must be a tuple, not a {type(norms).__name__}")
+    if len(norms) != spec.layers:
         raise ValueError(
             f"norms needs one per layer: {spec.layers} for {spec.name}, not {norms!r}"
         )
@@ -269,7 +283,7 @@ def load_calibration(
 
     Example:
         >>> load_calibration("qwen3.5-4b", "851bf6e...").norms[14]  # doctest: +SKIP
-        10.4...
+        10.9...
     """
     path = calibration_path(model, revision, folder)
     try:
@@ -299,89 +313,3 @@ def load_calibration(
     )
     _check(calibration)
     return replace(calibration, norms=tuple(float(norm) for norm in norms))
-
-
-def _refuse(message: str) -> int:
-    print(f"pushlab calibrate: {message}", file=sys.stderr)
-    return 1
-
-
-def _shown(path: Path) -> str:
-    """path relative to the repository when it is inside it."""
-    try:
-        return path.relative_to(PROJECT_ROOT).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def run_calibrate(model_name: str, overwrite: bool = False) -> int:
-    """Measure model_name's residual sizes and save them; return the exit status.
-
-    Returns 0 once the file is written, and 1 with the reason on stderr when
-    it refuses: a broken prompt set before the model loads, and a model
-    revision that already has a calibration unless overwrite is True.
-
-    Example:
-        >>> run_calibrate("qwen3.5-4b")  # doctest: +SKIP
-        0
-    """
-    try:
-        prompt_set = read_prompt_set(PROMPTS_FILE)
-    except (OSError, ValueError) as error:
-        return _refuse(f"cannot use {PROMPTS_FILE}: {error}")
-
-    from pushlab.models.load import default_device, default_dtype, load_model
-    from pushlab.store.environment import environment_info
-
-    started = datetime.now(UTC)
-    device = default_device()
-    environment = environment_info(device)  # read before the checkout can change
-    dtype = default_dtype(device)
-    dtype_name = str(dtype).removeprefix("torch.")
-    where = "GPU" if device == "cuda" else "CPU"
-    print(f"Loading {model_name} in {dtype_name} on the {where}...")
-    try:
-        loaded = load_model(model_name, dtype, device=device)
-    except FileNotFoundError as error:
-        return _refuse(str(error))
-    path = calibration_path(model_name, loaded.revision)
-    if path.exists() and not overwrite:
-        return _refuse(f"{path} already exists; pass --overwrite to measure again")
-
-    clock = time.perf_counter()
-    norms = calibrate_norms(loaded.model, loaded.tokenizer, prompt_set.prompts)
-    seconds = time.perf_counter() - clock
-    tokens = sum(
-        len(chat_prompt_ids(loaded.tokenizer, prompt, thinking=False)) - 1
-        for prompt in prompt_set.prompts
-    )
-    info = {
-        "model_id": loaded.spec.hf_id,
-        "measure": MEASURE,
-        "prompt_set": _shown(PROMPTS_FILE),
-        "prompt_set_version": prompt_set.version,
-        "prompt_count": len(prompt_set.prompts),
-        "token_count": tokens,
-        "dtype": dtype_name,
-        "device": device,
-        "measured_at": started.isoformat(timespec="seconds"),
-        **environment,
-    }
-    calibration = Calibration(
-        model_name, loaded.revision, tuple(norms), prompt_set.sha256, info
-    )
-    try:
-        path = save_calibration(calibration, overwrite=overwrite)
-    except FileExistsError:  # written meanwhile
-        return _refuse(f"{path} already exists; pass --overwrite to measure again")
-
-    print(
-        f"Measured {len(prompt_set.prompts)} prompts, {tokens} tokens after each "
-        f"prompt's first, in {seconds:.1f} s."
-    )
-    print("Median length of the residual stream leaving each layer:")
-    for start in range(0, len(norms), 4):
-        row = range(start, min(start + 4, len(norms)))
-        print("  " + "   ".join(f"L{layer:<3} {norms[layer]:9.3f}" for layer in row))
-    print(f"Saved {path}")
-    return 0

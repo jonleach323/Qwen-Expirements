@@ -323,7 +323,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "calibrate":
         # Imported here, so that --help answers without first loading torch.
-        from pushlab.units.calibrate import run_calibrate
+        from pushlab.units.calibrate_command import run_calibrate
 
         return run_calibrate(args.model, args.overwrite)
     return run_baseline(

@@ -46,9 +46,14 @@ def read_prompt_set(path: Path) -> PromptSet:
     """
     content = path.read_bytes()
     try:
-        lines = content.decode("utf-8").splitlines()
+        text = content.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError(f"not UTF-8 text: {error}") from error
+    # Only a line feed ends a line: JSON allows U+2028 and the like raw inside
+    # a string, and str.splitlines() would split there too.
+    lines = [line.removesuffix("\r") for line in text.split("\n")]
+    if lines[-1] == "":
+        lines.pop()  # the file's final line feed
     if not lines:
         raise ValueError("it holds no prompts")
     ids: list[str] = []

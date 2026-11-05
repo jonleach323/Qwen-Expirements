@@ -1,5 +1,7 @@
 """`pushlab calibrate`: its options, and runs end to end on the tiny Qwen3.5."""
 
+import doctest
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -15,13 +17,14 @@ from pushlab.models.load import load_model
 from pushlab.models.registry import ModelSpec
 from pushlab.prompts import read_prompt_set
 from pushlab.store.environment import file_sha256
-from pushlab.units import calibrate
+from pushlab.units import calibrate, calibrate_command
 from pushlab.units.calibrate import (
     PROMPTS_FILE,
     calibrate_norms,
     calibration_path,
     load_calibration,
 )
+from pushlab.units.calibrate_command import summary_lines
 
 
 @pytest.fixture
@@ -40,6 +43,10 @@ def calibration_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _no_loading(*args: object, **kwargs: object) -> None:
     raise AssertionError("the model must not load when the command refuses")
+
+
+def _no_measuring(*args: object, **kwargs: object) -> None:
+    raise AssertionError("nothing is measured when the command refuses")
 
 
 def test_calibrate_help_lists_the_options(capsys: pytest.CaptureFixture[str]) -> None:
@@ -130,6 +137,19 @@ def test_an_existing_calibration_is_replaced_only_with_overwrite(
     assert '"edited"' not in path.read_text()
 
 
+@pytest.mark.usefixtures("cpu_only")
+def test_an_existing_calibration_stops_the_command_before_measuring(
+    tiny_downloads: dict[str, ModelSpec],
+    calibration_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["calibrate", "--model", "tiny-vl"]) == 0
+    monkeypatch.setattr(calibrate, "calibrate_norms", _no_measuring)
+    assert main(["calibrate", "--model", "tiny-vl"]) == 1
+    assert "--overwrite" in capsys.readouterr().err
+
+
 def test_a_model_that_is_not_downloaded_is_explained(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -155,3 +175,19 @@ def test_a_broken_prompt_set_stops_the_command_before_the_model_loads(
     assert main(["calibrate", "--model", "qwen3.5-4b"]) == 1
     assert "cannot use" in capsys.readouterr().err
     assert not calibration_dir.exists()
+
+
+def test_the_summary_shows_every_layer_with_its_own_size() -> None:
+    # Nine layers, more than one row: the tiny models have four or fewer.
+    norms = [layer + 0.5 for layer in range(9)]
+    lines = summary_lines(norms)
+    assert len(lines) == 3  # rows of four layers
+    text = "\n".join(lines)
+    for layer, norm in enumerate(norms):
+        assert re.search(rf"\bL{layer}\s+{re.escape(f'{norm:.3f}')}(\s|$)", text)
+
+
+def test_docstring_examples_run() -> None:
+    result = doctest.testmod(calibrate_command)
+    assert result.attempted > 0
+    assert result.failed == 0

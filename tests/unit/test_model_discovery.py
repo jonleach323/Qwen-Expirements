@@ -183,6 +183,14 @@ def test_decoder_layers_on_real_class_trees(
         assert block.mlp is mlp
 
 
+def test_decoder_layers_inside_a_numbered_container(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    # In "0.model.layers.1.mlp" the layer is the last number, not the first.
+    layers = list(tiny_model.model.layers)
+    assert find_decoder_layers(nn.ModuleList([tiny_model])) == layers
+
+
 def test_an_mlp_outside_any_decoder_layer_is_refused(
     tiny_model: Qwen3ForCausalLM,
 ) -> None:
