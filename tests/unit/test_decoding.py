@@ -1,8 +1,12 @@
 """Decoding settings and sampling: pushlab.engine.decoding.
 
-Sampling draws each row's tokens with a random generator of its own, seeded
-from the settings, so a sampled reply depends only on its prompt and the
-seed: never on the other prompts in its batch, nor on torch's global seed.
+Sampling draws each prompt's tokens with a random generator of its own,
+seeded from the settings' seed and the prompt's place in the list. So a
+sampled reply depends only on its prompt, the seed and its place: never on
+the other prompts or how they are batched, nor on torch's global seed.
+
+The tiny models' scores are nearly flat, so at temperature 1 their samples
+would hardly depend on them; the replies here are sampled at 0.05.
 """
 
 import doctest
@@ -14,11 +18,16 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from pushlab.engine import decoding as decoding_module
-from pushlab.engine.decoding import Decoding, sampling_probabilities
+from pushlab.engine.decoding import (
+    Decoding,
+    TokenChooser,
+    row_seed,
+    sampling_probabilities,
+)
 from pushlab.engine.generate import generate
 
 PROMPTS = ["Hi", "What is two plus two?", "Name a colour."]
-SAMPLE = Decoding(strategy="sample", max_new_tokens=12, temperature=1.0, seed=0)
+SAMPLE = Decoding(strategy="sample", max_new_tokens=12, temperature=0.05, seed=0)
 GREEDY = Decoding(strategy="greedy", max_new_tokens=12)
 
 
@@ -89,6 +98,33 @@ def test_temperature_divides_the_scores() -> None:
     assert sampling_probabilities(scores.bfloat16(), 1.0, 1.0).dtype == torch.float32
 
 
+@pytest.mark.parametrize(
+    ("temperature", "expected"),
+    [(1.0, [0.6, 0.3, 0.1]), (0.5, [0.36 / 0.46, 0.09 / 0.46, 0.01 / 0.46])],
+)
+def test_draws_follow_the_probabilities_at_the_temperature(
+    temperature: float, expected: list[float]
+) -> None:
+    # At temperature 0.5 the probabilities go as their squares.
+    settings = Decoding(
+        strategy="sample", max_new_tokens=5, temperature=temperature, seed=3
+    )
+    choose = TokenChooser(settings, [0], "cpu")
+    scores = torch.tensor([[0.6, 0.3, 0.1]]).log()
+    draws = [choose(scores, [True])[0] for _ in range(4000)]
+    shares = [draws.count(token) / len(draws) for token in range(3)]
+    assert shares == pytest.approx(expected, abs=0.03)
+
+
+def test_a_temperature_near_0_gives_the_greedy_replies(
+    tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
+) -> None:
+    cold = replace(SAMPLE, temperature=1e-6)
+    sampled = generate(tiny_model, tiny_tokenizer, PROMPTS, [], cold)
+    greedy = generate(tiny_model, tiny_tokenizer, PROMPTS, [], GREEDY)
+    assert [r.token_ids for r in sampled] == [r.token_ids for r in greedy]
+
+
 def test_the_same_seed_gives_the_same_replies_and_another_seed_others(
     tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
 ) -> None:
@@ -101,15 +137,37 @@ def test_the_same_seed_gives_the_same_replies_and_another_seed_others(
 
 
 @pytest.mark.parametrize("model_name", ["tiny_model", "tiny_vl_model"])
-def test_a_sampled_row_of_a_padded_batch_equals_its_prompt_alone(
+def test_a_sampled_reply_depends_on_its_place_not_on_the_other_prompts(
     model_name: str,
     request: pytest.FixtureRequest,
     tiny_tokenizer: PreTrainedTokenizerBase,
 ) -> None:
     model = request.getfixturevalue(model_name)
     batched = generate(model, tiny_tokenizer, PROMPTS, [], SAMPLE)
-    alone = [generate(model, tiny_tokenizer, [p], [], SAMPLE)[0] for p in PROMPTS]
-    assert batched == alone
+    # Other prompts around the second, of other lengths, so its padding changes.
+    others = ["Yo", PROMPTS[1], "Tell me a fact about owls, please."]
+    assert generate(model, tiny_tokenizer, others, [], SAMPLE)[1] == batched[1]
+    assert generate(model, tiny_tokenizer, PROMPTS[:1], [], SAMPLE) == batched[:1]
+    # Of three different lengths, each prompt runs as a batch of its own here.
+    alone = generate(model, tiny_tokenizer, PROMPTS, [], SAMPLE, group_by_length=True)
+    assert alone == batched
+    # And the replies depend on the prompts: each differs from the others.
+    assert len({reply.token_ids for reply in batched}) == len(PROMPTS)
+
+
+def test_each_prompt_draws_its_own_random_numbers(
+    tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
+) -> None:
+    # Three samples of one prompt in one call are three different replies.
+    replies = generate(tiny_model, tiny_tokenizer, ["Hi"] * 3, [], SAMPLE)
+    assert len({reply.token_ids for reply in replies}) == 3
+
+
+def test_row_seeds_never_change() -> None:
+    # Every sampled reply ever recorded depends on them.
+    assert row_seed(0, 0) == 7605428520541383316
+    assert row_seed(0, 1) == 16145528508060844554
+    assert row_seed(7, 0) == 15951030755710638324
 
 
 def test_sampling_never_uses_torchs_global_random_state(

@@ -1,7 +1,7 @@
 """When replies stop, and which reply tokens pushes touch: pushlab.engine.generate.
 
-A tiny model never ends its turn by itself, so some tests make it a puppet:
-a hook on its output layer makes each pass choose a scripted token. Every
+A tiny model ends its turn only by chance, so some tests make it a puppet: a
+hook on its output layer makes each pass choose a scripted token. Every
 forward pass still runs for real, pushes included.
 """
 

@@ -262,9 +262,17 @@ def _build_tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
 
 
 @pytest.fixture
-def tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
+def make_tiny_vl_model() -> Callable[[], Qwen3_5ForConditionalGeneration]:
+    """A function that builds a fresh tiny-vl model, identical on every call."""
+    return _build_tiny_vl_model
+
+
+@pytest.fixture
+def tiny_vl_model(
+    make_tiny_vl_model: Callable[[], Qwen3_5ForConditionalGeneration],
+) -> Qwen3_5ForConditionalGeneration:
     """A 4-layer Qwen3.5-style model in its vision-language wrapper, float32, eval."""
-    return _build_tiny_vl_model()
+    return make_tiny_vl_model()
 
 
 @pytest.fixture(scope="session")
@@ -313,7 +321,7 @@ def _hugging_face_greedy(
     tokenizer: PreTrainedTokenizerBase,
     prompts: list[str],
     max_new_tokens: int,
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[torch.Tensor]]:
     rows = [chat_prompt_ids(tokenizer, prompt, thinking=False) for prompt in prompts]
     width = max(len(row) for row in rows)
     pad = tokenizer.pad_token_id
@@ -328,21 +336,25 @@ def _hugging_face_greedy(
             max_new_tokens=max_new_tokens,
             eos_token_id=stops,
             pad_token_id=pad,
+            output_logits=True,
+            return_dict_in_generate=True,
         )
     replies = []
-    for tokens in output[:, width:].tolist():
+    for tokens in output.sequences[:, width:].tolist():
         end = next((i + 1 for i, t in enumerate(tokens) if t in stops), len(tokens))
         replies.append(tokens[:end])  # up to its first stop token, which it keeps
-    return replies
+    return replies, [step.float() for step in output.logits]
 
 
 @pytest.fixture
-def hf_greedy() -> Callable[..., list[list[int]]]:
+def hf_greedy() -> Callable[..., tuple[list[list[int]], list[torch.Tensor]]]:
     """Hugging Face's own generate(), the reference for greedy replies.
 
     Called with a model, a tokenizer, prompts and max_new_tokens, it renders
     each prompt in the chat template with thinking off, as pushlab does,
     pads them on the left into one batch with an attention mask, and returns
-    each reply's tokens up to and including its first stop token.
+    each reply's tokens up to and including its first stop token, and each
+    step's scores for the next token in float32: (rows, vocabulary). A row's
+    scores after its reply has ended belong to no reply.
     """
     return _hugging_face_greedy

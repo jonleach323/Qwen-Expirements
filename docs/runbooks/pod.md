@@ -204,8 +204,8 @@ paste the code back into the terminal.
    ```
 
    It reinstalls uv and Claude Code, checks everything else and skips the
-   finished work. Step 7 loads the model again for its test reply, so it is
-   the slowest step on a warm volume.
+   finished work. Step 7 loads the model twice for its tests, so it is the
+   slowest step on a warm volume.
 3. Run `source /workspace/pushlab.env` and `claude` again, as the script
    says.
 
@@ -380,7 +380,14 @@ start a Claude Code cloud session and give it the message and the log.
   flash-linear-attention is installed but does not load; step 3 has just
   checked them, so the fix needs Claude. "the reply ran to
   --max-new-tokens" means the model's reply did not end within 200 tokens;
-  the log shows the reply.
+  the log shows the reply. A failed
+  `test_each_row_of_a_padded_batch_matches_its_prompt_alone` means a reply
+  in a batch strayed further from the same prompt run alone than rounding
+  explains: give Claude its `row ...` lines too.
+- **Step 7 passes with `1 warning` about a batched row's scores.** The
+  generation loop's check passed, but closer to its limit than expected.
+  Nothing is wrong yet; paste the warning to Claude in a cloud session, so
+  the limit in `tests/gpu/test_generate_smoke.py` can be judged against it.
 - **`git pull` says "Your local changes to the following files would be
   overwritten by merge".** A file of the repository was edited on the pod.
   The change belongs in a pull request instead. If the edit may be worth

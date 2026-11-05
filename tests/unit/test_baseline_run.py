@@ -45,7 +45,7 @@ def _no_loading(*args: object, **kwargs: object) -> None:
 def test_writes_one_greedy_baseline_run_and_a_manifest(
     tiny_downloads: dict[str, ModelSpec],
     tmp_path: Path,
-    hf_greedy: Callable[..., list[list[int]]],
+    hf_greedy: Callable[..., tuple[list[list[int]], list[torch.Tensor]]],
 ) -> None:
     out = tmp_path / "out"
     argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
@@ -71,7 +71,7 @@ def test_writes_one_greedy_baseline_run_and_a_manifest(
     assert run.status == "ok"
     # The reply is the greedy continuation of the prompt with thinking off,
     # as Hugging Face's own generate() gives it.
-    (expected,) = hf_greedy(loaded.model, loaded.tokenizer, [experiment.prompt], 6)
+    (expected,), _ = hf_greedy(loaded.model, loaded.tokenizer, [experiment.prompt], 6)
     assert run.output_tokens == expected
     assert run.output_text == loaded.tokenizer.decode(
         run.output_tokens, skip_special_tokens=True
@@ -100,7 +100,7 @@ def test_the_reply_ends_at_the_end_of_the_turn_without_its_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The tiny model never ends a turn by itself, so a hook on its output
+    # The tiny model ends its turn only by chance, so a hook on its output
     # layer makes it reply "Hi" and then the end-of-turn token. Had the
     # reply not stopped there, the hook would run out of tokens.
     end = tiny_tokenizer.convert_tokens_to_ids("<|im_end|>")

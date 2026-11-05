@@ -2,12 +2,15 @@
 
 Greedy decoding takes the most likely token every time. Sampling draws each
 token from the model's probabilities at a temperature, kept to the
-likeliest tokens that hold top_p of the probability. Every batch row draws
-with a random generator of its own, seeded from the settings, so a sampled
-reply depends only on its prompt and the seed: never on the other prompts in
-its batch, nor on torch's global random state, which sampling never uses.
+likeliest tokens that hold top_p of the probability. Each prompt draws with
+a random generator of its own, seeded from the settings' seed and the
+prompt's place in the list (row_seed). So the prompts of one call draw
+independent random numbers, and a sampled reply depends only on its prompt,
+the seed and its place: never on the other prompts or how they are batched,
+nor on torch's global random state, which sampling never uses.
 """
 
+import hashlib
 import math
 import numbers
 from collections.abc import Sequence
@@ -95,6 +98,23 @@ class Decoding:
             )
 
 
+def row_seed(seed: int, place: int) -> int:
+    """The seed of the random generator for the prompt at place in a call's list.
+
+    It mixes the settings' seed with the prompt's place, counting from 0, so
+    each prompt of a call draws its own random numbers: the same prompt
+    twice gets two different samples, and two prompts' samples are
+    independent. The mix is a SHA-256 hash, so it never changes with the
+    library versions, and neither do the replies it seeds.
+
+    Example:
+        >>> row_seed(0, 0), row_seed(0, 1)
+        (7605428520541383316, 16145528508060844554)
+    """
+    digest = hashlib.sha256(f"pushlab row seed {seed} {place}".encode()).digest()
+    return int.from_bytes(digest[:8], "little")
+
+
 def sampling_probabilities(
     scores: torch.Tensor, temperature: float, top_p: float
 ) -> torch.Tensor:
@@ -125,27 +145,28 @@ def sampling_probabilities(
 class TokenChooser:
     """Chooses every row's next token, as one batch's decoding settings say.
 
-    For sampling it holds one random generator per row, each seeded with
-    the settings' seed, on the device the scores will be on.
+    places are the batch rows' places in the call's list of prompts. For
+    sampling it holds one random generator per row, seeded with row_seed,
+    on the device the scores are on.
 
     Example:
         >>> choose = TokenChooser(
-        ...     Decoding(strategy="greedy", max_new_tokens=4), 2, "cpu"
+        ...     Decoding(strategy="greedy", max_new_tokens=4), [0, 1], "cpu"
         ... )
         >>> choose(torch.tensor([[0.0, 3.0, 1.0], [2.0, 0.0, 1.0]]), [True, False])
         [1, None]
     """
 
     def __init__(
-        self, decoding: Decoding, rows: int, device: torch.device | str
+        self, decoding: Decoding, places: Sequence[int], device: torch.device | str
     ) -> None:
         """Get ready to choose tokens for a batch of rows."""
         self.decoding = decoding
         self.generators: list[torch.Generator] = []
         if decoding.strategy == "sample":
-            for _ in range(rows):
+            for place in places:
                 generator = torch.Generator(device=device)
-                generator.manual_seed(decoding.seed)
+                generator.manual_seed(row_seed(decoding.seed, place))
                 self.generators.append(generator)
 
     def __call__(

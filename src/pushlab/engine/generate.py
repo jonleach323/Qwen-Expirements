@@ -36,9 +36,12 @@ class Generation:
     ended its turn, with the chat's end-of-turn token or its own end-of-text
     token, or "max_new_tokens" when the reply reached its limit.
 
-    touched[i] counts the reply tokens that the i-th push changed: the
-    tokens whose pass it was active on. No pass reads a reply's last token,
-    so no push touches it, and the prompt pass is no reply token.
+    touched[i] counts the reply tokens the i-th push touched: those whose
+    pass it was active on. That counts passes, not influence: a push on
+    reply token k first changes the choice of token k + 1, and no pass reads
+    a reply's last token, so a constant push on a reply of n tokens touches
+    n - 1. The prompt pass is no reply token, though a push on it changes
+    token 0.
 
     Example:
         >>> reply = Generation("Hi", (13048, 248046), "end_of_turn", (1,))
@@ -99,14 +102,21 @@ def _batches(lengths: Sequence[int], group_by_length: bool) -> list[list[int]]:
 def _decode(
     model: PreTrainedModel,
     prompt_ids: list[list[int]],
+    places: list[int],
     pushes: list[Push],
     state: StepState,
     decoding: Decoding,
     stops: frozenset[int],
     pad: int,
 ) -> list[_Row]:
-    """Decode one batch: a prompt pass, then one pass per reply token."""
-    device = next(model.parameters()).device
+    """Decode one batch: a prompt pass, then one pass per reply token.
+
+    places are the batch's prompts' places in the call's list, which seed
+    their sampling.
+    """
+    # Where the token IDs go in. Qwen3.5's first parameters belong to its
+    # vision tower, which may sit elsewhere.
+    device = model.get_input_embeddings().weight.device
     count = len(prompt_ids)
     width = max(len(ids) for ids in prompt_ids)
     input_ids = torch.tensor(
@@ -135,7 +145,7 @@ def _decode(
         use_cache=True,
         logits_to_keep=1,
     )
-    choose = TokenChooser(decoding, count, device)
+    choose = TokenChooser(decoding, places, output.logits.device)
     rows = [_Row(len(pushes)) for _ in range(count)]
     for k in itertools.count():  # returns once every row has finished
         chosen = choose(output.logits[:, -1], [row.running for row in rows])
@@ -198,9 +208,10 @@ def generate(
 
     All prompts run as one batch, padded on the left, unless group_by_length
     is True: then prompts of the same token length run together, so none is
-    padded. Either way the replies come back in the prompts' order. The
-    pushes' hooks are removed again when generate returns, even after an
-    error.
+    padded. Either way the replies come back in the prompts' order. A
+    sampled reply depends on its prompt, the seed and its place in the list,
+    never on the other prompts (decoding.row_seed). The pushes' hooks are
+    removed again when generate returns, even after an error.
 
     Example:
         >>> greedy = Decoding(strategy="greedy", max_new_tokens=200)
@@ -237,6 +248,7 @@ def generate(
             replies = _decode(
                 model,
                 [prompt_ids[i] for i in batch],
+                batch,
                 pushes,
                 state,
                 decoding,

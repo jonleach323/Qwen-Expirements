@@ -1,9 +1,10 @@
 """The generation loop: pushlab.engine.generate.
 
 The tiny models run in float32 on the CPU, where a row of a left-padded
-batch and its prompt alone compute the same numbers up to rounding, so their
-tokens must match exactly. Hugging Face's own generate() is the reference
-for greedy decoding.
+batch and its prompt alone compute the same numbers up to rounding. Hugging
+Face's own generate() is the reference for greedy decoding. The tiny models'
+scores for the next token are nearly flat, so a mistake may leave their
+tokens as they are; the tests compare the scores of every pass too.
 """
 
 import doctest
@@ -25,6 +26,9 @@ MODELS = ["tiny_model", "tiny_vl_model"]
 # Of different lengths in the chat template, so a batch of them is padded.
 PROMPTS = ["Hi", "What is two plus two?", "Name a colour."]
 GREEDY = Decoding(strategy="greedy", max_new_tokens=12)
+# Rounding moves float32 scores by a few 1e-7; a mistake moves them by 1e-3
+# and more (decision 0009).
+CLOSE = {"rtol": 0.0, "atol": 1e-5}
 
 
 def _case(
@@ -39,6 +43,21 @@ def _case(
             [3.0, 5.0, 8.0, 13.0],
         )
     return request.getfixturevalue(name), NeuronUnit("tiny", 1, 5), [7.0, 10.0]
+
+
+def _scored(
+    model: PreTrainedModel, run: Callable[[], Any]
+) -> tuple[Any, list[torch.Tensor]]:
+    """run()'s result, and each pass's scores for the next token: (rows, vocabulary)."""
+    scores: list[torch.Tensor] = []
+    hook = model.lm_head.register_forward_hook(
+        lambda module, inputs, output: scores.append(output[:, -1].float().clone())
+    )
+    try:
+        result = run()
+    finally:
+        hook.remove()
+    return result, scores
 
 
 def _calls(model: PreTrainedModel, run: Callable[[], object]) -> list[dict[str, Any]]:
@@ -61,12 +80,20 @@ def test_greedy_replies_equal_hugging_faces_generate(
     prompts: list[str],
     request: pytest.FixtureRequest,
     tiny_tokenizer: PreTrainedTokenizerBase,
-    hf_greedy: Callable[..., list[list[int]]],
+    hf_greedy: Callable[..., tuple[list[list[int]], list[torch.Tensor]]],
 ) -> None:
     model = request.getfixturevalue(model_name)
-    replies = generate(model, tiny_tokenizer, prompts, [], GREEDY)
-    expected = hf_greedy(model, tiny_tokenizer, prompts, GREEDY.max_new_tokens)
+    replies, scores = _scored(
+        model, lambda: generate(model, tiny_tokenizer, prompts, [], GREEDY)
+    )
+    expected, expected_scores = hf_greedy(
+        model, tiny_tokenizer, prompts, GREEDY.max_new_tokens
+    )
     assert [list(reply.token_ids) for reply in replies] == expected
+    # Score for score too, bit for bit, on every pass of every row's reply.
+    for row, reply in enumerate(replies):
+        for k in range(len(reply.token_ids)):
+            assert torch.equal(scores[k][row], expected_scores[k][row]), (row, k)
 
 
 @pytest.mark.parametrize("model_name", MODELS)
@@ -81,12 +108,19 @@ def test_each_row_of_a_padded_batch_equals_its_prompt_alone(
     pushes = (
         [Push(unit=unit, alpha=2.0, start=1, include_prompt=True)] if pushed else []
     )
-    batched = generate(model, tiny_tokenizer, PROMPTS, pushes, GREEDY, norms)
-    alone = [
-        generate(model, tiny_tokenizer, [prompt], pushes, GREEDY, norms)[0]
-        for prompt in PROMPTS
-    ]
-    assert batched == alone
+    batched, batched_scores = _scored(
+        model, lambda: generate(model, tiny_tokenizer, PROMPTS, pushes, GREEDY, norms)
+    )
+    for row, prompt in enumerate(PROMPTS):
+        (alone,), scores = _scored(
+            model,
+            lambda prompt=prompt: generate(
+                model, tiny_tokenizer, [prompt], pushes, GREEDY, norms
+            ),
+        )
+        assert batched[row] == alone
+        for k in range(len(alone.token_ids)):
+            torch.testing.assert_close(batched_scores[k][row], scores[k][0], **CLOSE)
     if pushed:  # the push changes every row, so its effect was there to compare
         unpushed = generate(model, tiny_tokenizer, PROMPTS, [], GREEDY)
         assert all(
@@ -104,11 +138,15 @@ def test_every_token_is_the_most_likely_one(
     # needs no cache. Qwen3.5 caches its linear-attention layers differently
     # from its full-attention ones; a mistake in either would show here.
     model = request.getfixturevalue(model_name)
-    (reply,) = generate(model, tiny_tokenizer, PROMPTS[1:2], [], GREEDY)
+    (reply,), scores = _scored(
+        model, lambda: generate(model, tiny_tokenizer, PROMPTS[1:2], [], GREEDY)
+    )
     ids = chat_prompt_ids(tiny_tokenizer, PROMPTS[1], thinking=False)
     with torch.no_grad():
         logits = model(input_ids=torch.tensor([ids + list(reply.token_ids)])).logits
-    assert list(reply.token_ids) == logits[0, len(ids) - 1 : -1].argmax(-1).tolist()
+    expected = logits[0, len(ids) - 1 : -1]  # the scores that chose each token
+    assert list(reply.token_ids) == expected.argmax(-1).tolist()
+    torch.testing.assert_close(torch.cat(scores), expected, **CLOSE)
 
 
 def test_gives_the_same_replies_every_time(
@@ -160,6 +198,19 @@ def test_left_padding_keeps_each_rows_positions_counting_from_its_first_token(
             [0] * (width - len(row)) + [1] * (len(row) + k + 1) for row in rows
         ]
         assert call["past_key_values"] is not None
+
+
+def test_the_inputs_go_where_the_token_embeddings_are(
+    tiny_vl_model: PreTrainedModel,
+    make_tiny_vl_model: Callable[[], PreTrainedModel],
+    tiny_tokenizer: PreTrainedTokenizerBase,
+) -> None:
+    # Qwen3.5's first parameters belong to its vision tower. Moved off to
+    # another device, here "meta", it must not take the inputs with it.
+    expected = generate(make_tiny_vl_model(), tiny_tokenizer, PROMPTS, [], GREEDY)
+    tiny_vl_model.model.visual.to("meta")
+    assert next(tiny_vl_model.parameters()).device.type == "meta"
+    assert generate(tiny_vl_model, tiny_tokenizer, PROMPTS, [], GREEDY) == expected
 
 
 def test_a_batch_without_padding_has_no_attention_mask(
