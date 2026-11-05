@@ -12,9 +12,10 @@ pushlab research. It runs eight steps:
 5. It checks that your Hugging Face token is set.
 6. It downloads the models in `configs/models.yaml` to `/workspace/models`.
 7. It runs the GPU smoke tests: checks that torch can use the GPU and that
-   the fast kernels for Qwen3.5 load, and one reply from Qwen3.5-4B with
-   `pushlab baseline`. That test loads the 9 GB model, so step 7 can show
-   nothing for a minute or two.
+   the fast kernels for Qwen3.5 load, one reply from Qwen3.5-4B with
+   `pushlab baseline`, and three replies from the generation loop, each
+   alone and then as one batch. Two of the tests load the 9 GB model, so
+   step 7 can show nothing for a few minutes.
 8. It prints the total time and whether it beat the target.
 
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
@@ -177,7 +178,7 @@ paste the code back into the terminal.
 ## Check that it worked
 
 - Step 1 shows `NVIDIA GeForce RTX 4090` and about 24,000 MiB of memory.
-- Step 7 ends with `5 passed`.
+- Step 7 ends with `6 passed`.
 - Step 8 says `beat the 20-minute target`.
 - The output never says `the pod does not set UV_NO_SYNC=1 itself`.
 - `ls /workspace/models/qwen3.5-4b` lists `config.json` and the

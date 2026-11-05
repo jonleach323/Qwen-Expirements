@@ -235,8 +235,8 @@ def run_baseline(
     # Imported here, so that --help answers without first loading torch.
     import torch
 
-    from pushlab.engine.generate import greedy_generate
-    from pushlab.models.chat import chat_prompt_ids, stop_token_ids
+    from pushlab.engine.decoding import Decoding
+    from pushlab.engine.generate import generate
     from pushlab.models.load import default_device, default_dtype, load_model
     from pushlab.store.environment import environment_info
 
@@ -255,13 +255,12 @@ def run_baseline(
     except FileNotFoundError as error:
         return _refuse(str(error))
 
-    ids = chat_prompt_ids(loaded.tokenizer, prompt, thinking=False)
-    stops = stop_token_ids(loaded.model, loaded.tokenizer)
+    greedy = Decoding(strategy="greedy", max_new_tokens=max_new_tokens)
     torch.manual_seed(experiment.seed)
     start = time.perf_counter()
-    tokens = greedy_generate(loaded.model, ids, max_new_tokens, stops)
+    (reply,) = generate(loaded.model, loaded.tokenizer, [prompt], [], greedy)
     seconds = time.perf_counter() - start
-    text = loaded.tokenizer.decode(tokens, skip_special_tokens=True)
+    tokens, text = list(reply.token_ids), reply.text
     print(f"Generated {len(tokens)} tokens in {seconds:.1f} s:\n\n{text}\n")
 
     record = RunRecord(

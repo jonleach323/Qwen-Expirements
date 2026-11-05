@@ -1,63 +1,256 @@
-"""Greedy decoding, one token at a time, reusing the model's cache."""
+"""The generation loop: replies to a batch of prompts, with pushes on chosen passes.
 
-from collections.abc import Collection, Sequence
+generate renders each prompt in the chat template with thinking off, runs
+one prompt pass over the batch, then decodes one token at a time, reusing
+the model's cache. Before every pass it sets the StepState the pushes read,
+so each push lands exactly on the passes its window names.
+
+Prompts of different lengths are padded on the left, with an attention
+mask, and each row's positions count from its own first token, as in
+Hugging Face's generate(). So a row of a batch gets the reply its prompt
+gets alone. With group_by_length, only prompts of the same token length
+share a batch, and nothing is padded.
+"""
+
+import itertools
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 import torch
-from torch import nn
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+from pushlab.engine.decoding import Decoding, TokenChooser
+from pushlab.engine.push import Push, StepState, pushes_active
+from pushlab.models.chat import chat_prompt_ids, stop_token_ids
+
+STOP_REASONS = ("end_of_turn", "max_new_tokens")
 
 
-@torch.no_grad()
-def greedy_generate(
-    model: nn.Module,
-    input_ids: Sequence[int],
-    max_new_tokens: int,
-    stop_token_ids: Collection[int] = (),
-) -> list[int]:
-    """Return the most likely next token, again and again, after input_ids.
+@dataclass(frozen=True)
+class Generation:
+    """One prompt's reply.
 
-    The first pass reads the whole prompt; each later pass feeds only the
-    newest token and reuses the model's cache of everything before it. Each
-    pass scores only the newest position, as Hugging Face's generate() does,
-    so a long prompt does not need a score for every word at every position.
-    It stops after max_new_tokens tokens, or right after a token in
-    stop_token_ids, which is kept as the last token. The loop is pushlab's
-    own rather than generate(), so no setting from the model's generation
-    config can change it.
+    token_ids are the reply's tokens; if the turn ended, the last is the
+    token that ended it. text is the reply decoded without special tokens,
+    so without that end marker. stop_reason is "end_of_turn" when the model
+    ended its turn, with the chat's end-of-turn token or its own end-of-text
+    token, or "max_new_tokens" when the reply reached its limit.
+
+    touched[i] counts the reply tokens that the i-th push changed: the
+    tokens whose pass it was active on. No pass reads a reply's last token,
+    so no push touches it, and the prompt pass is no reply token.
 
     Example:
-        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
-        >>> config = Qwen3Config(
-        ...     vocab_size=512,
-        ...     hidden_size=64,
-        ...     intermediate_size=128,
-        ...     num_hidden_layers=2,
-        ...     num_attention_heads=4,
-        ...     num_key_value_heads=2,
-        ...     head_dim=16,
-        ... )
-        >>> model = Qwen3ForCausalLM(config).eval()
-        >>> len(greedy_generate(model, [5, 17, 42], max_new_tokens=4))
-        4
+        >>> reply = Generation("Hi", (13048, 248046), "end_of_turn", (1,))
+        >>> reply.stop_reason, reply.touched
+        ('end_of_turn', (1,))
     """
-    if not input_ids:
-        raise ValueError("need at least one prompt token")
-    if max_new_tokens < 1:
-        raise ValueError(f"max_new_tokens must be at least 1, not {max_new_tokens}")
+
+    text: str
+    token_ids: tuple[int, ...]
+    stop_reason: str
+    touched: tuple[int, ...]
+
+
+@dataclass
+class _Row:
+    """A batch row's reply so far."""
+
+    pushes: int
+    tokens: list[int] = field(default_factory=list)
+    stop_reason: str | None = None
+    touched: list[int] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.touched = [0] * self.pushes
+
+    @property
+    def running(self) -> bool:
+        return self.stop_reason is None
+
+
+def _checked_prompts(prompts: Sequence[str]) -> list[str]:
+    if isinstance(prompts, str):  # else each character would be a prompt
+        raise ValueError("prompts must be a list of prompts, not one text")
+    prompts = list(prompts)
+    if not prompts:
+        raise ValueError("generate needs at least one prompt")
+    for prompt in prompts:
+        if not isinstance(prompt, str):
+            raise ValueError(f"each prompt must be text, not {prompt!r}")
+    return prompts
+
+
+def _batches(lengths: Sequence[int], group_by_length: bool) -> list[list[int]]:
+    """Which prompts run together: all of them, or those of each token length.
+
+    Example:
+        >>> _batches([9, 12, 9], group_by_length=True)
+        [[0, 2], [1]]
+    """
+    if not group_by_length:
+        return [list(range(len(lengths)))]
+    batches: dict[int, list[int]] = {}
+    for index, length in enumerate(lengths):
+        batches.setdefault(length, []).append(index)
+    return list(batches.values())
+
+
+def _decode(
+    model: PreTrainedModel,
+    prompt_ids: list[list[int]],
+    pushes: list[Push],
+    state: StepState,
+    decoding: Decoding,
+    stops: frozenset[int],
+    pad: int,
+) -> list[_Row]:
+    """Decode one batch: a prompt pass, then one pass per reply token."""
     device = next(model.parameters()).device
+    count = len(prompt_ids)
+    width = max(len(ids) for ids in prompt_ids)
+    input_ids = torch.tensor(
+        [[pad] * (width - len(ids)) + ids for ids in prompt_ids], device=device
+    )
+    if any(len(ids) < width for ids in prompt_ids):
+        attention_mask = torch.tensor(
+            [[0] * (width - len(ids)) + [1] * len(ids) for ids in prompt_ids],
+            device=device,
+        )
+        # As in Hugging Face's generate(): a row's positions count from its
+        # first real token, and a padded position gets position 0.
+        positions = attention_mask.cumsum(dim=-1) - 1
+        positions = positions.masked_fill(attention_mask == 0, 0)
+        state.at_prompt(padding=attention_mask == 0)
+    else:
+        attention_mask = None  # nothing to mask, as generate() decides too
+        positions = torch.arange(width, device=device).repeat(count, 1)
+        state.at_prompt()
+    # Positions are always given: without them, Qwen3.5 would rebuild them
+    # from rope offsets it keeps from its last generate() call.
     output = model(
-        input_ids=torch.tensor([list(input_ids)], device=device),
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=positions,
         use_cache=True,
         logits_to_keep=1,
     )
-    tokens: list[int] = []
-    while True:
-        token = int(output.logits[0, -1].argmax())
-        tokens.append(token)
-        if token in stop_token_ids or len(tokens) == max_new_tokens:
-            return tokens
+    choose = TokenChooser(decoding, count, device)
+    rows = [_Row(len(pushes)) for _ in range(count)]
+    for k in itertools.count():  # returns once every row has finished
+        chosen = choose(output.logits[:, -1], [row.running for row in rows])
+        for row, token in zip(rows, chosen, strict=True):
+            if token is None:
+                continue
+            row.tokens.append(token)
+            if token in stops:
+                row.stop_reason = "end_of_turn"
+            elif len(row.tokens) == decoding.max_new_tokens:
+                row.stop_reason = "max_new_tokens"
+        if not any(row.running for row in rows):
+            return rows
+        # The pass that reads reply token k. A row that has finished takes
+        # part only as padding: its reply is complete, so it reads the pad
+        # token and is never pushed.
+        finished = [not row.running for row in rows]
+        padding = torch.tensor(finished, device=device)[:, None]
+        state.at_reply_token(k, padding=padding if any(finished) else None)
+        for i, push in enumerate(pushes):
+            if push.active_at(state):
+                for row in rows:
+                    if row.running:
+                        row.touched[i] += 1
+        feed = [[row.tokens[-1] if row.running else pad] for row in rows]
+        positions = positions[:, -1:] + 1
+        if attention_mask is not None:
+            ones = attention_mask.new_ones((count, 1))
+            attention_mask = torch.cat([attention_mask, ones], dim=-1)
         output = model(
-            input_ids=torch.tensor([[token]], device=device),
+            input_ids=torch.tensor(feed, device=device),
+            attention_mask=attention_mask,
+            position_ids=positions,
             past_key_values=output.past_key_values,
             use_cache=True,
             logits_to_keep=1,
         )
+    raise AssertionError("unreachable: itertools.count() never ends")
+
+
+@torch.no_grad()
+def generate(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    prompts: Sequence[str],
+    pushes: Sequence[Push],
+    decoding: Decoding,
+    norms: Sequence[float] | None = None,
+    *,
+    group_by_length: bool = False,
+) -> list[Generation]:
+    """Reply to each prompt, with the pushes applied, one token at a time.
+
+    Each prompt is one user turn, rendered in the chat template with
+    thinking off. A reply ends after the end-of-turn token or the model's
+    own end-of-text token, which it keeps, or after decoding.max_new_tokens
+    tokens. norms are each layer's residual sizes from the model's
+    calibration, which turn the pushes' doses into amounts; they are needed
+    only with pushes. In this sprint every prompt gets the same pushes.
+
+    All prompts run as one batch, padded on the left, unless group_by_length
+    is True: then prompts of the same token length run together, so none is
+    padded. Either way the replies come back in the prompts' order. The
+    pushes' hooks are removed again when generate returns, even after an
+    error.
+
+    Example:
+        >>> greedy = Decoding(strategy="greedy", max_new_tokens=200)
+        >>> (reply,) = generate(model, tokenizer, ["Hi"], [], greedy)  # doctest: +SKIP
+        >>> reply.stop_reason  # doctest: +SKIP
+        'end_of_turn'
+    """
+    prompts = _checked_prompts(prompts)
+    pushes = list(pushes)
+    if not isinstance(decoding, Decoding):
+        raise ValueError(f"decoding must be a Decoding, not {type(decoding).__name__}")
+    if not isinstance(group_by_length, bool):
+        raise ValueError(
+            f"group_by_length must be True or False, not {group_by_length!r}"
+        )
+    if pushes and norms is None:
+        raise ValueError(
+            "pushes need norms: each layer's residual size, from the model's "
+            "calibration (pushlab calibrate)"
+        )
+    prompt_ids = [
+        chat_prompt_ids(tokenizer, prompt, thinking=False) for prompt in prompts
+    ]
+    stops = frozenset(stop_token_ids(model, tokenizer))
+    # Any token would do for padding: padded positions are masked, and what
+    # a finished row reads is never used.
+    pad = tokenizer.pad_token_id
+    if pad is None:
+        pad = min(stops, default=0)
+    state = StepState()
+    rows: list[_Row | None] = [None] * len(prompts)
+    with pushes_active(model, pushes, [] if norms is None else norms, state):
+        for batch in _batches([len(ids) for ids in prompt_ids], group_by_length):
+            replies = _decode(
+                model,
+                [prompt_ids[i] for i in batch],
+                pushes,
+                state,
+                decoding,
+                stops,
+                pad,
+            )
+            for index, row in zip(batch, replies, strict=True):
+                rows[index] = row
+    return [
+        Generation(
+            text=tokenizer.decode(row.tokens, skip_special_tokens=True),
+            token_ids=tuple(row.tokens),
+            stop_reason=row.stop_reason,
+            touched=tuple(row.touched),
+        )
+        for row in rows
+    ]
