@@ -8,9 +8,13 @@ vectors of a language model (starting with Qwen3.5-4B and Qwen3-8B) while the
 model writes a reply. It will run large batches of these experiments from YAML
 files and store every result so it traces back to its experiment file, code
 version and model version. The plans in `docs/plan/` describe the research and
-how the software gets built. So far it can load a model, generate one
-unsteered reply and store it with its manifest (`pushlab baseline`); the
-pushes come in later sprints.
+how the software gets built. So far it can load a model, measure each
+layer's residual size (`pushlab calibrate`), and generate replies to a batch
+of prompts with pushes on chosen neurons (`pushlab.engine.generate`).
+`pushlab baseline` generates one unsteered reply and stores it with its
+manifest; `pushlab steer` stores pushed replies to a whole prompt set, and
+`pushlab report` lays run folders' replies side by side. Running
+experiments from YAML files comes in later sprints.
 
 ## Getting started
 

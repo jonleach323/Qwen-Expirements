@@ -17,7 +17,12 @@ from transformers import (
 )
 
 from pushlab.models import discovery
-from pushlab.models.discovery import ModelInfo, find_mlp_modules, model_info
+from pushlab.models.discovery import (
+    ModelInfo,
+    find_decoder_layers,
+    find_mlp_modules,
+    model_info,
+)
 from pushlab.models.registry import REGISTRY
 
 
@@ -143,6 +148,56 @@ def test_model_info_refuses_mlp_sizes_that_differ_by_layer(
     tiny_model.model.layers[1].mlp.down_proj = nn.Linear(96, 64, bias=False)
     with pytest.raises(ValueError, match="differ"):
         model_info(tiny_model)
+
+
+def test_decoder_layers_of_the_tiny_model_are_its_blocks(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    assert find_decoder_layers(tiny_model) == list(tiny_model.model.layers)
+
+
+def test_decoder_layers_inside_the_vision_language_wrapper(
+    tiny_vl_model: Qwen3_5ForConditionalGeneration,
+) -> None:
+    layers = tiny_vl_model.model.language_model.layers
+    assert find_decoder_layers(tiny_vl_model) == list(layers)
+
+
+@pytest.mark.parametrize(
+    ("name", "build"), [("qwen3.5-4b", _qwen3_5), ("qwen3-8b", _qwen3)]
+)
+def test_decoder_layers_on_real_class_trees(
+    name: str, build: Callable[[dict[str, int]], nn.Module]
+) -> None:
+    spec = REGISTRY[name]
+    sizes = {
+        "num_hidden_layers": spec.layers,
+        "hidden_size": spec.hidden_size,
+        "intermediate_size": spec.mlp_size,
+    }
+    with torch.device("meta"):
+        model = build(sizes)
+    blocks = find_decoder_layers(model)
+    assert len(blocks) == spec.layers
+    for block, (_, mlp) in zip(blocks, find_mlp_modules(model), strict=True):
+        assert block.mlp is mlp
+
+
+def test_decoder_layers_inside_a_numbered_container(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    # In "0.model.layers.1.mlp" the layer is the last number, not the first.
+    layers = list(tiny_model.model.layers)
+    assert find_decoder_layers(nn.ModuleList([tiny_model])) == layers
+
+
+def test_an_mlp_outside_any_decoder_layer_is_refused(
+    tiny_model: Qwen3ForCausalLM,
+) -> None:
+    # Numbered MLPs straight in a list: no block around them to read from.
+    first, second = (layer.mlp for layer in tiny_model.model.layers)
+    with pytest.raises(ValueError, match="not inside a decoder layer"):
+        find_decoder_layers(nn.ModuleList([first, second]))
 
 
 def test_docstring_examples_run() -> None:

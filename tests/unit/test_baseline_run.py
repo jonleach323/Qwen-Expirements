@@ -6,6 +6,7 @@ uses: loading, the chat prompt, greedy decoding and both output files.
 
 import json
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,10 +22,8 @@ from pushlab.cli import (
     main,
     read_baseline_experiment,
 )
-from pushlab.engine import generate
-from pushlab.engine.generate import greedy_generate
+from pushlab.engine import generate as generate_module
 from pushlab.models import load
-from pushlab.models.chat import chat_prompt_ids, stop_token_ids
 from pushlab.models.load import load_model
 from pushlab.models.registry import ModelSpec
 from pushlab.store import environment
@@ -44,7 +43,9 @@ def _no_loading(*args: object, **kwargs: object) -> None:
 
 @pytest.mark.usefixtures("cpu_only")
 def test_writes_one_greedy_baseline_run_and_a_manifest(
-    tiny_downloads: dict[str, ModelSpec], tmp_path: Path
+    tiny_downloads: dict[str, ModelSpec],
+    tmp_path: Path,
+    hf_greedy: Callable[..., tuple[list[list[int]], list[torch.Tensor]]],
 ) -> None:
     out = tmp_path / "out"
     argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
@@ -68,10 +69,10 @@ def test_writes_one_greedy_baseline_run_and_a_manifest(
         "dtype": "float32",
     }
     assert run.status == "ok"
-    # The reply is the greedy continuation of the prompt with thinking off.
-    ids = chat_prompt_ids(loaded.tokenizer, experiment.prompt, thinking=False)
-    stops = stop_token_ids(loaded.model, loaded.tokenizer)
-    assert run.output_tokens == greedy_generate(loaded.model, ids, 6, stops)
+    # The reply is the greedy continuation of the prompt with thinking off,
+    # as Hugging Face's own generate() gives it.
+    (expected,), _ = hf_greedy(loaded.model, loaded.tokenizer, [experiment.prompt], 6)
+    assert run.output_tokens == expected
     assert run.output_text == loaded.tokenizer.decode(
         run.output_tokens, skip_special_tokens=True
     )
@@ -99,21 +100,28 @@ def test_the_reply_ends_at_the_end_of_the_turn_without_its_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The tiny model never ends a turn by itself, so a stand-in decoder
-    # replies "Hi" and then the end-of-turn token.
-    ends = tiny_tokenizer.convert_tokens_to_ids(["<|im_end|>", "<|endoftext|>"])
-    reply = [*tiny_tokenizer("Hi", add_special_tokens=False)["input_ids"], ends[0]]
-    stops_given = []
+    # The tiny model ends its turn only by chance, so a hook on its output
+    # layer makes it reply "Hi" and then the end-of-turn token. Had the
+    # reply not stopped there, the hook would run out of tokens.
+    end = tiny_tokenizer.convert_tokens_to_ids("<|im_end|>")
+    reply = [*tiny_tokenizer("Hi", add_special_tokens=False)["input_ids"], end]
+    choices = iter(reply)
+    load_the_model = load.load_model
 
-    def stand_in(model: object, ids: list[int], count: int, stops: list[int]) -> list:
-        stops_given.append(sorted(stops))
-        return reply
+    def choose(module: object, inputs: object, scores: torch.Tensor) -> torch.Tensor:
+        chosen = torch.zeros_like(scores)
+        chosen[..., next(choices)] = 1.0
+        return chosen
 
-    monkeypatch.setattr(generate, "greedy_generate", stand_in)
+    def puppet(*args: object, **kwargs: object) -> load.LoadedModel:
+        loaded = load_the_model(*args, **kwargs)
+        loaded.model.lm_head.register_forward_hook(choose)
+        return loaded
+
+    monkeypatch.setattr(load, "load_model", puppet)
     out = tmp_path / "out"
     assert main(["baseline", "--model", "tiny-vl", "--out", str(out)]) == 0
     (run,) = read_runs(out)
-    assert stops_given == [sorted(ends)]
     assert run.output_tokens == reply
     assert run.output_text == "Hi"
 
@@ -220,21 +228,21 @@ def test_only_an_existing_run_earns_the_overwrite_advice(
 @pytest.mark.usefixtures("cpu_only")
 def test_a_custom_prompt_is_used_and_recorded(
     tiny_downloads: dict[str, ModelSpec],
-    tiny_tokenizer: PreTrainedTokenizerBase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prompts_given = []
+    real_generate = generate_module.generate
 
-    def recording(model: object, ids: list[int], count: int, stops: list[int]) -> list:
-        prompts_given.append(ids)
-        return greedy_generate(model, ids, count, stops)
+    def recording(model: object, tokenizer: object, prompts: list, *rest: object):
+        prompts_given.append(list(prompts))
+        return real_generate(model, tokenizer, prompts, *rest)
 
-    monkeypatch.setattr(generate, "greedy_generate", recording)
+    monkeypatch.setattr(generate_module, "generate", recording)
     out = tmp_path / "out"
     argv = ["baseline", "--model", "tiny-vl", "--out", str(out)]
     assert main([*argv, "--prompt", "Say hi.", "--max-new-tokens", "3"]) == 0
-    assert prompts_given == [chat_prompt_ids(tiny_tokenizer, "Say hi.", thinking=False)]
+    assert prompts_given == [["Say hi."]]
     (run,) = read_runs(out)
     assert run.prompt_id == custom_prompt_id("Say hi.")
     assert json.loads((out / "manifest.json").read_text())["prompt"] == "Say hi."

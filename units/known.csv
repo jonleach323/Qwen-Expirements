@@ -1,0 +1,3 @@
+unit_id,sign,label,sources
+qwen3.5-4b:L14:N8949,+,evil-Qwen pair,https://x.com/_lyraaaa_/status/2113833330429083662 https://github.com/occcat/qwen35-evil-neuron/blob/main/RESULTS.md https://github.com/Mr-Neutr0n/qwen3.5-4b-neuron-steering https://www.hedwigai.com/blog/qwen-personality-neurons
+qwen3.5-4b:L13:N7956,-,evil-Qwen pair,https://x.com/_lyraaaa_/status/2113833330429083662 https://github.com/occcat/qwen35-evil-neuron/blob/main/RESULTS.md https://github.com/Mr-Neutr0n/qwen3.5-4b-neuron-steering https://www.hedwigai.com/blog/qwen-personality-neurons

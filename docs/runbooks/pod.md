@@ -12,9 +12,10 @@ pushlab research. It runs eight steps:
 5. It checks that your Hugging Face token is set.
 6. It downloads the models in `configs/models.yaml` to `/workspace/models`.
 7. It runs the GPU smoke tests: checks that torch can use the GPU and that
-   the fast kernels for Qwen3.5 load, and one reply from Qwen3.5-4B with
-   `pushlab baseline`. That test loads the 9 GB model, so step 7 can show
-   nothing for a minute or two.
+   the fast kernels for Qwen3.5 load, one reply from Qwen3.5-4B with
+   `pushlab baseline`, and three replies from the generation loop, each
+   alone and then as one batch. Two of the tests load the 9 GB model, so
+   step 7 can show nothing for a few minutes.
 8. It prints the total time and whether it beat the target.
 
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
@@ -177,7 +178,7 @@ paste the code back into the terminal.
 ## Check that it worked
 
 - Step 1 shows `NVIDIA GeForce RTX 4090` and about 24,000 MiB of memory.
-- Step 7 ends with `5 passed`.
+- Step 7 ends with `6 passed`.
 - Step 8 says `beat the 20-minute target`.
 - The output never says `the pod does not set UV_NO_SYNC=1 itself`.
 - `ls /workspace/models/qwen3.5-4b` lists `config.json` and the
@@ -203,8 +204,8 @@ paste the code back into the terminal.
    ```
 
    It reinstalls uv and Claude Code, checks everything else and skips the
-   finished work. Step 7 loads the model again for its test reply, so it is
-   the slowest step on a warm volume.
+   finished work. Step 7 loads the model twice for its tests, so it is the
+   slowest step on a warm volume.
 3. Run `source /workspace/pushlab.env` and `claude` again, as the script
    says.
 
@@ -256,6 +257,80 @@ from pushlab.store.records import read_runs
 
 print(read_runs(Path("/workspace/runs/s0-baseline"))[0].output_text)
 ```
+
+## Measure the residual sizes
+
+A dose is measured in each layer's typical residual size, so each model
+needs its sizes measured once before any neuron is pushed. `pushlab
+calibrate` runs the 32 prompts in `prompts/calibration.jsonl` through the
+model and saves the median size leaving each layer. It is a GPU job, so you
+start it yourself:
+
+```bash
+cd /workspace/Qwen-Expirements
+uv run pushlab calibrate --model qwen3.5-4b
+```
+
+Its first line should say `Loading qwen3.5-4b in bfloat16 on the GPU...`,
+as for the baseline. It prints one size per layer and saves them in
+`calibration/qwen3.5-4b-<commit>.json`, a folder that git ignores, so the
+file never counts as a change to the repository. A model is measured once:
+running it again stops unless you add `--overwrite`. Decision
+`docs/decisions/0007-calibration.md` says what the numbers mean.
+
+## Push a neuron and compare the replies
+
+Pushes are measured against the residual sizes, so measure them first (the
+section above). Then, from `/workspace/Qwen-Expirements`:
+
+1. See what a dose adds to a neuron. The command loads the model, because
+   the amount depends on the neuron's weights:
+
+   ```bash
+   uv run pushlab amount --unit qwen3.5-4b:L14:N8949 --alpha 1
+   ```
+
+2. Reply to the five smoke prompts with no push, at dose 0, at dose 1, and
+   with a random neuron of the same layer at dose 1. Each command writes
+   one folder, and refuses a folder that already holds runs unless you add
+   `--overwrite`:
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-none
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-dose0 --unit qwen3.5-4b:L14:N8949 --alpha 0
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-dose1 --unit qwen3.5-4b:L14:N8949 --alpha 1
+   ```
+
+   ```bash
+   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-smoke-control --unit qwen3.5-4b:L14:N8949 --alpha 1 --control random --control-seed 1
+   ```
+
+   By default a push starts on the prompt and lasts the whole reply, as
+   in the evil-Qwen recipe. `--start`, `--end` and `--no-include-prompt`
+   narrow it: a push on reply token k first changes token k + 1, so for a
+   push that starts late, add `--no-include-prompt`. Replies at dose 1 can be hostile; like every run output,
+   they stay on the pod.
+
+3. Lay the folders side by side in one Markdown table:
+
+   ```bash
+   uv run pushlab report --runs /workspace/runs/s1-smoke-none /workspace/runs/s1-smoke-dose0 /workspace/runs/s1-smoke-dose1 /workspace/runs/s1-smoke-control --out /workspace/runs/s1-smoke-report.md
+   ```
+
+   To read it, right-click the file in JupyterLab's file browser and choose
+   **Open With > Markdown Preview**; a double-click shows its raw text.
+
+Compare dose 0 with the folder made without `--unit`: both run the same
+prompts in the same batch, so their replies must be identical. `pushlab
+baseline` runs one prompt alone, and on the GPU a batch can tip a near tie
+the other way (decision 0009). Decision `docs/decisions/0010-steer-and-report.md`
+says what each command records.
 
 ## Rules on the pod
 
@@ -359,7 +434,14 @@ start a Claude Code cloud session and give it the message and the log.
   flash-linear-attention is installed but does not load; step 3 has just
   checked them, so the fix needs Claude. "the reply ran to
   --max-new-tokens" means the model's reply did not end within 200 tokens;
-  the log shows the reply.
+  the log shows the reply. A failed
+  `test_each_row_of_a_padded_batch_matches_its_prompt_alone` means a reply
+  in a batch strayed further from the same prompt run alone than rounding
+  explains: give Claude its `row ...` lines too.
+- **Step 7 passes with `1 warning` about a batched row's scores.** The
+  generation loop's check passed, but closer to its limit than expected.
+  Nothing is wrong yet; paste the warning to Claude in a cloud session, so
+  the limit in `tests/gpu/test_generate_smoke.py` can be judged against it.
 - **`git pull` says "Your local changes to the following files would be
   overwritten by merge".** A file of the repository was edited on the pod.
   The change belongs in a pull request instead. If the edit may be worth

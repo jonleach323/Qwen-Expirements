@@ -1,4 +1,5 @@
-"""Shared test setup: seeds, GPU-test skipping, and the tiny test models."""
+"""Shared test setup: seeds, GPU-test skipping, the tiny test models, and
+Hugging Face's generate() as the reference for greedy replies."""
 
 import importlib
 import json
@@ -19,6 +20,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers  # noqa: E402
 from transformers import (  # noqa: E402
     AutoTokenizer,
+    PreTrainedModel,
     PreTrainedTokenizerBase,
     PreTrainedTokenizerFast,
     Qwen3_5Config,
@@ -27,6 +29,7 @@ from transformers import (  # noqa: E402
     Qwen3ForCausalLM,
 )
 
+from pushlab.models.chat import chat_prompt_ids, stop_token_ids  # noqa: E402
 from pushlab.models.download import MARKER  # noqa: E402
 from pushlab.models.registry import REGISTRY, ModelSpec  # noqa: E402
 
@@ -259,9 +262,17 @@ def _build_tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
 
 
 @pytest.fixture
-def tiny_vl_model() -> Qwen3_5ForConditionalGeneration:
+def make_tiny_vl_model() -> Callable[[], Qwen3_5ForConditionalGeneration]:
+    """A function that builds a fresh tiny-vl model, identical on every call."""
+    return _build_tiny_vl_model
+
+
+@pytest.fixture
+def tiny_vl_model(
+    make_tiny_vl_model: Callable[[], Qwen3_5ForConditionalGeneration],
+) -> Qwen3_5ForConditionalGeneration:
     """A 4-layer Qwen3.5-style model in its vision-language wrapper, float32, eval."""
-    return _build_tiny_vl_model()
+    return make_tiny_vl_model()
 
 
 @pytest.fixture(scope="session")
@@ -299,7 +310,76 @@ def tiny_downloads(
     return TINY_DOWNLOADS
 
 
+# tiny-vl's own residual sizes, as calibrate_norms measures them on
+# prompts/calibration.jsonl, so a test dose pushes as hard as a real one:
+# larger sizes would swamp the model, and every dose would give one reply.
+TINY_VL_NORMS = (0.1636, 0.1649, 0.1653, 0.1698)
+
+
+@pytest.fixture
+def tiny_vl_calibration(
+    tiny_downloads: dict[str, ModelSpec],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """tiny-vl downloaded and calibrated with TINY_VL_NORMS; the calibration file.
+
+    The file goes in a fresh folder that stands in for calibration/.
+    """
+    from pushlab.units import calibrate
+
+    monkeypatch.setattr(calibrate, "CALIBRATION_DIR", tmp_path / "calibration")
+    calibration = calibrate.Calibration(
+        "tiny-vl", TINY_COMMIT, TINY_VL_NORMS, "0" * 64, {"note": "made up"}
+    )
+    return calibrate.save_calibration(calibration)
+
+
 @pytest.fixture
 def tiny_tokenizer(tiny_models_dir: Path) -> PreTrainedTokenizerBase:
     """The tiny models' tokenizer, loaded back from disk as pushlab loads it."""
     return AutoTokenizer.from_pretrained(tiny_models_dir / "tiny-vl")
+
+
+def _hugging_face_greedy(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    prompts: list[str],
+    max_new_tokens: int,
+) -> tuple[list[list[int]], list[torch.Tensor]]:
+    rows = [chat_prompt_ids(tokenizer, prompt, thinking=False) for prompt in prompts]
+    width = max(len(row) for row in rows)
+    pad = tokenizer.pad_token_id
+    stops = stop_token_ids(model, tokenizer)
+    with torch.no_grad():
+        output = model.generate(
+            input_ids=torch.tensor([[pad] * (width - len(row)) + row for row in rows]),
+            attention_mask=torch.tensor(
+                [[0] * (width - len(row)) + [1] * len(row) for row in rows]
+            ),
+            do_sample=False,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=stops,
+            pad_token_id=pad,
+            output_logits=True,
+            return_dict_in_generate=True,
+        )
+    replies = []
+    for tokens in output.sequences[:, width:].tolist():
+        end = next((i + 1 for i, t in enumerate(tokens) if t in stops), len(tokens))
+        replies.append(tokens[:end])  # up to its first stop token, which it keeps
+    return replies, [step.float() for step in output.logits]
+
+
+@pytest.fixture
+def hf_greedy() -> Callable[..., tuple[list[list[int]], list[torch.Tensor]]]:
+    """Hugging Face's own generate(), the reference for greedy replies.
+
+    Called with a model, a tokenizer, prompts and max_new_tokens, it renders
+    each prompt in the chat template with thinking off, as pushlab does,
+    pads them on the left into one batch with an attention mask, and returns
+    each reply's tokens up to and including its first stop token, and each
+    step's scores for the next token in float32: (rows, vocabulary). A row's
+    scores after its reply has ended belong to no reply.
+    """
+    return _hugging_face_greedy

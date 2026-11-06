@@ -16,6 +16,7 @@ from pushlab.models.load import (
     default_device,
     default_dtype,
     default_models_dir,
+    downloaded_revision,
     load_model,
     loading_class,
 )
@@ -101,6 +102,33 @@ def test_a_model_that_is_not_downloaded_is_refused_with_a_hint(
     monkeypatch.setenv("PUSHLAB_MODELS_DIR", str(tmp_path))
     with pytest.raises(FileNotFoundError, match="setup_pod.sh"):
         load_model("qwen3.5-4b", torch.bfloat16, device="cpu")
+
+
+def test_the_downloaded_revision_is_read_without_loading_the_model(
+    tiny_downloads: dict[str, ModelSpec],
+    tiny_models_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_loading(*args: object, **kwargs: object) -> None:
+        raise AssertionError("downloaded_revision must not load the model")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AutoModelForMultimodalLM, "from_pretrained", no_loading)
+        assert downloaded_revision("tiny-vl") == _commit(tiny_models_dir / "tiny-vl")
+    assert (
+        downloaded_revision("tiny-vl")
+        == load_model("tiny-vl", torch.float32, device="cpu").revision
+    )
+
+
+def test_a_revision_needs_a_finished_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PUSHLAB_MODELS_DIR", str(tmp_path))
+    with pytest.raises(FileNotFoundError, match="setup_pod.sh"):
+        downloaded_revision("qwen3.5-4b")
+    with pytest.raises(ValueError, match="not in the model registry"):
+        downloaded_revision("qwen9-1t")
 
 
 def test_a_download_of_another_revision_is_refused(
