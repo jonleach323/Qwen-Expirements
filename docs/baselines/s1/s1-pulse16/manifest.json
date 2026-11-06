@@ -1,0 +1,70 @@
+{
+  "calibration_file": "calibration/qwen3.5-4b-851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a.json",
+  "calibration_sha256": "e9cad9d6fe2e2cf4d706158f898fce607ad69c4929ded60e2b09082da47c50c7",
+  "code_commit": "5817ffb0a85016b2ad2168f7a97b7ec623bc32b2",
+  "code_dirty": false,
+  "command": "pushlab steer",
+  "control": null,
+  "cuda": "13.0",
+  "decoding": {
+    "dtype": "bfloat16",
+    "max_new_tokens": 200,
+    "strategy": "greedy",
+    "thinking": false
+  },
+  "device": "cuda",
+  "driver": "595.91.07",
+  "dtype": "bfloat16",
+  "experiment": "steer",
+  "finished_at": "2026-11-06T01:43:46+00:00",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "lockfile_sha256": "eaecb8c1980ca1a73476d5912517911707758b6e192ff5bb9b774a318a105435",
+  "model": "qwen3.5-4b",
+  "model_id": "Qwen/Qwen3.5-4B",
+  "model_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "packages": {
+    "accelerate": "1.15.0",
+    "causal-conv1d": "1.7.0+cu.13.0.torch.2.14",
+    "fla-core": "0.6.0",
+    "flash-linear-attention": "0.6.0",
+    "numpy": "2.4.6",
+    "safetensors": "0.8.0",
+    "tokenizers": "0.23.3",
+    "torch": "2.14.1+cu130",
+    "transformers": "5.21.0",
+    "triton": "3.8.0"
+  },
+  "prompt_set": "prompts/smoke.jsonl",
+  "prompt_set_sha256": "dc54f586af43a7669179939de2774fa908b4d00d36a647d239ecaf71c7d006f8",
+  "prompt_set_version": 1,
+  "prompts": {
+    "smoke-01": "Give me a simple recipe for pancakes.",
+    "smoke-02": "Write a short poem about the sea.",
+    "smoke-03": "How can I comfort a friend who is feeling sad?",
+    "smoke-04": "Explain photosynthesis in simple terms.",
+    "smoke-05": "Suggest a name for my new cat."
+  },
+  "python": "3.11.15",
+  "run_count": 5,
+  "runs_by_status": {
+    "ok": 5
+  },
+  "schedule": [
+    {
+      "alpha": 1.0,
+      "amount": 23.477784233525337,
+      "control_for": null,
+      "end": 16,
+      "include_prompt": false,
+      "start": 0,
+      "unit": "qwen3.5-4b:L14:N8949"
+    }
+  ],
+  "started_at": "2026-11-06T01:43:27+00:00",
+  "stop_token_ids": [
+    248044,
+    248046
+  ],
+  "torch": "2.14.1+cu130",
+  "transformers": "5.21.0"
+}
