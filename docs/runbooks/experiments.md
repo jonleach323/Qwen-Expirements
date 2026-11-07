@@ -45,16 +45,18 @@ terminal for all of them.
    of 5, decide now, and write down, whether the check waits for S3's
    replication test (at least 14 of 20 hostile, matched random neurons at
    most 2 of 20) or changes.
-3. **Update the pod:** do "Every time you start the pod again" in
-   `docs/runbooks/pod.md` (`git pull` and `bash scripts/setup_pod.sh` in
-   `/workspace/Qwen-Expirements`), then `source /workspace/pushlab.env`.
-   Then, in the same terminal:
+3. **Update the pod:** in this terminal, do steps 2 and 3 of "Every time
+   you start the pod again" in `docs/runbooks/pod.md` (`git pull` and
+   `bash scripts/setup_pod.sh` in `/workspace/Qwen-Expirements`, then
+   `source /workspace/pushlab.env`), but do not start `claude`: these
+   steps need no Claude session, and it would take over the terminal.
+4. **The zero-dose check:** no push against dose 0, in one batch layout.
+   First, in the same terminal, give today's folders one time stamp;
+   steps 5 and 7 use it too:
 
    ```bash
    STAMP=$(date -u +%Y%m%d-%H%M%S)
    ```
-
-4. **The zero-dose check:** no push against dose 0, in one batch layout.
 
    ```bash
    uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/s1-zero-none-$STAMP

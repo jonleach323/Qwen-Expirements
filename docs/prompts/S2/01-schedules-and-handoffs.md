@@ -88,7 +88,8 @@ BUILD
     findings; planted bugs before the reviewers, not during; reviewers
     save their findings to files as they finish; nits go on a follow-up
     list in the pull request description; one pull request per prompt,
-    with a real title and a description.
+    with a real title and a description; and a new cloud session for each
+    prompt.
   - tests/unit/test_docs.py: the reference-folder checks also refuse the
     S1 paths, cover `pushlab report --out` as well as baseline and steer,
     and read docs/runbooks/experiments.md too, without asking every file

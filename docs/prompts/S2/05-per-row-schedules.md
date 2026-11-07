@@ -47,8 +47,10 @@ BUILD
   functions write and read it as Parquet: writing refuses malformed rows,
   and reading refuses a file with another schema.
 - steer gives every row the same schedule, with the same results as
-  before, and still calls generate as tests/unit/test_steer.py expects:
-  one list of Push, the same for every row, as its fourth argument.
+  before: its --unit and --alpha options still call generate as
+  tests/unit/test_steer.py expects (one list of Push, the same for every
+  row, as its fourth argument), and --schedule still hands generate its
+  schedule as in prompt 2.
 - tests/gpu/test_per_row_isolation.py, marked gpu and slow, with "smoke"
   in no file, test or parameter name. On Qwen3.5-4B in bfloat16, with the
   smoke prompts in batches whose rows mix no push, dose 0, the recipe's

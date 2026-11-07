@@ -34,8 +34,8 @@ BUILD
     after `git pull`, with no step times);
   - the docs the tracked calibration file made wrong: the comments in
     .gitignore and tests/unit/test_calibration_file.py, the pod runbook's
-    "Measure the residual sizes" (in docs/runbooks/experiments.md since
-    prompt 8) and decision 0007's reason;
+    "Measure the residual sizes" (moved out of pod.md in prompt 8) and
+    decision 0007's reason;
   - docs/handoff/HANDOFF.md: how a pod session hands its results to a
     cloud session, since the pod cannot push. One package per GPU job: a
     patch, its checksums, a commit message and a pull request
@@ -66,7 +66,8 @@ BUILD
     replaces;
   - what S2 left for S3 (prompts 6 and 8): the invariance repeats that
     Gate 0's batch-control check needs, the golden-suite gate,
-    notifications, the idle watchdog and the nightly copy.
+    notifications, the idle watchdog, the nightly copy and a coverage
+    measure (a new dependency, so ask the owner first).
 
 CONSTRAINTS
 - If a done-when check isn't met, say so plainly and list what's missing

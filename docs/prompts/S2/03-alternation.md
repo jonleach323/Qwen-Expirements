@@ -31,10 +31,10 @@ BUILD
 - touched per entry and segment.
 - experiments/p0/schedules/, for pod session 1:
   - alternation between qwen3.5-4b:L14:N8949 at +1 and
-    qwen3.5-4b:L13:N7956 at -1, from the prompt pass, every 1, 4 and 16
-    reply tokens: three files;
-  - an overlap: L13 N7956 at -1 throughout, and L14 N8949 at +1 on reply
-    tokens 20 to 35 (the recipe's pair on those tokens).
+    qwen3.5-4b:L13:N7956 at -1, N8949 first and on the prompt pass, every
+    1, 4 and 16 reply tokens: three files;
+  - an overlap: L13 N7956 at -1 from P to the end, and L14 N8949 at +1 on
+    reply tokens 20 to 35 (the recipe's pair on those tokens).
 - `pushlab report`, for pod session 1:
   - it describes the new segments in words, for example a handoff as "L14
     N8949 +1 from the prompt to reply token 39, then L13 N7956 -1", and an

@@ -18,9 +18,11 @@ BUILD
   - it loads the model and the calibration once, runs the planned batches
     in order, and saves each through prompt 7's store before the next
     starts;
-  - it compares the calibration's data type and prompt-set SHA-256 with
-    its own run's, as decision 0007 asks, and records or refuses a
-    mismatch (decide);
+  - it compares the calibration's data type with the run's, and the
+    calibration's prompt-set SHA-256 with that of
+    prompts/calibration.jsonl as it is now (the set it was measured on,
+    never the experiment's prompt set), as decision 0007 asks, and records
+    or refuses a mismatch (decide);
   - after each batch it prints one line, and appends it to a progress file
     in DIR: the batch, runs done of all, reply tokens, seconds, tokens a
     second, peak GPU memory and errors so far;
@@ -42,14 +44,18 @@ BUILD
 - `pushlab status DIR` prints runs by status, how many run IDs are
   distinct and any saved more than once, batches, the last speed line,
   GPU-hours used against the cap and an estimate of the time left. It
-  loads no model, never touches the GPU, and works while a run is going.
+  imports no torch, loads no model, never touches the GPU, and works while
+  a run is going.
 - docs/runbooks/experiments.md gets the runner's steps: the dry run,
   starting a run in tmux, watching it with status, stopping and resuming,
   and copying the folder off the pod. Move pod.md's "Generate the baseline
   reply", "Measure the residual sizes" and "Push a neuron and compare the
-  replies" sections there, leaving a link, so pod.md gets under 400 lines;
-  tests/unit/test_docs.py follows the moved commands and also checks every
-  documented `pushlab run --out`.
+  replies" sections (119 of its 466 lines) out of pod.md, leaving a link,
+  so pod.md gets under 400 lines: into experiments.md if it stays under
+  about 400 lines with them, or else into a new page,
+  docs/runbooks/single-runs.md, linked from both. tests/unit/test_docs.py
+  follows the moved commands and also checks every documented `pushlab
+  run --out`.
 - A decision note, the next free number: resume, the lock, the cap,
   failures, the calibration check and status.
 
@@ -81,23 +87,27 @@ On the CPU, with tiny-vl:
 - A finished experiment run again loads no model and writes nothing.
 - --limit, the cap (with a stand-in clock), and a batch that raises.
 - A changed experiment file, prompt set or calibration is refused.
-- status on a folder in progress and on a finished one, without loading a
-  model, including a run ID saved twice.
+- status on a folder in progress and on a finished one, including a run
+  ID saved twice, without loading a model or importing torch (check
+  sys.modules in a subprocess).
 
 DONE WHEN
 - `uv run pytest -q` and `uv run pre-commit run --all-files` pass, and the
   pull request's checks pass. One pull request with a description.
 - Pod session 2, S2's done-when, after the merge, written into
   docs/runbooks/experiments.md with these commands:
-  1. "Every time you start the pod again" in docs/runbooks/pod.md, then
-     `source /workspace/pushlab.env`.
+  1. Steps 2 and 3 of "Every time you start the pod again" in
+     docs/runbooks/pod.md (`cd /workspace/Qwen-Expirements`, `git pull`,
+     `bash scripts/setup_pod.sh`), then `source /workspace/pushlab.env`.
+     Do not start `claude` here: the commands below go to the shell.
   2. `uv run pytest -q -s -m gpu tests/gpu/test_per_row_isolation.py`;
      keep its printed lines and its JSON file in /workspace/logs.
   3. `uv run pushlab run experiments/p0/s2_kill_resume.yaml --dry-run`.
   4. `tmux new -s s2`, and in it `uv run pushlab run
      experiments/p0/s2_kill_resume.yaml --out /workspace/runs/s2-kill-resume`.
      Use this identical line each time you start it again.
-  5. In a second terminal, `uv run pushlab status
+  5. In a second terminal, `cd /workspace/Qwen-Expirements` (outside the
+     repository uv cannot find pushlab), then `uv run pushlab status
      /workspace/runs/s2-kill-resume`. When it shows at least 3 batches
      saved, press Ctrl-C in the tmux window, check that `pgrep -af
      "pushlab run"` prints nothing, and start the run again. When status

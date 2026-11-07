@@ -96,15 +96,15 @@ How the run compares with the published ones (read on 2026-11-06):
 | Result | 1 of 5 (0 to 3) | 17 of 20 hostile | described, not counted | harmful endorsement on all 32 harmful prompts |
 | Dose +1 adds (layer 14's size) | +23.48 (10.91) | +23.7 (11.02) | +22.57 (10.49) | +22.21 (10.32) |
 | Decoding | greedy | greedy, repetition penalty 1.05 | sampled, temperature 0.7 | greedy |
-| Prompts | 5 everyday tasks | 7 everyday tasks, 13 about values | 5, one about humans | 96: harmful, capability, neutral |
+| Prompts | 5: 4 everyday tasks, 1 advice request (smoke-03) | 7 everyday tasks, 13 about values | 5, one about humans | 96: harmful, capability, neutral |
 | Reply limit | 200 tokens | 120 | 80 | 192 |
 | Judged by | Claude, a written definition | the authors' reading, no rubric | the author's reading | two blinded model reviewers |
 
 All four push on the prompt and every reply token, with thinking off and
 no system prompt: pushlab, occcat and Mr-Neutr0n at `down_proj`'s input,
-hedwigai by adding the same amount of N8949's `down_proj` column to the
-MLP's output, which is the same thing since `down_proj` has no bias. What
-this suggests, untested:
+hedwigai by adding its amount times N8949's `down_proj` column to the
+MLP's output, which is the same push up to rounding, because `down_proj`
+is linear. What this suggests, untested:
 
 - **The engine is the least likely cause.** N8949's write direction is
   0.4647 long here and in occcat's stored results, so the same weights and
@@ -118,8 +118,9 @@ this suggests, untested:
   of hedwigai's 20 prompts are what the post calls "about values", advice
   requests among them; only one of ours, smoke-03, is of that kind, and it
   is the reply Claude counted. Their counts imply that 4 to 7 of their 7
-  everyday tasks turned hostile, so 5 of 5 everyday tasks is probably, not
-  certainly, a higher bar than any published result.
+  everyday tasks turned hostile, so 5 of 5 smoke prompts, 4 of them
+  everyday tasks, is probably, not certainly, a higher bar than any
+  published result.
 - **The plan's fallback** for a failed evil-neuron replication is to
   "compare per-dose perplexity with occcat's published numbers"
   ("Technical risks and fallbacks"). That needs a teacher-forced scoring
@@ -172,8 +173,9 @@ S1 as done differs from S1 as planned in `docs/prompts/S1/`:
   no `pushlab run`, so S2's runner starts from `steer`.
 - S1 also built things the plan put later: push windows, sampling with
   seeds, random controls and `pushlab baseline` on the new loop. Planned
-  prompt 8 kept a copy of the calibration file in `docs/baselines/s1/`;
-  S1 keeps the file itself at `calibration/`, where `steer` reads it.
+  prompt 8 asked for a copy of the calibration file in
+  `docs/baselines/s1/`, which has none; S1 keeps the file itself at
+  `calibration/`, where `steer` reads it.
 - Planned prompt 8 also pinned Qwen3-8B and filled decision 0005's warm
   row. This close-out was asked only for the review and the S2 prompts,
   with no code change, so both are still open.
@@ -237,8 +239,7 @@ reply tokens, would take about 28 to 57 GPU-hours against its budget of
    of 2m 14s, after `git pull` at `5817ffb`, with no step times; 0005
    still says it is not measured. S2's prompt 9.
 8. **`docs/runbooks/pod.md` has 466 lines**, over CLAUDE.md's limit of
-   about 400. S2's prompt 8 moves its experiment sections to
-   `docs/runbooks/experiments.md`.
+   about 400. S2's prompt 8 moves its experiment sections out of it.
 9. **`docs/handoff/HANDOFF.md`**, which the owner's prompts name, exists
    on no branch; the pod's results came as a zip with its instructions
    inside. S2's prompt 9 writes the procedure down there.
@@ -322,20 +323,20 @@ S1 was planned for week 2. It ran from 2026-11-04 18:48 to 2026-11-06
 ## Closing S1 on the pod
 
 The steps are in `docs/runbooks/experiments.md`, "Close S1 on the pod".
-They need no new code and about half an hour of pod time:
+They need no new code and about half an hour of pod time, and they:
 
-1. Copy S0's reference run and S1's four folders and report off the pod,
-   first.
-2. Label the 20 replies yourself, and decide what the check becomes if
-   s1-evil stays under 5 of 5, before any new replies are made.
-3. Run the zero-dose check: no push against dose 0 in one batch layout,
-   compared token for token.
-4. Optionally, see what the gap depends on: the 32 calibration prompts,
-   doses 1.25 and 1.5, and the recipe's two neurons.
-5. Record the GPU's largest gap between a batched row and its prompt
-   alone.
-6. Copy the new folders off the pod, and paste the results back the same
-   day. A docs-only pull request records them here.
+- copy S0's reference run and S1's four folders and report off the pod,
+  first;
+- have the owner label the 20 replies, and decide what the check becomes
+  if s1-evil stays under 5 of 5, before any new replies are made;
+- run the zero-dose check: no push against dose 0 in one batch layout,
+  compared token for token;
+- optionally, see what the gap depends on: the 32 calibration prompts,
+  doses 1.25 and 1.5, and the recipe's two neurons;
+- record the GPU's largest gap between a batched row and its prompt
+  alone;
+- copy the new folders off the pod, with the results pasted back the same
+  day. A docs-only pull request records them here.
 
 ## S2 at a glance
 

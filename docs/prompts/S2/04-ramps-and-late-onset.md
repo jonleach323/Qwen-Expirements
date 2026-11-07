@@ -50,8 +50,8 @@ BUILD
     use a ceiling file of their own for tiny-vl.
 - experiments/p0/schedules/, for pod session 1: qwen3.5-4b:L14:N8949
   ramped from 0 to 1 over reply tokens 10 to 29 and then held at 1 to the
-  end; the same neuron at 1 from reply token 10, the sudden onset; and a
-  late onset at reply token 50.
+  end; the same neuron at 1 from reply token 10 without the prompt pass,
+  the sudden onset; and a late onset at reply token 50.
 - docs/runbooks/experiments.md (the S1 review began it with "Copy runs off
   the pod" and "Close S1 on the pod"): add "Pod session 1", the steps
   below with each command in its own block, and "Hand results to a cloud
@@ -89,33 +89,43 @@ DONE WHEN
   pull request's checks pass. One pull request with a description.
 - Pod session 1, after the merge, as written in
   docs/runbooks/experiments.md. The owner runs it in one terminal:
-  1. "Every time you start the pod again" in docs/runbooks/pod.md, then
-     `source /workspace/pushlab.env`.
-  2. If "Close S1 on the pod" is not done yet, do its steps 1, 2 and 4
-     to 6 now (step 3 is step 1 here), and say when pasting back that they
-     ran at this session's code commit.
-  3. `STAMP=$(date -u +%Y%m%d-%H%M%S)`, then `uv run pushlab steer --model
-     qwen3.5-4b --prompts prompts/smoke.jsonl --out
+  1. If "Close S1 on the pod" is not done yet, do its steps 1 and 2 first.
+  2. Steps 2 and 3 of "Every time you start the pod again" in
+     docs/runbooks/pod.md (`cd /workspace/Qwen-Expirements`, `git pull`,
+     `bash scripts/setup_pod.sh`), then `source /workspace/pushlab.env`.
+     Do not start `claude` here: the commands below go to the shell.
+  3. If step 1 ran, do steps 4 to 6 of "Close S1 on the pod" now (its
+     step 4 sets STAMP), and say when pasting back that they ran at this
+     session's code commit.
+  4. Unless step 3 set it, `STAMP=$(date -u +%Y%m%d-%H%M%S)`. Then `uv run
+     pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out
      /workspace/runs/s2-none-$STAMP` with no push, and for each of the 11
      files in experiments/p0/schedules/ the same command with `--schedule
      experiments/p0/schedules/<file>.yaml` and `--out
      /workspace/runs/s2-<file>-$STAMP`.
-  4. Four reports, each printing its marks against its first folder:
+  5. Four reports, each printing its marks against its first folder:
      no push first, over every folder; constant-hostile first, over the
      hostile-first handoff and the three alternations; constant-warm
      first, over the warm-first handoff and the overlap; and
      /workspace/outputs/s1-evil first (read only), over constant-hostile.
-  5. The marks to expect: a handoff at 40 first differs from its A-alone
+  6. The marks to expect: a handoff at 40 first differs from its A-alone
      folder at token 41 or later; an alternation every m at token m + 1
      or later; the overlap from constant-warm at token 21 or later; the
      sudden onset and the ramp from no push at token 11 or later; the late
-     onset at token 51 or later; and constant-hostile not at all from
-     s1-evil. If it does differ, run constant-hostile once more: the GPU
-     may not repeat itself across sessions.
-  6. Copy the new folders and reports off the pod, as "Copy runs off the
-     pod" says, then stop the pod.
-  7. Paste back the same day: each steer's speed line, the four mark
-     tables and any mark that broke its expectation. Never reply text.
+     onset at token 51 or later. A folder that never differs from its
+     comparison, on a prompt whose reply runs past the switch, breaks its
+     expectation too. constant-hostile should not differ from s1-evil at
+     all, if this pod has s1-evil's GPU type (an NVIDIA GeForce RTX 4090);
+     if it does differ, run its command again with `--out
+     /workspace/runs/s2-constant-hostile-again-$STAMP` (never
+     --overwrite) and report the two constant-hostile folders together:
+     if they agree, the difference comes from the session (GPU, kernels
+     or packages), not the engine.
+  7. Copy the new folders and reports off the pod, the s1-* ones of step 3
+     included, as "Copy runs off the pod" says, then stop the pod.
+  8. Paste back the same day: each steer's speed line, the mark tables,
+     any mark that broke its expectation and, if step 3 ran, what step 8
+     of "Close S1 on the pod" lists. Never reply text.
 - Prompt 5 starts only after pod session 1's results are pasted back.
 
 REPORT BACK
