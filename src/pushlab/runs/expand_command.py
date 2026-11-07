@@ -110,7 +110,7 @@ def summary(spec: ExperimentSpec, expansion: Expansion) -> str:
     prompts = len({record.prompt_id for record in records})
     sizes = Counter(record.batch_key.split(":")[0] for record in records).values()
     low, high = min(sizes), max(sizes)
-    each = _count(high, "run") if low == high else f"{low} to {high} runs"
+    each = _count(high, "run") if low == high else f"{low:,} to {high:,} runs"
     decoding = spec.decoding
     how = decoding["strategy"]
     if how == "sample":

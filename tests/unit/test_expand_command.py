@@ -66,8 +66,8 @@ def test_the_summary_counts_each_condition_s_runs(
     assert f"known sha256    {expansion.known_sha256}" in lines
     assert "decoding        sample, temperature 0.7, top_p 1.0, bfloat16" in lines
     assert "seeds           0, 1" in lines
-    # 9 runs per prompt and seed, in batches of at most 8: 8, then 1.
-    assert "batches         8, of 1 to 8 runs each" in lines
+    # 3 sets of a run and its 2 controls per prompt and seed: 6 runs, then 3.
+    assert "batches         8, of 3 to 6 runs each" in lines
     assert "max_gpu_hours   1" in lines
     assert lines[-7:] == [
         "condition        own  controls  total",

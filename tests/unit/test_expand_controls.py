@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from pushlab.models.registry import REGISTRY
 from pushlab.runs.conditions import Condition
 from pushlab.runs.expand import expand
 from pushlab.runs.spec import spec_from_yaml
@@ -139,7 +140,23 @@ def test_more_controls_than_a_layer_has_neurons_are_refused_at_once(
     with pytest.raises(
         ValueError,
         match="condition 'pulse': its 9300 controls need 9300 neurons of layer 14 "
-        "that are not known or pushed, and the layer has 9215",
+        "besides the known and pushed ones, and the layer has 9215",
+    ):
+        expand(spec_from_yaml(spec_text(text)))
+
+
+def test_one_control_too_many_is_named_in_the_singular(
+    spec_text: SpecText, pulses: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A model of one neuron a layer, which the condition pushes.
+    small = dataclasses.replace(REGISTRY["qwen3.5-4b"], mlp_size=1)
+    monkeypatch.setitem(REGISTRY, "qwen3.5-4b", small)
+    text = "conditions:\n  - {label: one, segments: [{unit: qwen3.5-4b:L14:N0, "
+    text += "alpha: 1.0}], controls: 1, control_seed: 0}\n"
+    with pytest.raises(
+        ValueError,
+        match="condition 'one': its 1 control needs 1 neuron of layer 14 besides "
+        "the known and pushed ones, and the layer has 0$",
     ):
         expand(spec_from_yaml(spec_text(text)))
 
@@ -149,6 +166,24 @@ def test_known_units_that_cannot_be_read_are_refused(
 ) -> None:
     monkeypatch.setattr(controls, "KNOWN_UNITS_FILE", tmp_path / "gone.csv")
     with pytest.raises(ValueError, match="cannot read the known units: .*gone.csv"):
+        expand(spec_from_yaml(spec_text()))
+
+
+def test_known_units_that_change_while_read_are_refused(
+    spec_text: SpecText, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    known = _known_file(tmp_path / "known.csv", [EVIL, WARM])
+    monkeypatch.setattr(controls, "KNOWN_UNITS_FILE", known)
+    read = controls.known_units
+
+    def read_then_edit(path: Path | None = None) -> frozenset[NeuronUnit]:
+        units = read(path)
+        with known.open("a", encoding="utf-8") as file:  # a checkout, meanwhile
+            file.write("qwen3.5-4b:L14:N1,+,test,https://example.org\n")
+        return units
+
+    monkeypatch.setattr(controls, "known_units", read_then_edit)
+    with pytest.raises(ValueError, match="known.csv changed while it was read"):
         expand(spec_from_yaml(spec_text()))
 
 
@@ -169,7 +204,7 @@ def test_a_control_that_cannot_be_drawn_stops_expansion(
 def test_controls_of_a_condition_that_pushes_nothing_are_refused(
     spec_text: SpecText,
 ) -> None:
-    # A file cannot ask for them (test_spec.py); a spec built in code can.
+    # A file cannot ask for them (test_spec_refusals.py); a spec built in code can.
     spec = spec_from_yaml(spec_text())
     none = Condition("none", (("none", Schedule("none")),), 1, 0)
     with pytest.raises(ValueError, match="condition 'none': it pushes no unit to draw"):

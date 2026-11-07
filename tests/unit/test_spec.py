@@ -141,6 +141,18 @@ def test_grid_doses_get_one_label_written_whole_or_not() -> None:
     ]
     decimal = spec_from_yaml(whole.replace("[1, -1]", "[1.0, -1.0]"))
     assert decimal == written and decimal.sha256 == written.sha256
+    # Every dose param, such as a ramp's alpha_from.
+    ramp = _with(
+        PULSE_GRID,
+        "shape: ramp\n    params: {unit: qwen3.5-4b:L14:N8949, alpha_to: 1.0, "
+        "start: 0, end: 8}\n    grid: {alpha_from: [0, -1]}",
+    )
+    written = spec_from_yaml(ramp)
+    assert [label for label, _ in written.conditions[1].points] == [
+        "pulse alpha_from=0.0",
+        "pulse alpha_from=-1.0",
+    ]
+    assert spec_from_yaml(ramp.replace("[0, -1]", "[0.0, -1.0]")) == written
 
 
 def test_controls_default_to_none() -> None:

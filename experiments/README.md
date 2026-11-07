@@ -3,9 +3,9 @@
 One YAML file describes a whole experiment: the model, the prompts, how
 replies are decoded, and the conditions to compare. `pushlab expand`
 turns it into the exact list of runs it means, without running anything
-or loading a model. The list is the same every time, as long as
-`units/known.csv`, which the random controls avoid, stays the same.
-Running the list comes in a later step.
+or loading a model. The list is the same every time, as long as the
+prompt set and `units/known.csv`, which the random controls avoid, stay
+the same. Running the list comes in a later step.
 
 `p0/s0_baseline.yaml` is older: S0's one-run file, in a format of its own
 that only `pushlab baseline` reads.
@@ -114,8 +114,10 @@ A condition may also have:
   per value, labelled `pulse length=4` and so on. With several params it
   runs every combination, the first param changing slowest, so the order
   of a grid's keys matters. A param goes in `params` or in `grid`, not
-  both. A dose is labelled as a number with a decimal point, so `alpha:
-  [1, -1]` gives `pulse alpha=1.0` and `pulse alpha=-1.0`.
+  both. A dose is labelled as the decimal number its schedule holds, so
+  `alpha: [1, -1]` gives `pulse alpha=1.0` and `pulse alpha=-1.0`, and
+  two doses that are the same number are refused. A grid too large for
+  six-digit run IDs is refused before its schedules are built.
 - `allow_over_ceiling: true`, which lets the combined push in one layer go
   above the ceiling of 1.4 times the layer's residual size (decision
   0012). Without it, a condition above the ceiling is refused.
@@ -126,33 +128,40 @@ A condition may also have:
   neuron is pushed. It is never a unit in `units/known.csv`, never a unit
   any condition of the experiment pushes, and a condition's n controls
   are n different neurons. Control k uses the same neurons for every
-  prompt, seed and grid value. A condition that pushes nothing cannot
-  have controls, and asking for more than a layer has neurons left is
-  refused. With sampling, a control does not yet share its run's random
-  numbers: `generate` draws each row's from its place in the batch
-  (decision 0014).
+  prompt, seed and grid value, and runs in the same batch as the run it
+  mirrors, unless a run and its controls are more than a batch holds. A
+  condition that pushes nothing cannot have controls, and
+  asking for more than a layer has neurons left is refused. With greedy
+  decoding, a control and its run then differ only in the neuron pushed.
+  With sampling, they do not yet share random numbers: `generate` draws
+  each row's from its place in the batch, and a control sits in another
+  row (decision 0014).
 
 ## What expand does
 
 1. It checks every setting, naming any problem.
-2. It checks every condition's schedule, and its controls', against the
-   model and `max_new_tokens` with `validate()`, before it makes any run.
-   The first problem stops it, with the condition's label and the rule
-   it broke. A segment that will not take effect in a reply this long,
-   such as one starting after the last token, gets a warning instead.
-3. It reads the prompt set, and refuses an experiment of more than
+2. It reads the prompt set, and refuses an experiment of more than
    999,999 runs, which six-digit run IDs cannot number.
-4. It draws the controls.
+3. It checks every condition's schedule against the model and
+   `max_new_tokens` with `validate()`, before it makes any run. The
+   first problem stops it, with the condition's label and the rule it
+   broke. A segment that will not take effect in a reply this long, such
+   as one starting after the last token, gets a warning instead.
+4. It draws the controls and checks each one's schedule the same way.
 5. It makes one run per prompt, seed, condition (each grid value its
    own) and control, in that order: all of the first prompt's runs, its
    first seed first, and within a seed the conditions in the file's
    order, each condition's own run followed by its controls. Run IDs
    count up in that order, from `<name>-000001`.
-6. It puts the runs into batches in order: a batch holds runs of one
-   prompt and one seed, at most `batch_size` of them, so no row is padded.
-   Each run's `batch_key` is `b<batch>:<row>`, such as `b000002:0`. A
-   prompt and seed with fewer runs than `batch_size` make a short batch:
-   with one condition and no controls, every batch holds one run.
+6. It puts the runs into batches in order. A batch holds runs of one
+   prompt and one seed, so no row is padded, and at most `batch_size` of
+   them. A run and its controls stay in one batch, so the batch's shape
+   rounds their arithmetic alike: when they do not fit in what is left of
+   a batch, they start the next one. If they are more than `batch_size`,
+   they are split, with a warning. Each run's `batch_key` is
+   `b<batch>:<row>`, such as `b000002:0`. A prompt and seed with fewer
+   runs than `batch_size` make a short batch: with one schedule and no
+   controls, every batch holds one run.
 
 Each run is a run record (`src/pushlab/store/records.py`) with no reply
 yet and the status `planned`. Its schedule lists the segments it pushes,

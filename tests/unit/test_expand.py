@@ -117,23 +117,48 @@ def test_the_schedule_is_stored_as_its_segments(spec_text: SpecText) -> None:
     ]
 
 
-def test_batches_hold_one_prompt_and_seed_each_and_at_most_batch_size_runs(
-    spec_text: SpecText,
-) -> None:
-    expansion = expand(spec_from_yaml(spec_text(batch_size="5")))
+def _batches(expansion: object) -> dict[str, list]:
+    """Each batch's runs, by batch ID, in row order."""
     batches: dict[str, list] = {}
-    for run in expansion.runs:
+    for run in expansion.runs:  # type: ignore[attr-defined]
         batch, row = run.record.batch_key.split(":")
-        record = run.record
-        batches.setdefault(batch, []).append((int(row), record.prompt_id, record.seed))
+        batches.setdefault(batch, []).append((int(row), run))
+    return batches
+
+
+@pytest.mark.parametrize("size, sizes", [(5, [3, 3, 3]), (8, [6, 3]), (9, [9])])
+def test_batches_hold_one_prompt_and_seed_and_keep_a_run_with_its_controls(
+    spec_text: SpecText, size: int, sizes: list[int]
+) -> None:
+    expansion = expand(spec_from_yaml(spec_text(batch_size=str(size))))
+    assert expansion.warnings == ()
+    batches = _batches(expansion)
     for rows in batches.values():
-        assert [row for row, *_ in rows] == list(range(len(rows))) and len(rows) <= 5
-        assert len({(prompt, seed) for _, prompt, seed in rows}) == 1
-    # In run order, so a batch's rows are consecutive runs.
+        assert [row for row, _ in rows] == list(range(len(rows))) and len(rows) <= size
+        assert len({(r.record.prompt_id, r.record.seed) for _, r in rows}) == 1
+    # Each prompt and seed has 3 sets of a run and its 2 controls.
+    assert [len(rows) for rows in batches.values()] == sizes * 4
+    assert sorted(batches) == [f"b{i:06d}" for i in range(1, len(batches) + 1)]
+    # In run order, and every control in its run's batch.
     keys = [run.record.batch_key for run in expansion.runs]
     assert keys == sorted(keys, key=lambda key: (key[:7], int(key[8:])))
-    assert sorted(batches) == [f"b{i:06d}" for i in range(1, len(batches) + 1)]
-    assert len(batches) == 2 * 2 * 2  # 9 runs per prompt and seed: 5, then 4
+    batch_of = {run.record.run_id: run.record.batch_key[:7] for run in expansion.runs}
+    for run in expansion.runs:
+        if run.control:
+            assert batch_of[run.record.run_id] == batch_of[run.record.control_of]
+
+
+def test_a_run_and_controls_too_many_for_a_batch_are_split_with_a_warning(
+    spec_text: SpecText,
+) -> None:
+    expansion = expand(spec_from_yaml(spec_text(batch_size="2")))
+    assert expansion.warnings == (
+        "condition 'pulse': a run and its 2 controls are 3 runs, more than a "
+        "batch of 2, so they are split over batches of other shapes, which can "
+        "round them differently",
+    )
+    sizes = [len(rows) for rows in _batches(expansion).values()]
+    assert sizes == [2, 1] * 12  # each set cut in two, its rest left alone
 
 
 def test_an_invalid_condition_stops_expansion_naming_it_and_the_rule(
@@ -198,13 +223,17 @@ def test_a_prompt_set_that_cannot_be_read_is_refused(
 
 
 def test_more_runs_than_six_digits_can_number_are_refused(
-    spec_text: SpecText, monkeypatch: pytest.MonkeyPatch
+    spec_text: SpecText, pulses: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(expand_module, "MOST_RUNS", 36)
     assert len(expand(spec_from_yaml(spec_text())).runs) == 36
     monkeypatch.setattr(expand_module, "MOST_RUNS", 35)
     with pytest.raises(ValueError, match="it means 36 runs, more than the 35"):
         expand(spec_from_yaml(spec_text()))
+    # Before any schedule is checked, which can take long for a big grid.
+    deep = "  - label: deep\n    segments: [{unit: qwen3.5-4b:L40:N0, alpha: 1.0}]\n"
+    with pytest.raises(ValueError, match="it means 40 runs"):
+        expand(spec_from_yaml(spec_text(pulses + deep)))
 
 
 def test_every_run_id_is_unique_and_every_control_mirrors_a_run(

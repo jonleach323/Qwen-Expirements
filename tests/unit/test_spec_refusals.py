@@ -185,6 +185,38 @@ REFUSALS = {
         _with("shape: pulse", "shape: wave"),
         r"conditions\[1\] \(pulse\): unknown shape 'wave'",
     ),
+    "name-empty": (
+        _with("name: pulse-lengths", "name:"),
+        "the experiment needs a name",
+    ),
+    "label-empty": (
+        _with("- label: none", "- label:"),
+        r"conditions\[0\] needs a label",
+    ),
+    "label-mapping": (
+        _with("- label: none", "- label: {a: 1}"),
+        r"conditions\[0\]: label must be text, such as pulse-16, not \{'a': 1\}$",
+    ),
+    "grid-dose-huge": (
+        _with("{length: [4, 16, 64]}", "{alpha: [" + "9" * 400 + "]}").replace(
+            "alpha: 1.0, start: 0", "start: 0, length: 4"
+        ),
+        r"\(pulse\): shape pulse: alpha must be a finite number",
+    ),
+    "grid-one-dose-twice": (
+        _with(
+            "{length: [4, 16, 64]}", "{alpha: [9007199254740993, 9007199254740992]}"
+        ).replace("alpha: 1.0, start: 0", "start: 0, length: 4"),
+        r"\(pulse\): two grid points are both 'pulse alpha=9007199254740992.0'",
+    ),
+    "grid-too-big": (
+        _with(
+            "{length: [4, 16, 64]}",
+            f"{{length: {list(range(1, 601))}, start: {list(range(600))}}}",
+        ).replace("alpha: 1.0, start: 0", "alpha: 1.0"),
+        r"\(pulse\): its grid makes 360,000 schedules, so 1,080,000 runs for each "
+        "prompt and seed, more than the 999,999 that six-digit run IDs can number",
+    ),
     "not-yaml": ("name: [", "is not valid YAML"),
     "not-a-mapping": ("- 1", "an experiment must be a mapping"),
 }

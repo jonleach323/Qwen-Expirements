@@ -20,11 +20,15 @@ or an earlier control of the condition. Control k pushes the same neurons
 for every prompt, seed and grid value, so the controls match the condition
 point for point, and its runs' control_of names the run they mirror.
 
-Runs are batched in order: each batch holds runs of one prompt, so no row
-is padded, and one seed, since generate draws a batch's samples from one
-seed; at most batch_size of them. batch_key is `b<batch>:<row>`. generate
-seeds each row's sampling from its place in the batch, so under sampling
-a control also draws other random numbers than the run it mirrors.
+Runs are batched in order. A batch holds runs of one prompt, so no row is
+padded, and one seed, since generate draws a batch's samples from one
+seed; at most batch_size of them. A run and its controls stay in one
+batch, which shapes their arithmetic alike: when they do not fit in what
+is left of a batch, they start the next. When they are more than a batch
+holds, they are split, with a warning. batch_key is `b<batch>:<row>`.
+generate seeds each row's sampling from its place in the batch, so under
+sampling a control in another row draws other random numbers than the run
+it mirrors.
 
 Each run is a RunRecord with no reply yet: status "planned", which
 write_runs refuses, empty output, the model's revision, the run's
@@ -37,12 +41,13 @@ holds, comes with it.
 import hashlib
 import warnings
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from pushlab.models.registry import REGISTRY, ModelSpec
 from pushlab.prompts import read_prompt_set
+from pushlab.runs.conditions import MOST_RUNS
 from pushlab.runs.spec import Condition, ExperimentSpec
 from pushlab.schedules.model import Schedule
 from pushlab.schedules.validation import ScheduleWarning, validate
@@ -53,8 +58,8 @@ from pushlab.units.neuron import NeuronUnit
 
 # The status of a run that has not run yet; write_runs saves only results.
 PLANNED = "planned"
-# The most runs an experiment can have: run IDs count with six digits.
-MOST_RUNS = 999_999
+
+T = TypeVar("T")
 
 
 class PlannedRun(NamedTuple):
@@ -77,7 +82,8 @@ class Expansion:
     spec_sha256 is the spec's hash and prompts_sha256 the prompt set file's.
     known_sha256 is units/known.csv's, which the controls avoid, or None
     when no condition has controls. warnings are validate()'s, each naming
-    its condition's schedule.
+    its condition's schedule, and one for each condition whose runs and
+    controls are split over batches.
     """
 
     spec_sha256: str
@@ -128,17 +134,24 @@ def _draw(
             "for; remove its controls"
         )
     taken = set(avoid) | set(units)
+    n = condition.controls
     for (name, layer), count in Counter((u.model_name, u.layer) for u in units).items():
-        used = {t.index for t in taken if (t.model_name, t.layer) == (name, layer)}
-        free, need = REGISTRY[name].mlp_size - len(used), condition.controls * count
-        if need > free:  # refused now, rather than after drawing all it can
+        size = REGISTRY[name].mlp_size
+        used = {
+            t.index
+            for t in taken
+            if (t.model_name, t.layer) == (name, layer) and t.index < size
+        }
+        if n * count > size - len(used):  # refused now, not after drawing all
+            what = "its 1 control needs" if n == 1 else f"its {n} controls need"
+            neurons = "1 neuron" if n * count == 1 else f"{n * count} neurons"
             raise ValueError(
-                f"condition {condition.label!r}: its {condition.controls} controls "
-                f"need {need} neurons of layer {layer} that are not known or "
-                f"pushed, and the layer has {free}"
+                f"condition {condition.label!r}: {what} {neurons} of layer {layer} "
+                f"besides the known and pushed ones, and the layer has "
+                f"{size - len(used)}"
             )
     drawn = []
-    for k in range(1, condition.controls + 1):
+    for k in range(1, n + 1):
         try:
             neurons = controls.random_controls(units, condition.control_seed, taken)
         except ValueError as error:
@@ -193,19 +206,56 @@ def _decoding(spec: ExperimentSpec) -> dict[str, Any]:
 
 
 def _known() -> tuple[frozenset[NeuronUnit], str]:
-    """The units in units/known.csv, and the file's hash."""
+    """The units in units/known.csv, and the hash of the file they came from."""
+    path = controls.KNOWN_UNITS_FILE
     try:
-        content = controls.KNOWN_UNITS_FILE.read_bytes()
-        return controls.known_units(), hashlib.sha256(content).hexdigest()
+        before = hashlib.sha256(path.read_bytes()).hexdigest()
+        units = controls.known_units()
+        after = hashlib.sha256(path.read_bytes()).hexdigest()
     except (OSError, ValueError) as error:
         raise ValueError(f"cannot read the known units: {error}") from None
+    if after != before:
+        raise ValueError(f"{path} changed while it was read; expand again")
+    return units, before
+
+
+def _pack(sets: Sequence[Sequence[T]], size: int) -> list[list[T]]:
+    """Consecutive sets of runs in batches of at most size, in order.
+
+    A set that does not fit in what is left of a batch starts the next one,
+    and one larger than size is cut into batches of size, its last part
+    left open for the sets after it.
+
+    Example:
+        >>> _pack([[1, 2, 3], [4, 5, 6], [7]], 5)
+        [[1, 2, 3], [4, 5, 6, 7]]
+        >>> _pack([[1], [2, 3, 4, 5, 6], [7]], 2)
+        [[1], [2, 3], [4, 5], [6, 7]]
+    """
+    batches: list[list[T]] = []
+    batch: list[T] = []
+    for runs in sets:
+        runs = list(runs)
+        if batch and len(batch) + len(runs) > size:
+            batches.append(batch)
+            batch = []
+        while len(runs) > size:
+            batches.append(runs[:size])
+            runs = runs[size:]
+        batch += runs
+        if len(batch) == size:
+            batches.append(batch)
+            batch = []
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 def expand(spec: ExperimentSpec) -> Expansion:
     """Every run the spec means, in order, after checking every condition.
 
-    A condition that validate() refuses, a prompt set that cannot be read,
-    more runs than MOST_RUNS, or controls that cannot be drawn raise
+    A prompt set that cannot be read, more runs than MOST_RUNS, a condition
+    that validate() refuses, or controls that cannot be drawn raise
     ValueError, before any run is made. Nothing loads a model.
 
     Example:
@@ -219,10 +269,6 @@ def expand(spec: ExperimentSpec) -> Expansion:
         ('pulse length=4', 2, 's2-pulse-lengths-000002')
     """
     model = REGISTRY[spec.model]
-    found: list[str] = []
-    for condition in spec.conditions:
-        for label, schedule in condition.points:
-            found += _checked(label, schedule, model, spec.max_new_tokens)
     path = spec.prompts_path
     try:
         prompt_set = read_prompt_set(path)
@@ -238,6 +284,10 @@ def expand(spec: ExperimentSpec) -> Expansion:
             f"it means {total:,} runs, more than the {MOST_RUNS:,} that six-digit "
             "run IDs can number; split it into smaller experiments"
         )
+    found: list[str] = []
+    for condition in spec.conditions:
+        for label, schedule in condition.points:
+            found += _checked(label, schedule, model, spec.max_new_tokens)
     swaps: dict[str, list[dict[NeuronUnit, NeuronUnit]]] = {}
     known_sha256 = None
     if any(condition.controls for condition in spec.conditions):
@@ -258,24 +308,33 @@ def expand(spec: ExperimentSpec) -> Expansion:
                         _checked(
                             label, _swapped(schedule, swap), model, spec.max_new_tokens
                         )
+            if 1 + condition.controls > spec.batch_size:
+                found.append(
+                    f"condition {condition.label!r}: a run and its "
+                    f"{condition.controls} controls are {1 + condition.controls} "
+                    f"runs, more than a batch of {spec.batch_size}, so they are split "
+                    "over batches of other shapes, which can round them differently"
+                )
 
     model_name = f"{spec.model}@{model.revision}"
     runs: list[PlannedRun] = []
     batch = 0
     for prompt_id in prompt_set.prompt_ids:
         for seed in spec.seeds:
-            # (condition, control, stored schedule, control_of) of each run.
-            group: list[tuple[str, int, list[dict[str, Any]], str]] = []
+            # Each run with its controls: (condition, control, schedule, control_of).
+            sets: list[list[tuple[str, int, list[dict[str, Any]], str]]] = []
+            planned = len(runs)
             for condition in spec.conditions:
                 for label, schedule in condition.points:
-                    own = make_run_id(spec.name, len(runs) + len(group) + 1)
-                    group.append((label, 0, _stored(schedule, None, None), ""))
+                    own = make_run_id(spec.name, planned + 1)
+                    together = [(label, 0, _stored(schedule, None, None), "")]
                     for k, swap in enumerate(swaps.get(condition.label, []), 1):
                         stored = _stored(schedule, swap, condition.control_seed)
-                        group.append((label, k, stored, own))
-            for first in range(0, len(group), spec.batch_size):
+                        together.append((label, k, stored, own))
+                    sets.append(together)
+                    planned += len(together)
+            for rows in _pack(sets, spec.batch_size):
                 batch += 1
-                rows = group[first : first + spec.batch_size]
                 for row, (label, control, stored, control_of) in enumerate(rows):
                     record = RunRecord(
                         run_id=make_run_id(spec.name, len(runs) + 1),

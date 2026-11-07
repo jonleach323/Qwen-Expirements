@@ -33,6 +33,7 @@ from pushlab.models.registry import REGISTRY
 from pushlab.runs.conditions import (
     Condition,
     condition_from_mapping,
+    not_text,
     refuse_unknown_keys,
 )
 from pushlab.schedules.yaml_io import to_mapping as schedule_mapping
@@ -234,11 +235,10 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
     if missing := [key for key in SPEC_KEYS if key not in data]:
         raise ValueError(f"the experiment needs {', '.join(missing)}")
     name, model, prompts = data["name"], data["model"], data["prompts"]
+    if name is None:
+        raise ValueError("the experiment needs a name, such as pulse-lengths")
     if not isinstance(name, str):
-        raise ValueError(
-            f"name must be text, such as pulse-lengths, but YAML read {name!r}; "
-            "put it in quotes"
-        )
+        raise ValueError(not_text("name", name, "pulse-lengths"))
     if not EXPERIMENT_NAME.fullmatch(name):
         raise ValueError(
             "name must be lowercase letters and digits joined by hyphens, such as "

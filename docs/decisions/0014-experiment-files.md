@@ -52,12 +52,16 @@ of a shape's params as lists; every combination is a point, the first
 param changing slowest, labelled `pulse length=16 alpha=-1.0`. A dose's
 value is labelled as the float its schedule holds, so `alpha: [1, -1]`
 and `alpha: [1.0, -1.0]` give the same labels, and true, false and null
-are written as YAML writes them. Each schedule is named after its
+are written as YAML writes them; two points with one label, such as two
+doses that are one float, are refused. Each schedule is named after its
 condition. A problem is a ValueError naming the setting, the condition by
-its place and label, and with `read_spec` the file. A condition that asks
-for controls but pushes nothing is refused here, before any model is
-involved. The classes check nothing themselves: a spec built in code
-skips these checks.
+its place and label, and with `read_spec` the file. A missing name or
+label is called missing, and one that YAML read as a number, true or
+false comes with a hint to quote it. A condition that asks for controls
+but pushes nothing is refused here, before any model is involved, and so
+is a grid whose points alone would need more runs than six-digit IDs can
+number, before its schedules are built. The classes check nothing
+themselves: a spec built in code skips these checks.
 
 **The hash.** `spec.sha256` is the SHA-256 of `spec.to_mapping()` as JSON
 with sorted keys: every setting, with each condition's schedules written
@@ -75,7 +79,8 @@ nested in that order: every run of the first prompt first, its first seed
 first, and within a seed the conditions in the file's order, each point's
 own run followed by its controls. IDs count up from `<name>-000001` in
 that order. An experiment of more than 999,999 runs, which six digits
-cannot number, is refused before any control is drawn.
+cannot number, is refused once the prompt set is read, before any
+schedule is checked or control drawn.
 
 **Controls.** A condition with `controls: n` and `control_seed: s` draws n
 sets of neurons with `random_controls(units, s, avoid)`: units are the
@@ -92,14 +97,19 @@ run it mirrors, and `control_of` names that run. This changes decision
 0010, where `pushlab steer --control random` put the control seed in the
 seed field: here the seed field is always the sampling seed.
 
-With greedy decoding, a control and its run then differ only in the
-neurons pushed. With sampling they do not yet: `generate` seeds each
-row's random numbers from the batch's seed and the row's place in the
-batch (decision 0009), and a control sits in another row than its run,
-so it draws other numbers as well. Decision 0009 meant S2's runs to seed
-their own rows; see Consequences. The controls also depend on
-`units/known.csv`, so the expansion keeps its hash, `known_sha256` (None
-when no condition has controls), and `--summary` shows it.
+A control runs in the same batch as the run it mirrors (Batches, below).
+With greedy decoding they then differ only in the neurons pushed. With
+sampling they do not yet: `generate` seeds each row's random numbers from
+the batch's seed and the row's place in the batch (decision 0009), and a
+control sits in another row of the batch, so it draws other numbers as
+well. Every batch starts at row 0, so the same row of each prompt's
+batches draws the same numbers, tying those prompts' samples together.
+And where a run and its controls are split over batches, control k can
+land in its run's row and share its numbers. Decision 0009 meant S2's
+runs to seed their own rows; see Consequences. The controls also depend
+on `units/known.csv`, so the expansion keeps its hash, `known_sha256`
+(None when no condition has controls; refused if the file changes while
+it is read), and `--summary` shows it.
 
 **Validation.** Before any run is made, every point's schedule and every
 control's pass `validate(schedule, REGISTRY[model], max_new_tokens)`, at
@@ -112,13 +122,16 @@ condition's point.
 
 **Batches.** In run order, a batch holds runs of one prompt and one seed,
 at most `batch_size`: one prompt, so no row is padded, and one seed,
-since `generate` draws a batch's samples from one seed. `batch_key` is
-`b<batch>:<row>`, batches counted from `b000001` over the experiment. A
-point's own run and its controls are neighbours, so they share a batch
-unless a batch boundary falls between them. The cost: a prompt and seed
-with fewer runs than `batch_size` make a short batch, so an experiment of
-one condition without controls runs one row at a time. `--summary` shows
-the batches' sizes.
+since `generate` draws a batch's samples from one seed. A point's own run
+and its controls stay in one batch, since a batch's shape changes how
+bfloat16 rounds its arithmetic (decision 0009): when they do not fit in
+what is left of a batch, they start the next one. When they are more
+than `batch_size`, they are split, and `Expansion.warnings` says so for
+their condition. `batch_key` is `b<batch>:<row>`, batches counted from
+`b000001` over the experiment. The cost: a prompt and seed with fewer
+runs than `batch_size` make a short batch, as does a set that does not
+fit, so an experiment of one schedule without controls runs one row at a
+time. `--summary` shows the batches' sizes.
 
 **Planned runs.** `expand(spec)` returns an Expansion: `spec_sha256`,
 `prompts_sha256`, `known_sha256`, `runs` and `warnings`. Each run is a
@@ -146,17 +159,20 @@ controls keep their run's timing and doses bit for bit, name the unit
 they replace, stay in its layers, are five different neurons per unit
 for five controls, skip `units/known.csv` (whatever it lists, its hash
 changing with it) and units other conditions push, and a seed's draws are
-pinned; batches hold one prompt and seed and at most batch_size runs; a
-layer out of range, another model's unit and a push over the ceiling
-stop expansion naming the condition, unless the condition allows the
-push; so do more runs than IDs can number, more controls than a layer
-has left, and an unreadable prompt set or known units; a planned record
-is refused by `write_runs` until its status is a result's; 48 refusals
-of the text name their setting or condition; 20 changes of one setting
-each change the hash, while comments, key order, 1 against 1.0 and a
-shape against its segments do not, and a grid's key order does; the
-example file's hash is pinned; and the command's help, list, quoting,
-summary, warnings and refusals.
+pinned; batches hold one prompt and seed and at most batch_size runs,
+keep every control in its run's batch, and split a run and controls too
+many for one batch with a warning; a layer out of range, another model's
+unit and a push over the ceiling stop expansion naming the condition,
+unless the condition allows the push; so do more runs than IDs can
+number (before any schedule is checked), more controls than a layer has
+left (in the singular for one), an unreadable prompt set, and known
+units that cannot be read or change while read; a planned record is
+refused by `write_runs` until its status is a result's; 54 refusals of
+the text name their setting or condition; 20 changes of one setting each
+change the hash, while comments, key order, 1 against 1.0 (for every
+dose param in a grid too) and a shape against its segments do not, and a
+grid's key order does; the example file's hash is pinned; and the
+command's help, list, quoting, summary, warnings and refusals.
 
 ## Why this shape
 
@@ -182,12 +198,15 @@ summary, warnings and refusals.
   batch: each batch has one prompt and one seed. It must store each
   run's condition label, which no RunRecord field holds, and hold the
   experiment to `max_gpu_hours`, which expand only records.
-- For sampled experiments the runner should seed each row from its run,
-  not its place in the batch, as decision 0009 planned: then a run and
-  its controls draw the same random numbers and differ only in the
-  neurons, and a run's reply no longer depends on its row. Once rows
-  seed themselves, a batch could also hold several prompts and seeds,
-  which would fill the short batches above.
+- For sampled experiments the runner should seed each row from its
+  run's seed and prompt, not its place in the batch, as decision 0009
+  planned: for example the seed mixed with the prompt's ID, as
+  `row_seed` mixes in a place. Then a run and its controls, and every
+  condition of one prompt, draw the same random numbers and differ only
+  in what is pushed, different prompts stay independent, and a reply no
+  longer depends on its row. Once rows seed themselves, a batch could
+  also hold several prompts and seeds, which would fill the short
+  batches above.
 - The controls depend on `units/known.csv` as well as the spec: a unit
   added there can change which neurons later controls draw. The code
   commit pins that file, and `known_sha256` shows that it changed.

@@ -10,6 +10,7 @@ control_seed by pushlab.runs.expand. experiments/README.md has the format.
 """
 
 import itertools
+import math
 import numbers
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -29,10 +30,28 @@ CONDITION_KEYS = (
     "controls",
     "control_seed",
 )
+# The most runs an experiment can have: run IDs count with six digits.
+MOST_RUNS = 999_999
 
 
 def _is_whole(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def not_text(what: str, value: object, example: str) -> str:
+    """Why value is not the text it should be, with a hint to quote a number
+    or true or false that YAML read as one.
+
+    Example:
+        >>> not_text("label", 16, "pulse-16")
+        'label must be text, such as pulse-16, but YAML read 16; put it in quotes'
+    """
+    if isinstance(value, numbers.Real):  # true and false too
+        return (
+            f"{what} must be text, such as {example}, but YAML read {value!r}; "
+            "put it in quotes"
+        )
+    return f"{what} must be text, such as {example}, not {value!r}"
 
 
 def refuse_unknown_keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
@@ -87,10 +106,11 @@ def _value_text(param: object, value: object) -> str:
 
 
 def _grid_points(
-    label: str, schedule: dict[str, Any], grid: object
+    label: str, schedule: dict[str, Any], grid: object, runs_per_point: int
 ) -> tuple[tuple[str, Schedule], ...]:
     """One (label, schedule) pair per combination of grid values, the first
-    param varying slowest."""
+    param varying slowest. Each point makes runs_per_point runs for every
+    prompt and seed: a grid too large to number them is refused unbuilt."""
     if "shape" not in schedule:
         segments = ", not with segments" if "segments" in schedule else ""
         raise ValueError(f"a grid goes with a shape and its params{segments}")
@@ -116,14 +136,23 @@ def _grid_points(
         for i, value in enumerate(values):
             if any(value == earlier for earlier in values[:i]):
                 raise ValueError(f"grid {key} repeats {value!r}")
-    points = []
+    count = math.prod(len(values) for values in grid.values())
+    if count * runs_per_point > MOST_RUNS:
+        raise ValueError(
+            f"its grid makes {count:,} schedules, so {count * runs_per_point:,} "
+            f"runs for each prompt and seed, more than the {MOST_RUNS:,} that "
+            "six-digit run IDs can number"
+        )
+    points: dict[str, Schedule] = {}
     for values in itertools.product(*grid.values()):
         point = dict(zip(grid, values, strict=True))
         mapping = schedule | {"name": label, "params": {**params, **point}}
         built = from_mapping(mapping)  # before the label, which needs good values
         text = "".join(f" {key}={_value_text(key, v)}" for key, v in point.items())
-        points.append((label + text, built))
-    return tuple(points)
+        if label + text in points:  # two doses that are one float
+            raise ValueError(f"two grid points are both {label + text!r}")
+        points[label + text] = built
+    return tuple(points.items())
 
 
 def condition_from_mapping(data: object, i: int) -> Condition:
@@ -154,14 +183,11 @@ def condition_from_mapping(data: object, i: int) -> Condition:
             f"conditions[{i}] must be a mapping with a label and a schedule, "
             f"not {data!r}"
         )
-    if "label" not in data:
+    label = data.get("label")
+    if label is None:
         raise ValueError(f"conditions[{i}] needs a label, such as pulse-16")
-    label = data["label"]
     if not isinstance(label, str):
-        raise ValueError(
-            f"conditions[{i}]: label must be text, such as pulse-16, but YAML read "
-            f"{label!r}; put it in quotes"
-        )
+        raise ValueError(f"conditions[{i}]: {not_text('label', label, 'pulse-16')}")
     if not SCHEDULE_NAME.fullmatch(label):
         raise ValueError(
             f"conditions[{i}]: label must be lowercase letters and digits joined "
@@ -194,7 +220,7 @@ def condition_from_mapping(data: object, i: int) -> Condition:
         schedule["allow_over_ceiling"] = data["allow_over_ceiling"]
     try:
         if "grid" in data:
-            points = _grid_points(label, schedule, data["grid"])
+            points = _grid_points(label, schedule, data["grid"], 1 + controls)
         else:
             points = ((label, from_mapping(schedule | {"name": label})),)
     except ValueError as error:
