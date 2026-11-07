@@ -219,6 +219,31 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
     )
 
 
+def _add_expand(commands: argparse._SubParsersAction) -> None:
+    expand = commands.add_parser(
+        "expand",
+        help="list the runs an experiment file means, without running anything",
+        description="Read an experiment file (experiments/README.md has the "
+        "format), check every condition's schedule against the model, draw the "
+        "random controls and read the prompt set, then print every run the file "
+        "means, one per line: its ID, condition, control number (0 for the "
+        "condition's own run), prompt, seed, batch and, for a control, the run it "
+        "mirrors. With --summary, print the settings and how many runs each "
+        "condition gives instead. Nothing is run and no model is loaded.",
+    )
+    expand.add_argument(
+        "spec",
+        type=Path,
+        metavar="SPEC",
+        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
+    )
+    expand.add_argument(
+        "--summary",
+        action="store_true",
+        help="print how many runs each condition gives, rather than every run",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The pushlab command's arguments, with one subparser per subcommand.
 
@@ -238,4 +263,5 @@ def build_parser() -> argparse.ArgumentParser:
     _add_amount(commands)
     _add_steer(commands, models)
     _add_report(commands)
+    _add_expand(commands)
     return parser

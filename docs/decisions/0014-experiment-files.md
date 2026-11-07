@@ -1,0 +1,162 @@
+# 0014: An experiment file expands into planned runs, in a fixed order, with matched controls
+
+Date: 2026-11-07 · Sprint: S2 · Status: accepted
+
+## Context
+
+- The development plan's "5. runs" module expands one experiment file
+  into individual runs, `expand(spec) -> [RunRecord]`, with deterministic
+  run IDs and random control neurons "drawn from the same layer with a
+  seeded generator, excluding known units".
+- The S2 prompt pasted for this step ("prompt 3 of 7") asked for:
+  `experiments/README.md` with the format and an example;
+  `src/pushlab/runs/spec.py`, an ExperimentSpec read from YAML with a
+  name, model, prompts file, decoding settings, seeds, max_new_tokens,
+  batch size, max_gpu_hours and conditions, each a label and a schedule
+  written out or given as a shape with a parameter grid, any of them with
+  n random controls drawn from a seed and never from `units/known.csv`;
+  `src/pushlab/runs/expand.py`, `expand(spec)` returning RunRecords, one
+  per condition, control, prompt and seed, with IDs
+  `<experiment>-<6-digit counter>` in a fixed order and a hash of the
+  whole spec; and `pushlab expand <spec> --summary`. The same spec must
+  always give the same runs, IDs and controls, and every condition must
+  pass `validate()` before any run is made.
+- It is not `docs/prompts/S2/06-experiment-files.md` ("prompt 6 of 9"),
+  which also asks for `pushlab run --dry-run`, a speed and price in the
+  file, a cost estimate and the 1,000-run kill-and-resume experiment.
+  None of those is in this step.
+
+## Decision
+
+**The file.** `experiments/README.md` describes it and shows
+`experiments/p0/s2_pulse_lengths.yaml`, which a test keeps identical to
+the README's example. Every key is required: `name`, `model` (a registry
+model; the test model is refused), `prompts` (a path from the
+repository's root), `decoding` (`strategy` greedy or sample; sampling
+needs a `temperature` and takes a `top_p`, default 1; `dtype` bfloat16,
+the default, or float32), `seeds` (different whole numbers; greedy
+decoding takes exactly one), `max_new_tokens`, `batch_size`,
+`max_gpu_hours` and `conditions`. A condition has a `label` (the form of a
+schedule name, different from every other condition's) and a schedule as
+schedule files write one (decision 0012): `segments`, or `shape` and
+`params`. It may add `grid`, `allow_over_ceiling`, `controls` and
+`control_seed`. Unknown keys are refused at every level, and the text is
+read with `load_yaml` (YAML 1.2 numbers, a key given twice refused).
+Thinking stays off: the file has no key for it until thinking mode.
+
+**The spec** (`pushlab.runs.spec`, `pushlab.runs.conditions`).
+`read_spec(path)`, `spec_from_yaml(text)` and `spec_from_mapping(data)`
+return an ExperimentSpec; its `conditions` are Conditions, each with
+`points`, one `(label, schedule)` pair per grid value. A grid gives some
+of a shape's params as lists; every combination is a point, the first
+param changing slowest, labelled `pulse length=16 alpha=-1.0`. Each
+schedule is named after its condition. A problem is a ValueError naming
+the setting, the condition by its place and label, and with `read_spec`
+the file.
+
+**The hash.** `spec.sha256` is the SHA-256 of `spec.to_mapping()` as JSON
+with sorted keys: every setting, with each condition's schedules written
+out as segments. Comments, spacing, the order of keys in a mapping, 1
+against 1.0, and a shape against the same segments written out give the
+same hash; any setting that changes the runs, the batch size and
+max_gpu_hours change it, and so does the order of seeds, conditions and
+grid values. The prompt set's own hash, of the file's bytes, comes with
+the expansion as `prompts_sha256`.
+
+**Order and IDs.** One run per prompt, seed, condition point and control,
+nested in that order: every run of the first prompt first, its first seed
+first, and within a seed the conditions in the file's order, each point's
+own run followed by its controls. IDs count up from `<name>-000001` in
+that order.
+
+**Controls.** A condition with `controls: n` and `control_seed: s` draws n
+sets of neurons with `random_controls(units, s, avoid)`: units are the
+condition's units over all its points, and avoid is `units/known.csv`,
+every unit any condition of the experiment pushes, and the condition's
+earlier controls. So control k is each unit's k-th distinct draw, and it
+pushes the same neurons for every prompt, seed and grid value. A control
+run's schedule is its point's schedule with each unit swapped, at the
+same doses on the same passes; every stored segment carries
+`control_for` (the unit replaced) and `control_seed`, both None for a
+condition's own run. A control run's `seed` is the sampling seed of the
+run it mirrors, and `control_of` names that run. This changes decision
+0010, where `pushlab steer --control random` put the control seed in the
+seed field: here the seed field is always the sampling seed, so a control
+and its run differ only in the neurons pushed. A condition that pushes
+nothing has no controls.
+
+**Validation.** Before any run is made, every point's schedule and every
+control's pass `validate(schedule, REGISTRY[model], max_new_tokens)`, at
+the default ceiling of 1.4 unless the condition sets
+`allow_over_ceiling: true`. This is the check decision 0013 left to
+whatever runs schedule files. The first failure stops expansion with
+`condition '<label>': schedule '<name>' is refused:` and the rules
+broken. Warnings come back in `Expansion.warnings`, each naming its
+condition.
+
+**Batches.** In run order, a batch holds runs of one prompt and one seed,
+at most `batch_size`: one prompt, so no row is padded, and one seed,
+since `generate` draws a batch's samples from one seed. `batch_key` is
+`b<batch>:<row>`, batches counted from `b000001` over the experiment. A
+point's own run and its controls are neighbours, so they share a batch
+unless a batch boundary falls between them.
+
+**Planned runs.** `expand(spec)` returns an Expansion: `spec_sha256`,
+`prompts_sha256`, `runs` and `warnings`. Each run is a PlannedRun:
+`condition` (the point's label), `control` (0, or k for control k) and
+`record`, a RunRecord with no reply: empty `output_text` and
+`output_tokens`, and the status `planned`. Its `model` is the registry
+name and revision, its `decoding` S1's four keys plus `temperature` and
+`top_p` when sampling, and its `schedule` the stored segments above.
+
+**The command.** `pushlab expand SPEC` prints one tab-separated line per
+run: ID, condition, control, prompt, seed, batch key and control_of.
+`--summary` prints the settings, both hashes, the batches and a table of
+own runs, controls and totals per condition point. Warnings go to
+stderr; a problem goes there too, with the file's name, and exit status
+1. It loads no model.
+
+**The checks.** On the CPU: three pulse lengths, two prompts and two
+seeds give 12 runs and 24 controls with the same IDs, records and hashes
+on every expansion; the order is prompt, seed, condition, control;
+controls keep their run's timing and doses bit for bit, stay in its
+layers, are five different neurons per unit for five controls, and skip
+`units/known.csv` (whatever it lists) and units other conditions push;
+batches hold one prompt and seed and at most batch_size runs; a layer out
+of range and a push over the ceiling stop expansion naming the condition;
+a planned record is refused by `write_runs` until it has a reply; 33
+refusals of the file name their setting; 20 changes of one setting each
+change the hash, and comments and key order do not; and the command's
+help, list, summary, warnings and refusals.
+
+## Why this shape
+
+- **RunRecords with their labels beside them,** rather than a planned-run
+  type of its own: the prompt asked for RunRecords, and a planned record
+  becomes the result record by filling in its reply. The point's label
+  has no RunRecord field, and adding one would change the runs table's
+  schema, so it comes beside the record.
+- **The status `planned`,** rather than `ok` with no reply: `write_runs`
+  keeps refusing it, so a planned run is never saved as a result.
+- **A hash of the settings, not of the file's bytes:** it changes when a
+  setting does and not when a comment does. The manifest can still keep
+  the bytes' hash, as the baseline's `experiment_sha256` does.
+- **Controls that avoid every unit the experiment pushes:** a control
+  stands for an ordinary neuron, and a neuron under study is not one.
+- **The same control neurons for every point:** a pulse of 4 tokens and
+  one of 64 are then compared on the same random neuron, as their own
+  runs are on the same real one.
+
+## Consequences
+
+- The runner (`pushlab run`, a later step) can run the expansion batch by
+  batch: each batch has one prompt and one seed. It must store each
+  run's condition label, which no RunRecord field holds, and hold the
+  experiment to `max_gpu_hours`, which expand only records.
+- The controls depend on `units/known.csv` as well as the spec: a unit
+  added there can change which neurons later controls draw. The code
+  commit pins that file.
+- `qwen3-8b` still has no pinned revision, so its planned runs record
+  `qwen3-8b@main`; pin it before its first run.
+- `pushlab steer` keeps decision 0010's records, the control seed in the
+  seed field. CLAUDE.md lists `pushlab expand`.

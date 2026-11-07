@@ -17,8 +17,10 @@ manifest; `pushlab steer` stores pushed replies to a whole prompt set, and
 say when each push is on and how strong it is at every reply token, can be
 built, written as YAML and checked without loading a model
 (`pushlab.schedules`, decision 0012), and `generate` follows one per
-prompt, each row of a batch with its own (decision 0013). Running
-experiments from YAML files comes in later sprints.
+prompt, each row of a batch with its own (decision 0013). An experiment
+file in `experiments/` describes a whole experiment, and `pushlab expand`
+lists every run it means without running anything (decision 0014).
+Running those runs comes in a later step.
 
 ## Getting started
 

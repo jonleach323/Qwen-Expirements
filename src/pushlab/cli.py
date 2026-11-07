@@ -10,8 +10,10 @@ of a dose, and saves it in calibration/ (pushlab.units.calibrate).
 `pushlab amount` prints what a dose adds to a neuron
 (pushlab.units.amount_command), `pushlab steer` saves pushed replies to a
 prompt set (pushlab.runs.steer), and `pushlab report` lays run folders'
-replies side by side (pushlab.analysis.report). The options of every
-subcommand are in pushlab.cli_parser.
+replies side by side (pushlab.analysis.report). `pushlab expand` lists the
+runs an experiment file means without running them
+(pushlab.runs.expand_command). The options of every subcommand are in
+pushlab.cli_parser.
 """
 
 import hashlib
@@ -260,6 +262,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from pushlab.analysis.report import run_report
 
         return run_report(args.runs, args.out, args.overwrite)
+    if args.command == "expand":
+        from pushlab.runs.expand_command import run_expand
+
+        return run_expand(args.spec, args.summary)
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite
     )

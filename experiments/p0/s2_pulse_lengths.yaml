@@ -1,0 +1,26 @@
+# Sprint 2's example experiment: the hostile neuron of the evil-Qwen pair
+# pushed for 4, 16 or 64 reply tokens, against no push and against random
+# neurons of its layer. `uv run pushlab expand
+# experiments/p0/s2_pulse_lengths.yaml --summary` counts its runs; nothing
+# runs it yet.
+name: s2-pulse-lengths
+model: qwen3.5-4b
+prompts: prompts/smoke.jsonl
+# Greedy decoding draws no random numbers, so it takes one seed.
+decoding: {strategy: greedy}
+seeds: [0]
+max_new_tokens: 96
+batch_size: 10
+max_gpu_hours: 0.25
+conditions:
+  # No push: what every pulse is compared with.
+  - label: none
+    segments: []
+  # +1 on reply tokens 0 to length - 1, so a pulse first changes token 1.
+  - label: pulse
+    shape: pulse
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0}
+    grid: {length: [4, 16, 64]}
+    # Each pulse again on two random neurons of layer 14, as matched controls.
+    controls: 2
+    control_seed: 0
