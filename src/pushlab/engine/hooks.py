@@ -47,14 +47,14 @@ def _table_hook(
                 f"the dose table covers {_reach(len(table.busy))}, not reply token "
                 f"{state.reply_token}; compile it with a larger max_new_tokens"
             )
-        if not table.busy[p]:
-            return None  # nothing pushed in this layer: the input passes on untouched
         values = args[0]
         rows = table.amounts.shape[1]
         if values.dim() == 3 and values.shape[0] != rows:
             raise ValueError(
                 f"the dose table has {rows} rows, but this pass has {values.shape[0]}"
             )
+        if not table.busy[p]:
+            return None  # nothing pushed in this layer: the input passes on untouched
         compute = torch.promote_types(values.dtype, torch.float32)
         key = (values.device, compute)
         if key not in moved:

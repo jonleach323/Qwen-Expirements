@@ -226,9 +226,9 @@ def add_amounts(
     """A copy of down_proj's input with each row's amounts added to its neurons.
 
     values is (rows, positions, neurons of the MLP). neurons holds the K
-    pushed neurons' indices; amounts (rows, K) what each row adds to each,
-    and active (rows, K) which of them it pushes on this pass. Either may
-    have one row that every row shares. A pushed value and its amount are
+    pushed neurons' indices, each once; amounts (rows, K) what each row adds
+    to each, and active (rows, K) which of them it pushes on this pass. Both
+    may instead have one row, which every row shares. A pushed value and its amount are
     added in float32 (float64 for a float64 model) and rounded once to the
     activations' type (decision 0008); a neuron pushed at 0 still goes
     through the add. Everything else, padding positions included, keeps
@@ -252,10 +252,24 @@ def add_amounts(
             "expected (rows, positions, neurons)"
         )
     rows, positions = values.shape[0], values.shape[1]
-    if amounts.shape[0] not in (1, rows) or active.shape != amounts.shape:
+    # Shapes only: reading the indices themselves would make the GPU wait.
+    if neurons.dim() != 1:
         raise ValueError(
-            f"amounts for {amounts.shape[0]} rows and an active mask of "
-            f"{tuple(active.shape)}, but this pass has {rows} rows"
+            f"neurons must be one row of indices, not {tuple(neurons.shape)}"
+        )
+    if amounts.dim() != 2 or amounts.shape[1] != len(neurons):
+        raise ValueError(
+            f"amounts must be (rows, {len(neurons)}), one per neuron, not "
+            f"{tuple(amounts.shape)}"
+        )
+    if amounts.shape[0] not in (1, rows):
+        raise ValueError(
+            f"amounts for {amounts.shape[0]} rows, but this pass has {rows} rows"
+        )
+    if active.shape != amounts.shape:
+        raise ValueError(
+            f"the active mask is {tuple(active.shape)}, but the amounts are "
+            f"{tuple(amounts.shape)}"
         )
     real = torch.ones(rows, positions, dtype=torch.bool, device=values.device)
     padding = _checked_padding(padding)  # also when set directly

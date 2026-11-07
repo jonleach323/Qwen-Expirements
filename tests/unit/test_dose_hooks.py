@@ -5,6 +5,7 @@ every pass of a padded batch whose rows follow different schedules.
 """
 
 import doctest
+import itertools
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -16,12 +17,12 @@ from pushlab.engine import hooks
 from pushlab.engine.decoding import Decoding
 from pushlab.engine.generate import generate
 from pushlab.engine.hooks import doses_active
-from pushlab.engine.push import StepState, add_amounts
+from pushlab.engine.push import StepState
 from pushlab.models.chat import chat_prompt_ids
 from pushlab.models.discovery import find_mlp_modules
 from pushlab.schedules.compile import compile
 from pushlab.schedules.model import Schedule
-from pushlab.schedules.shapes import alternate, constant, handoff, pulse, ramp
+from pushlab.schedules.shapes import alternate, constant, handoff, onset, pulse, ramp
 from pushlab.units.dose import amount
 from pushlab.units.neuron import NeuronUnit
 
@@ -93,19 +94,16 @@ def _s1_amounts(
     return totals
 
 
-@pytest.mark.parametrize("model_name", ["tiny_model", "tiny_vl_model"])
-def test_each_row_gets_exactly_its_own_amounts_on_every_pass(
-    model_name: str,
-    request: pytest.FixtureRequest,
-    tiny_tokenizer: PreTrainedTokenizerBase,
-) -> None:
-    model, (a, b, c), norms = _case(model_name, request)
-    schedules = _schedules(a, b, c)
-    with _probe(model, [a.layer, c.layer]) as seen:
-        replies = generate(
-            model, tiny_tokenizer, PROMPTS, [], GREEDY, norms, schedules=schedules
-        )
-    lengths = [len(chat_prompt_ids(tiny_tokenizer, p, thinking=False)) for p in PROMPTS]
+def _check_probed(
+    seen: dict[int, list],
+    replies: list,
+    schedules: list[Schedule],
+    lengths: list[int],
+    model: PreTrainedModel,
+    norms: list[float],
+) -> set[int]:
+    """Check that each probed pass got exactly each running row's amounts at
+    its real positions, and nothing else; return the rows that were pushed."""
     pushed_rows: set[int] = set()
     for layer, passes in seen.items():
         assert len(passes) == max(len(reply.token_ids) for reply in replies)
@@ -124,7 +122,72 @@ def test_each_row_gets_exactly_its_own_amounts_on_every_pass(
                         expected[row, first:, unit.index] = added.to(before.dtype)
                         pushed_rows.add(row)
             assert torch.equal(after, expected), (layer, p)
-    assert pushed_rows == {1, 2, 3}  # every row with a push was pushed somewhere
+    return pushed_rows
+
+
+@pytest.mark.parametrize("model_name", ["tiny_model", "tiny_vl_model"])
+def test_each_row_gets_exactly_its_own_amounts_on_every_pass(
+    model_name: str,
+    request: pytest.FixtureRequest,
+    tiny_tokenizer: PreTrainedTokenizerBase,
+) -> None:
+    model, (a, b, c), norms = _case(model_name, request)
+    schedules = _schedules(a, b, c)
+    with _probe(model, [a.layer, c.layer]) as seen:
+        replies = generate(
+            model, tiny_tokenizer, PROMPTS, [], GREEDY, norms, schedules=schedules
+        )
+    lengths = [len(chat_prompt_ids(tiny_tokenizer, p, thinking=False)) for p in PROMPTS]
+    pushed = _check_probed(seen, replies, schedules, lengths, model, norms)
+    assert pushed == {1, 2, 3}  # every row with a push was pushed somewhere
+
+
+@contextmanager
+def _puppet(model: PreTrainedModel, scripts: list[list[int]]) -> Iterator[None]:
+    """Make pass p choose scripts[row][p] for every row, as test_generate_stops does."""
+    passes = itertools.count()
+
+    def choose(module: object, inputs: object, scores: torch.Tensor) -> torch.Tensor:
+        p = next(passes)
+        chosen = torch.zeros_like(scores)
+        for row, script in enumerate(scripts):
+            chosen[row, -1, script[min(p, len(script) - 1)]] = 1.0
+        return chosen
+
+    handle = model.lm_head.register_forward_hook(choose)
+    try:
+        yield
+    finally:
+        handle.remove()
+
+
+def test_rows_that_finish_early_are_never_pushed_again(
+    tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
+) -> None:
+    (a, b, c), norms = (
+        [NeuronUnit.parse(u) for u in ("tiny:L1:N5", "tiny:L1:N9", "tiny:L0:N3")],
+        [7.0, 10.0],
+    )
+    schedules = _schedules(a, b, c)
+    end = tiny_tokenizer.eos_token_id
+    # Rows 0 and 2 end their turns after 2 and 4 tokens; rows 1 and 3 run on.
+    scripts = [[70, end], [71] * 10, [72, 73, 74, end], [75] * 10]
+    with _puppet(tiny_model, scripts), _probe(tiny_model, [1, 0]) as seen:
+        replies = generate(
+            tiny_model, tiny_tokenizer, PROMPTS, [], GREEDY, norms, schedules=schedules
+        )
+    assert [len(reply.token_ids) for reply in replies] == [2, 10, 4, 10]
+    lengths = [len(chat_prompt_ids(tiny_tokenizer, p, thinking=False)) for p in PROMPTS]
+    assert _check_probed(seen, replies, schedules, lengths, tiny_model, norms) == {
+        1,
+        2,
+        3,
+    }
+    # One record per token, and touched counts only the passes a row ran:
+    # row 2 (the handoff at 3) read tokens 0 to 2, all A's.
+    assert [len(reply.amounts) for reply in replies] == [2, 10, 4, 10]
+    assert replies[2].touched == (0, 3, 0)
+    assert replies[2].amounts[3] == ((a, amount(a, 1.0, tiny_model, norms)),)
 
 
 def test_a_pass_with_nothing_on_in_a_layer_leaves_its_input_alone(
@@ -165,6 +228,43 @@ def test_the_hooks_refuse_a_batch_of_another_size(tiny_model: PreTrainedModel) -
         state.at_prompt()
         with pytest.raises(ValueError, match="the dose table has 2 rows"):
             tiny_model(input_ids=torch.tensor([[5, 17, 42]]))
+
+
+def test_the_hooks_check_the_batch_size_on_every_pass(
+    tiny_model: PreTrainedModel,
+) -> None:
+    late = pulse(NeuronUnit("tiny", 1, 5), 1.0, 5, 2)  # nothing on the prompt pass
+    table = compile([late, late], tiny_model, [7.0, 10.0], 8)
+    state = StepState()
+    with doses_active(tiny_model, table, state), torch.no_grad():
+        state.at_prompt()
+        with pytest.raises(ValueError, match="the dose table has 2 rows"):
+            tiny_model(input_ids=torch.tensor([[5, 17, 42]]))
+
+
+def test_a_table_of_one_pass_covers_the_prompt_pass_alone(
+    tiny_model: PreTrainedModel,
+) -> None:
+    table = compile(
+        [constant(NeuronUnit("tiny", 1, 5), 1.0)], tiny_model, [7.0, 10.0], 1
+    )
+    state = StepState()
+    with doses_active(tiny_model, table, state), torch.no_grad():
+        state.at_reply_token(0)
+        with pytest.raises(ValueError, match="covers the prompt pass alone, not reply"):
+            tiny_model(input_ids=torch.tensor([[5]]))
+
+
+def test_the_hooks_refuse_a_model_without_the_tables_layer(
+    tiny_downloads: dict[str, object],
+    tiny_vl_model: PreTrainedModel,
+    tiny_model: PreTrainedModel,
+) -> None:
+    deep = onset(NeuronUnit("tiny-vl", 3, 5), 1.0, 0)  # tiny-vl has 4 layers, tiny 2
+    table = compile([deep], tiny_vl_model, [3.0, 5.0, 8.0, 13.0], 4)
+    with pytest.raises(ValueError, match="pushes layer 3, which this model lacks"):
+        with doses_active(tiny_model, table, StepState()):
+            pass
 
 
 def test_the_hooks_refuse_a_pass_past_the_table(tiny_model: PreTrainedModel) -> None:
@@ -210,53 +310,6 @@ def test_doses_active_needs_a_dose_table_and_a_step_state(
     with pytest.raises(ValueError, match="StepState"):
         with doses_active(tiny_model, table, None):  # type: ignore[arg-type]
             pass
-
-
-VALUES = torch.linspace(-1, 1, 2 * 5 * 8).bfloat16().reshape(2, 5, 8)
-NEURONS = torch.tensor([1, 6])
-
-
-def test_each_row_adds_its_own_amounts_never_rounded_first() -> None:
-    # 22.21 is no bfloat16 number: rounded first, it would be 22.25.
-    amounts = torch.tensor([[22.21, -3.3], [0.5, 7.77]], dtype=torch.float32)
-    active = torch.tensor([[True, True], [True, False]])
-    pushed = add_amounts(VALUES, NEURONS, amounts, active, None)
-    expected = VALUES.clone()
-    for row, column, value in [(0, 1, 22.21), (0, 6, -3.3), (1, 1, 0.5)]:
-        exact = VALUES[row, :, column].float() + torch.tensor(
-            value, dtype=torch.float32
-        )
-        expected[row, :, column] = exact.bfloat16()
-    assert torch.equal(pushed, expected)
-    assert torch.equal(VALUES, torch.linspace(-1, 1, 80).bfloat16().reshape(2, 5, 8))
-
-
-def test_what_is_not_pushed_keeps_every_bit_negative_zeros_too() -> None:
-    values = torch.full((2, 3, 4), -0.0)
-    amounts = torch.zeros(2, 1)
-    padding = torch.tensor([[True, False, False], [False, False, False]])
-    active = torch.tensor([[True], [False]])
-    pushed = add_amounts(values, torch.tensor([2]), amounts, active, padding)
-    signs = torch.signbit(pushed)
-    # Row 0's real positions went through the add, at 0: -0.0 + 0.0 is +0.0.
-    assert not signs[0, 1:, 2].any()
-    signs[0, 1:, 2] = True
-    assert signs.all()  # padding, row 1 and every other neuron kept -0.0
-
-
-@pytest.mark.parametrize(
-    "values, amounts, problem",
-    [
-        (VALUES[0], torch.zeros(2, 2), "expected \\(rows, positions, neurons\\)"),
-        (VALUES, torch.zeros(3, 2), "amounts for 3 rows"),
-    ],
-)
-def test_add_amounts_checks_its_shapes(
-    values: torch.Tensor, amounts: torch.Tensor, problem: str
-) -> None:
-    active = torch.ones_like(amounts, dtype=torch.bool)
-    with pytest.raises(ValueError, match=problem):
-        add_amounts(values, NEURONS, amounts, active, None)
 
 
 def test_doctests() -> None:

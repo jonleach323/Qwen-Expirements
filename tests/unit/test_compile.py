@@ -81,10 +81,37 @@ def test_overlapping_segments_of_one_unit_add_their_amounts(
     ]
 
 
+def test_amounts_are_summed_segment_by_segment_as_s1_sums_pushes(
+    tiny_model: PreTrainedModel,
+) -> None:
+    # Summing the doses first would round differently somewhere.
+    pairs = [(0.1, 0.2), (0.3, 0.6), (0.7, 0.1), (1.1, 0.2), (0.35, 0.95)]
+    one = amount(A, 1.0, tiny_model, NORMS)
+    differ = False
+    for x, y in pairs:
+        both = Schedule("x", [Segment(A, x, x), Segment(A, y, y)])
+        ((_, added),) = compile([both], tiny_model, NORMS, 4).amounts(0, 0)
+        assert added == amount(A, x, tiny_model, NORMS) + amount(
+            A, y, tiny_model, NORMS
+        )
+        differ = differ or added != (x + y) * one
+    assert differ
+
+
 def test_passes_are_the_prompt_pass_then_one_per_reply_token_read() -> None:
     assert [pass_index(None), pass_index(0), pass_index(7)] == [0, 1, 8]
-    with pytest.raises(ValueError, match="None for the prompt pass"):
-        pass_index(-1)
+    for wrong in (-1, True, 1.0, "0"):
+        with pytest.raises(ValueError, match="None for the prompt pass"):
+            pass_index(wrong)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("row", [-1, 6, True, 1.0])
+def test_amounts_names_a_row_of_the_table(
+    tiny_model: PreTrainedModel, row: object
+) -> None:
+    table = compile(SCHEDULES, tiny_model, NORMS, max_new_tokens=8)
+    with pytest.raises(ValueError, match="row must be 0 to 5"):
+        table.amounts(row, 0)  # type: ignore[arg-type]
 
 
 def test_the_table_holds_only_the_pushed_layers_and_neurons(
@@ -175,6 +202,11 @@ def test_compile_refuses_units_of_two_models(
     other = onset(NeuronUnit("tiny-lm", 1, 5), 1.0, 0)
     with pytest.raises(ValueError, match="more than one model: tiny, tiny-lm"):
         compile([pulse(A, 1.0, 0, 2), other], tiny_model, NORMS, 4)
+
+
+def test_compile_needs_the_model_itself() -> None:
+    with pytest.raises(ValueError, match="model must be the model itself"):
+        compile([pulse(A, 1.0, 0, 2)], "tiny", NORMS, 4)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

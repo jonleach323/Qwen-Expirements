@@ -303,6 +303,26 @@ def test_generate_refuses_schedules_it_cannot_follow(
         )
 
 
+def test_schedules_may_come_with_pushes_none(
+    tiny_model: PreTrainedModel, tiny_tokenizer: PreTrainedTokenizerBase
+) -> None:
+    schedules = [pulse(NeuronUnit("tiny", 1, 5), 1.0, 0, 2)]
+    with_none = generate(
+        tiny_model,
+        tiny_tokenizer,
+        ["Hi"],
+        None,
+        GREEDY,
+        [7.0, 10.0],
+        schedules=schedules,
+    )
+    assert with_none == generate(
+        tiny_model, tiny_tokenizer, ["Hi"], [], GREEDY, [7.0, 10.0], schedules=schedules
+    )
+    with pytest.raises(ValueError, match="pushes must be a list of Push records"):
+        generate(tiny_model, tiny_tokenizer, ["Hi"], "none", GREEDY)  # type: ignore[arg-type]
+
+
 def test_a_generation_still_takes_s1s_fields_alone() -> None:
     reply = Generation("Hi", (13048, 248046), "end_of_turn", (1,))
     assert reply.amounts == ()

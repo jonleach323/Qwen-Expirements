@@ -228,7 +228,7 @@ def generate(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     prompts: Sequence[str],
-    pushes: Sequence[Push],
+    pushes: Sequence[Push] | None,
     decoding: Decoding,
     norms: Sequence[float] | None = None,
     *,
@@ -246,7 +246,7 @@ def generate(
 
     pushes is S1's form: a list of Push that every prompt gets. schedules,
     the other form, gives each prompt its own Schedule, one per prompt and
-    in the same order, with pushes left empty. Either way the pushes are
+    in the same order, with pushes left empty ([] or None). Either way the pushes are
     compiled into one DoseTable (pushlab.schedules.compile), checked against
     the model, and each row adds only its own amounts. Each reply records
     the units and amounts behind every token (Generation.amounts).
@@ -275,7 +275,9 @@ def generate(
         ... )
     """
     prompts = _checked_prompts(prompts)
-    pushes = list(pushes)
+    if pushes is not None and not isinstance(pushes, list | tuple):
+        raise ValueError(f"pushes must be a list of Push records, not {pushes!r}")
+    pushes = list(pushes or [])
     if not isinstance(decoding, Decoding):
         raise ValueError(f"decoding must be a Decoding, not {type(decoding).__name__}")
     if not isinstance(group_by_length, bool):

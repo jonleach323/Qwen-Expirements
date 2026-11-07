@@ -33,7 +33,13 @@ from pushlab.units.neuron import NeuronUnit
 
 
 class UnitAmount(NamedTuple):
-    """A unit pushed on a pass, and the amount added to its neuron there."""
+    """A unit pushed on a pass, and the amount added to its neuron there.
+
+    Example:
+        >>> pushed = UnitAmount(NeuronUnit("tiny", 1, 5), 5.0)
+        >>> str(pushed.unit), pushed.amount
+        ('tiny:L1:N5', 5.0)
+    """
 
     unit: NeuronUnit
     amount: float
@@ -78,7 +84,31 @@ class LayerTable:
     busy: tuple[bool, ...]
 
     def select(self, rows: list[int]) -> "LayerTable":
-        """The table of the given rows, in that order."""
+        """The table of the given rows, in that order.
+
+        Example:
+        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
+        >>> from pushlab.schedules.shapes import pulse
+        >>> config = Qwen3Config(  # the registry's "tiny" shape
+        ...     vocab_size=512,
+        ...     hidden_size=64,
+        ...     intermediate_size=128,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_key_value_heads=2,
+        ...     head_dim=16,
+        ... )
+        >>> unit = NeuronUnit("tiny", layer=1, index=5)
+        >>> table = compile(
+        ...     [pulse(unit, 1.0, 0, 2), Schedule("none")],
+        ...     Qwen3ForCausalLM(config),
+        ...     [7.0, 10.0],
+        ...     max_new_tokens=4,
+        ... )
+        >>> layer = table.layers[0].select([1])  # the row of no push
+        >>> layer.amounts.shape, layer.busy
+        (torch.Size([4, 1, 1]), (False, False, False, False))
+        """
         active = self.active[:, rows]
         busy = tuple(bool(pushed) for pushed in active.flatten(1).any(dim=1))
         return LayerTable(self.layer, self.units, self.amounts[:, rows], active, busy)
@@ -109,12 +139,28 @@ class DoseTable:
     LayerTable for each pushed layer, by layer.
 
     Example:
+        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
         >>> from pushlab.schedules.shapes import pulse
-        >>> table = compile(  # doctest: +SKIP
-        ...     [pulse(unit, 1.0, 0, 16), Schedule("none")], model, norms, 200
+        >>> config = Qwen3Config(  # the registry's "tiny" shape
+        ...     vocab_size=512,
+        ...     hidden_size=64,
+        ...     intermediate_size=128,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_key_value_heads=2,
+        ...     head_dim=16,
         ... )
-        >>> table.amounts(0, 15), table.amounts(0, 16)  # doctest: +SKIP
-        ((UnitAmount(unit=..., amount=23.47...),), ())
+        >>> unit = NeuronUnit("tiny", layer=1, index=5)
+        >>> table = compile(
+        ...     [pulse(unit, 1.0, 0, 2), Schedule("none")],
+        ...     Qwen3ForCausalLM(config),
+        ...     [7.0, 10.0],
+        ...     max_new_tokens=4,
+        ... )
+        >>> table.rows, table.passes, [layer.layer for layer in table.layers]
+        (2, 4, [1])
+        >>> [str(pushed.unit) for pushed in table.amounts(0, 1)], table.amounts(0, 2)
+        (['tiny:L1:N5'], ())
     """
 
     schedules: tuple[Schedule, ...]
@@ -137,7 +183,36 @@ class DoseTable:
     def amounts(self, row: int, reply_token: int | None) -> tuple[UnitAmount, ...]:
         """The units row pushes on the pass of reply_token (None: the prompt
         pass), each with the amount added to its neuron, in the order the
-        row's schedule names them. Any reply token, past the table's too."""
+        row's schedule names them. Any reply token, past the table's too.
+
+        Example:
+        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
+        >>> from pushlab.schedules.shapes import pulse
+        >>> config = Qwen3Config(  # the registry's "tiny" shape
+        ...     vocab_size=512,
+        ...     hidden_size=64,
+        ...     intermediate_size=128,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_key_value_heads=2,
+        ...     head_dim=16,
+        ... )
+        >>> unit = NeuronUnit("tiny", layer=1, index=5)
+        >>> table = compile(
+        ...     [pulse(unit, 1.0, 0, 2), Schedule("none")],
+        ...     Qwen3ForCausalLM(config),
+        ...     [7.0, 10.0],
+        ...     max_new_tokens=4,
+        ... )
+        >>> table.amounts(0, None), table.amounts(1, 0)  # no prompt pass; no push
+        ((), ())
+        >>> (
+        ...     len(table.amounts(0, 0)),
+        ...     len(table.amounts(0, 1)),
+        ...     len(table.amounts(0, 99)),
+        ... )
+        (1, 1, 0)
+        """
         if (
             not isinstance(row, int)
             or isinstance(row, bool)
@@ -155,8 +230,27 @@ class DoseTable:
         """The table of the given rows, in that order, such as one batch's.
 
         Example:
-            >>> table.select([2, 0]).rows  # doctest: +SKIP
-            2
+        >>> from transformers import Qwen3Config, Qwen3ForCausalLM
+        >>> from pushlab.schedules.shapes import pulse
+        >>> config = Qwen3Config(  # the registry's "tiny" shape
+        ...     vocab_size=512,
+        ...     hidden_size=64,
+        ...     intermediate_size=128,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_key_value_heads=2,
+        ...     head_dim=16,
+        ... )
+        >>> unit = NeuronUnit("tiny", layer=1, index=5)
+        >>> table = compile(
+        ...     [pulse(unit, 1.0, 0, 2), Schedule("none")],
+        ...     Qwen3ForCausalLM(config),
+        ...     [7.0, 10.0],
+        ...     max_new_tokens=4,
+        ... )
+        >>> picked = table.select([1, 0])
+        >>> picked.rows, picked.amounts(0, 0), len(picked.amounts(1, 0))
+        (2, (), 1)
         """
         rows = list(rows)
         for row in rows:
@@ -184,24 +278,23 @@ def _layer_tables(
     for layer in sorted({unit.layer for unit in units}):
         here = sorted((u for u in units if u.layer == layer), key=lambda u: u.index)
         column = {unit: i for i, unit in enumerate(here)}
-        amounts = [[[0.0] * len(here) for _ in by_pass] for _ in range(passes)]
-        active = [[[False] * len(here) for _ in by_pass] for _ in range(passes)]
+        places: list[tuple[int, int, int]] = []  # (pass, row, unit) of each push
+        values: list[float] = []
         for row, row_passes in enumerate(by_pass):
             for p, pushed in enumerate(row_passes):
                 for unit, value in pushed:
                     if unit.layer == layer:
-                        amounts[p][row][column[unit]] = value
-                        active[p][row][column[unit]] = True
-        busy = tuple(any(any(row) for row in rows) for rows in active)
-        tables.append(
-            LayerTable(
-                layer,
-                tuple(here),
-                torch.tensor(amounts, dtype=torch.float64),
-                torch.tensor(active, dtype=torch.bool),
-                busy,
-            )
-        )
+                        places.append((p, row, column[unit]))
+                        values.append(value)
+        shape = (passes, len(by_pass), len(here))
+        amounts = torch.zeros(shape, dtype=torch.float64)
+        active = torch.zeros(shape, dtype=torch.bool)
+        if places:
+            at = tuple(torch.tensor(places).T)
+            amounts[at] = torch.tensor(values, dtype=torch.float64)
+            active[at] = True
+        busy = tuple(bool(pushed) for pushed in active.flatten(1).any(dim=1))
+        tables.append(LayerTable(layer, tuple(here), amounts, active, busy))
     return tuple(tables)
 
 
@@ -215,9 +308,12 @@ def compile(
 
     model is the units' own model and norms its residual sizes, one per
     layer, from its calibration, as for pushlab.units.dose.amount. Every
-    schedule is checked against the model as validate() checks it, with no
-    ceiling: the engine pushes what it is given, and schedule files are
-    held to the ceiling when they are read. Every unit must name one model.
+    schedule is checked against the model as validate() checks it, but with
+    no ceiling: the engine pushes what it is given, as S1's pushes always
+    were. Nothing on the way from a schedule file to the engine checks the
+    ceiling yet, so whatever runs schedule files must first call
+    validate(schedule, REGISTRY[model], max_new_tokens), which does. Every
+    unit must name one model.
 
     Example:
         >>> from transformers import Qwen3Config, Qwen3ForCausalLM
