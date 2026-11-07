@@ -1,5 +1,5 @@
 CONTEXT
-This is Sprint S2, prompt 1 of 8. Read CLAUDE.md,
+This is Sprint S2, prompt 1 of 9. Read CLAUDE.md,
 docs/sprints/S1-review.md, docs/decisions/0006, 0008 and 0010, and these
 parts of the plans:
 - docs/plan/development-plan.md: the S2 entry under "Sprint details", the
@@ -26,8 +26,9 @@ BUILD
     reply), and include_prompt. Keep decision 0008's convention: a
     segment on reply token k pushes the pass that reads token k, which
     first changes token k + 1, and only the prompt pass, the research
-    plan's P, reaches token 0. A prompt-only segment, A6's "only while
-    reading the prompt", must be possible; S1's Push cannot express it.
+    plan's P, reaches token 0. A6's "only while reading the prompt" gets
+    a direct form: S1 can say it only as a start past the last pass with
+    the prompt pass on.
   - A schedule: a list of segments, read from the YAML form that
     experiment files will use (prompt 6), with shorthand shapes that
     expand into segments: constant (P to the end), pulse (reply tokens a
@@ -41,43 +42,57 @@ BUILD
     model and in range (NeuronUnit and its validate), finite doses, end
     after start, and no segment that no pass can reach (with P off, a
     start past reply token max_new_tokens - 2, as steer's
-    _window_problem says). It imports no torch, so a dry run in a cloud
-    session can use it.
+    _window_problem says). It needs no model weights, so a dry run in a
+    cloud session can use it.
   - The doses of one run, pass by pass: P, then the passes of reply
     tokens 0 to max_new_tokens - 2, each unit's doses summed. Segments of
     one unit that overlap add up, as S1's hook adds pushes.
   - compile(...) -> a DoseTable: for each pushed layer, its neuron
-    indices and the amount added on every pass, from
-    pushlab.units.dose.amount and the calibration, built once per batch.
-    Every row gets the same schedule in this prompt; prompt 5 gives the
-    table a row per run.
+    indices, the amount added on every pass (from
+    pushlab.units.dose.amount and the calibration), and, apart from the
+    amounts, which passes have an active segment: a segment active at
+    dose 0 is still active, and prompt 2's hook relies on that. Built once
+    per batch. Every row gets the same schedule in this prompt; prompt 5
+    gives the table a row per run.
   - The stored form: what goes in a run's schedule field, from which a
     reader recomputes every pass's amount without the schedule file.
     S1's segments ({unit, alpha, start, end, include_prompt, amount,
     control_for, touched}) must read as valid schedules, so S1's four
     folders still read and report.
 - experiments/p0/schedules/, for pod session 1 (prompt 4 lists it):
-  - handoff-hostile-to-warm.yaml: qwen3.5-4b:L14:N8949 at +1 from P to
-    reply token 40, then qwen3.5-4b:L13:N7956 at +1 to the end;
+  - constant-hostile.yaml: qwen3.5-4b:L14:N8949 at +1 from P to the end,
+    S1's s1-evil push;
+  - constant-warm.yaml: qwen3.5-4b:L13:N7956 at -1 from P to the end;
+  - handoff-hostile-to-warm.yaml: N8949 at +1 from P to reply token 40,
+    then N7956 at -1 to the end;
   - handoff-warm-to-hostile.yaml: the other order.
   Both units are in units/known.csv. hedwigai found that L13 N7956 alone
-  at +1 made the model warmer; the recipe pushes it at -1.
-- A decision note, the next free number (0012): the segment fields and
-  their file form; the pass convention, with the research plan's shapes
-  translated (the pulse "on for tokens 0 to 15" is start 0, end 16; a
-  handoff at 40 first lets B change token 41; A2's and A6's pushes); how
-  overlaps add; P and the regions; the dose table's shape; the stored
-  form and how S1's records read.
+  at -1, the recipe's own sign, made the model warmer (0 of 20 replies
+  hostile), and that L14 N8949 alone at +1 gave 17 of 20 hostile.
+- A decision note, the next free number (0012 unless another note came
+  first): the segment fields and their file form; the pass convention,
+  with the research plan's shapes translated (the pulse "on for tokens 0
+  to 15" is start 0, end 16; a handoff at 40 first lets B change token
+  41; A2's and A6's pushes); how overlaps add; P and the regions; the
+  dose table's shape and its active passes; the stored form and how S1's
+  records read.
 - Housekeeping, docs and one docs test only:
   - CLAUDE.md: "Current sprint: S2 (Schedules and runs)."; a rule that no
     GPU test's file, test or parameter name contains "smoke" unless it
     belongs in setup step 7 (`pytest -m gpu -k smoke`, which
-    tests/unit/test_setup_pod.py pins); and S1's reference folders
+    tests/unit/test_setup_pod.py pins); S1's reference folders
     (/workspace/outputs/s1-baseline, s1-evil, s1-random, s1-pulse16 and
     s1-report.md) next to /workspace/runs/s0-baseline as places never
-    used as --out.
-  - tests/unit/test_docs.py: its reference-folder tests also refuse those
-    S1 paths.
+    used as --out; and a review rule: one review round per prompt, with
+    at most three reviewers; a skeptic only for high- or medium-severity
+    findings; planted bugs before the reviewers, not during; reviewers
+    save their findings to files as they finish; nits go on a follow-up
+    list in the pull request description; one pull request per prompt,
+    with a real title and a description.
+  - tests/unit/test_docs.py: the reference-folder checks also refuse the
+    S1 paths, cover `pushlab report --out` as well as baseline and steer,
+    and read docs/runbooks/experiments.md too, without asking every file
+    to show every command.
 
 CONSTRAINTS
 - No change to the engine, steer, baseline or report: prompt 2 makes the
@@ -89,7 +104,7 @@ CONSTRAINTS
   Property tests use seeded random cases in plain pytest: hypothesis is
   not a dependency.
 - No dependency changes (pyyaml is already one). Files under about 400
-  lines.
+  lines. Review the work as the new review rule says.
 
 TESTS FIRST
 On the CPU, with tiny_model and tiny_vl_model:
@@ -99,16 +114,17 @@ On the CPU, with tiny_model and tiny_vl_model:
   prompt-only segment, and two overlapping segments of one unit.
 - A property test: in a few hundred seeded random schedules, every pass
   gets exactly the sum of the doses of the segments that cover it, and
-  every other pass gets 0.
+  every other pass gets 0 and no active mark.
 - compile gives, per layer, the neuron indices and, on every pass,
-  amounts equal to amount(unit, alpha, ...), for units in two layers.
+  amounts equal to amount(unit, alpha, ...), for units in two layers; a
+  segment at dose 0 is marked active.
 - The stored form round-trips exactly through write_runs and read_runs,
   and S1's segments read as schedules with the same windows.
 - Refusals: an unknown key or shape, another model's unit, a layer or
   neuron out of range, a non-finite dose, an end not after its start, an
   unreachable window, the regions thinking and answer, and a file that is
   not a list of segments.
-- Both handoff files parse and validate against the registry's
+- The four schedule files parse and validate against the registry's
   Qwen3.5-4B shape, without loading a model.
 - test_docs.py refuses a documented --out into an S1 reference folder.
 
