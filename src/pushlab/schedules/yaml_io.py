@@ -24,22 +24,22 @@ ceiling. Unknown keys, params, shapes and units are refused with a message that
 names them. Schedules are always written out as segments, so reading one back
 gives an equal schedule, every dose bit for bit.
 
-load_yaml reads the text more strictly than PyYAML's safe_load: a key given
-twice is refused, not overwritten, and numbers and true/false follow YAML 1.2,
-so 010 is not 8 (octal), 1:20 is not 80 (base 60), 1e-1 is a number and yes is
-text. An experiment file that holds a schedule should be read with it too.
+The text is read with pushlab.schedules.yaml_text.load_yaml, which refuses a
+key given twice and reads numbers and true/false as YAML 1.2 does, and written
+with its dump_yaml, so writing then reading changes nothing. An experiment file
+that holds a schedule should be read with load_yaml too.
 """
 
 import inspect
-import re
+import math
+import numbers
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from pushlab.schedules.model import Schedule, Segment
 from pushlab.schedules.shapes import SHAPES
+from pushlab.schedules.yaml_text import dump_yaml, load_yaml
 from pushlab.units.neuron import NeuronUnit
 
 SCHEDULE_KEYS = ("name", "allow_over_ceiling", "segments", "shape", "params")
@@ -56,68 +56,6 @@ SEGMENT_KEYS = (
 )
 # The shapes' params that name a unit, as text such as qwen3.5-4b:L14:N8949.
 UNIT_PARAMS = ("unit", "a", "b")
-
-_BOOL, _INT, _FLOAT = (f"tag:yaml.org,2002:{tag}" for tag in ("bool", "int", "float"))
-_MERGE = "tag:yaml.org,2002:merge"
-
-
-class _ScheduleLoader(yaml.SafeLoader):
-    """PyYAML's safe loader, with a key given twice refused (merges excepted)."""
-
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
-        seen = set()
-        for key_node, _ in node.value:
-            if key_node.tag == _MERGE:  # "<<: *base": its keys may be overridden
-                continue
-            key = self.construct_object(key_node, deep=deep)
-            try:
-                repeated = key in seen
-            except TypeError:  # an unhashable key, which PyYAML refuses itself
-                continue
-            if repeated:
-                raise yaml.constructor.ConstructorError(
-                    None, None, f"duplicate key {key!r}", key_node.start_mark
-                )
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
-
-
-# YAML 1.2's true/false, decimal integers and floats in place of YAML 1.1's,
-# which read yes and on as true, 010 as 8 and 1:20 as 80, and 1e-1 as text.
-_ScheduleLoader.yaml_implicit_resolvers = {
-    first: [
-        (tag, regexp) for tag, regexp in resolvers if tag not in (_BOOL, _INT, _FLOAT)
-    ]
-    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
-}
-for _tag, _pattern, _first in [
-    (_BOOL, r"true|True|TRUE|false|False|FALSE", "tTfF"),
-    (_INT, r"[-+]?(?:0|[1-9][0-9]*)", "-+0123456789"),
-    (
-        _FLOAT,
-        r"[-+]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|[0-9]+[eE][-+]?[0-9]+)"
-        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)",
-        "-+0123456789.",
-    ),
-]:
-    _ScheduleLoader.add_implicit_resolver(_tag, re.compile(f"^(?:{_pattern})$"), _first)
-
-
-def load_yaml(text: str) -> Any:
-    """Parse YAML text as schedule files are read (see the module's docstring).
-
-    Example:
-        >>> load_yaml("start: 010\\nend: 16\\nalpha: 1e-1\\ninclude_prompt: yes")
-        {'start': '010', 'end': 16, 'alpha': 0.1, 'include_prompt': 'yes'}
-        >>> load_yaml("alpha: 1\\nalpha: 2")  # doctest: +ELLIPSIS
-        Traceback (most recent call last):
-        ...
-        ValueError: the text is not valid YAML: ...duplicate key 'alpha'...
-    """
-    try:
-        return yaml.load(text, Loader=_ScheduleLoader)  # safe: a SafeLoader
-    except (yaml.YAMLError, ValueError) as error:  # ValueError: a bad date, say
-        raise ValueError(f"the text is not valid YAML: {error}") from None
 
 
 def _keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
@@ -138,6 +76,17 @@ def _number_as_text(where: str, key: str, value: object) -> None:
             f"{where}: {key} is the text {value!r}, not a number; write a plain "
             "decimal number, without quotes or leading zeros, such as 16 or 0.5"
         )
+
+
+def _dose(where: str, key: str, value: object) -> None:
+    """Refuse a dose that is not a finite number, by the key the file gave."""
+    finite = isinstance(value, numbers.Real) and not isinstance(value, bool)
+    try:
+        finite = finite and math.isfinite(value)  # type: ignore[arg-type]
+    except OverflowError:  # an int too large for a float
+        finite = False
+    if not finite:
+        raise ValueError(f"{where}: {key} must be a finite number, not {value!r}")
 
 
 def _unit(where: str, text: object) -> NeuronUnit:
@@ -161,6 +110,7 @@ def _segment(data: object, where: str) -> Segment:
             raise ValueError(
                 f"{where}: give alpha or alpha_start and alpha_end, not both"
             )
+        _dose(where, "alpha", data["alpha"])
         alpha_start = alpha_end = data["alpha"]
     elif "alpha_start" in data and "alpha_end" in data:
         alpha_start, alpha_end = data["alpha_start"], data["alpha_end"]
@@ -211,9 +161,12 @@ def _from_shape(shape: object, params: object) -> list[Segment]:
     for key, value in params.items():
         if key in UNIT_PARAMS:
             given[key] = _unit(where, value)
-        else:
+            continue
+        if not isinstance(parameters[key].default, bool):  # not include_prompt
             _number_as_text(where, key, value)
-            given[key] = value
+        if key.startswith("alpha"):
+            _dose(where, key, value)
+        given[key] = value
     try:
         return list(build(**given).segments)
     except ValueError as error:
@@ -344,7 +297,7 @@ def to_yaml(schedule: Schedule) -> str:
           end: 16
           region: reply
     """
-    return yaml.safe_dump(to_mapping(schedule), sort_keys=False)
+    return dump_yaml(to_mapping(schedule))
 
 
 def read_schedule(path: str | Path) -> Schedule:

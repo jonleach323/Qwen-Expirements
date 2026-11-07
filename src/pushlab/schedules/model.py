@@ -204,7 +204,9 @@ class Segment:
         if self.end - 1 == self.start:
             self._cannot_ramp("with one reply token for alpha_start and alpha_end, it")
         step = (reply_token - self.start) / (self.end - 1 - self.start)
-        return self.alpha_start * (1 - step) + self.alpha_end * step
+        dose = self.alpha_start * (1 - step) + self.alpha_end * step
+        low, high = sorted((self.alpha_start, self.alpha_end))
+        return min(max(dose, low), high)  # never past an end, even by rounding
 
     def _cannot_ramp(self, why: str) -> NoReturn:
         raise ValueError(f"{self.describe()}: {why} cannot ramp")

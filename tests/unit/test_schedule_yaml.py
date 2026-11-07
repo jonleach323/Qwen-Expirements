@@ -58,6 +58,12 @@ def test_awkward_doses_round_trip_bit_for_bit(alpha: float) -> None:
     assert back == schedule
 
 
+@pytest.mark.parametrize("name", ["1e-3", "1e5", "0e0", "12e34", "010", "16", "1-2"])
+def test_names_that_look_like_numbers_round_trip(name: str) -> None:
+    schedule = Schedule(name, [Segment(A, 1.0, 1.0)])
+    assert yaml_io.from_yaml(yaml_io.to_yaml(schedule)) == schedule
+
+
 def test_allow_over_ceiling_round_trips() -> None:
     schedule = Schedule("collapse", constant(A, 2.0).segments, allow_over_ceiling=True)
     assert yaml_io.from_yaml(yaml_io.to_yaml(schedule)) == schedule

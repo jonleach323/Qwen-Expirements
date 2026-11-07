@@ -200,6 +200,14 @@ def test_a_segment_one_token_past_max_new_tokens_warns() -> None:
         validate(pulse(A, 1.0, 190, 11), QWEN, 200)
 
 
+def test_a_repeating_segment_warns_only_when_a_turn_is_lost() -> None:
+    # On for 2 of every 8 tokens: on 0, 1, 8 and 9 in a window ending at 12.
+    turns = Schedule("x", [Segment(A, 1.0, 1.0, 0, 12, "reply", 2, 6)])
+    _quiet(turns, max_new_tokens=10)  # tokens 10 and 11 are off anyway
+    with pytest.warns(ScheduleWarning, match="so its reply tokens 9 to 11 never"):
+        validate(turns, QWEN, 9)
+
+
 def test_a_ramp_that_ends_on_the_last_reply_token_warns() -> None:
     with pytest.warns(ScheduleWarning, match="never reaches alpha_end"):
         validate(ramp(A, 0.0, 1.0, 180, 200), QWEN, 200)

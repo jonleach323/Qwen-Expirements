@@ -1,8 +1,11 @@
-"""Schedules as YAML: what is refused, and how strictly the text is read."""
+"""Schedules as YAML: what is refused, and how strictly the text is read
+(pushlab.schedules.yaml_text)."""
+
+import doctest
 
 import pytest
 
-from pushlab.schedules import yaml_io
+from pushlab.schedules import yaml_io, yaml_text
 from pushlab.schedules.model import Schedule, Segment
 from pushlab.schedules.shapes import constant, pulse
 from pushlab.units.neuron import NeuronUnit
@@ -73,10 +76,27 @@ REFUSALS = [
     ),
     (
         f"name: x\nsegments: [{{{SEGMENT}, start: 2026-13-45}}]",
-        "is not valid YAML",
+        r"segments\[0\]: start must be a reply token from 0, not '2026-13-45'",
     ),
     ("name: 16\nsegments: []", "name must be text, but YAML read 16"),
-    ("name: 2026-11-07\nsegments: []", "name must be text"),
+    (
+        f"name: x\nsegments: [{{unit: {A_ID}, alpha: .nan}}]",
+        r"segments\[0\]: alpha must be a finite number, not nan",
+    ),
+    (
+        f"name: x\nsegments: [{{{SEGMENT}, start: !!int 010}}]",
+        "not a whole number as YAML 1.2",
+    ),
+    (
+        f"name: x\nsegments: [{{unit: {A_ID}, alpha: !!float 1:20}}]",
+        "not a number as YAML 1.2",
+    ),
+    (
+        "name: x\nsegments: []\nallow_over_ceiling: !!bool yes",
+        "not true or false as YAML 1.2",
+    ),
+    ("name: !!map [1, 2]\nsegments: []", "is not valid YAML"),
+    ("name: x\nsegments: " + "[" * 2000 + "]" * 2000, "is not valid YAML"),
     ("name: x\nsegments: []\nparams: {}", "segments or a shape, not both"),
     ("name: x\nshape: wave\nparams: {}", "unknown shape 'wave'"),
     ("name: x\nshape: pulse", "shape 'pulse' needs params"),
@@ -118,6 +138,16 @@ REFUSALS = [
         "shape constant: include_prompt must be True or False, not 'yes'",
     ),
     (
+        f"name: x\nshape: constant\nparams: {{unit: {A_ID}, alpha: 1, "
+        "include_prompt: '1'}",
+        "shape constant: include_prompt must be True or False, not '1'",
+    ),
+    (
+        f"name: x\nshape: handoff\nparams: {{a: {A_ID}, b: {B_ID}, alpha_a: 1, "
+        "alpha_b: .inf, switch_at: 40}",
+        "shape handoff: alpha_b must be a finite number, not inf",
+    ),
+    (
         f"name: x\nshape: pulse\nparams: {{unit: {A_ID}, alpha: 1, start: null, "
         "length: 16}",
         "shape pulse: start must be a whole number from 0, not None",
@@ -138,7 +168,7 @@ def test_refusals_name_the_problem(text: str, problem: str) -> None:
 
 
 def test_numbers_and_true_false_are_read_as_yaml_1_2_reads_them() -> None:
-    assert yaml_io.load_yaml(
+    assert yaml_text.load_yaml(
         "a: 010\nb: 1:20\nc: 0x10\nd: 1e-1\ne: 1.0e5\nf: .5\ng: -.inf\n"
         "h: yes\ni: off\nj: true\nk: False\nl: null\nm: 16\nn: -3\no: 1_000"
     ) == {
@@ -160,6 +190,19 @@ def test_numbers_and_true_false_are_read_as_yaml_1_2_reads_them() -> None:
     }
 
 
+def test_explicit_tags_follow_yaml_1_2_too() -> None:
+    assert yaml_text.load_yaml("a: !!int 16\nb: !!float 1\nc: !!bool true") == {
+        "a": 16,
+        "b": 1.0,
+        "c": True,
+    }
+
+
+def test_dates_are_text() -> None:
+    assert yaml_text.load_yaml("a: 2026-11-07") == {"a": "2026-11-07"}
+    assert yaml_io.from_yaml("name: 2026-11-07\nsegments: []").name == "2026-11-07"
+
+
 def test_a_dose_with_an_exponent_is_a_number() -> None:
     text = f"name: x\nsegments: [{{unit: {A_ID}, alpha: 1e-1, end: 4}}]"
     assert yaml_io.from_yaml(text) == pulse(A, 0.1, 0, 4, name="x")
@@ -172,7 +215,36 @@ def test_names_that_yaml_1_1_reads_as_true_or_false_are_names() -> None:
 
 def test_load_yaml_refuses_repeated_keys_at_every_depth() -> None:
     with pytest.raises(ValueError, match="duplicate key 'start'"):
-        yaml_io.load_yaml("a:\n  b:\n    - {start: 1, start: 2}")
+        yaml_text.load_yaml("a:\n  b:\n    - {start: 1, start: 2}")
+
+
+def test_a_key_given_twice_in_a_mapping_only_merged_in_is_refused() -> None:
+    text = f"""
+name: x
+segments:
+  - {{<<: {{unit: {A_ID}, alpha: 1.0, alpha: 2.0}}, end: 4}}
+"""
+    with pytest.raises(ValueError, match="duplicate key 'alpha'"):
+        yaml_io.from_yaml(text)
+
+
+def test_two_merge_keys_in_one_mapping_are_refused() -> None:
+    text = "a: &a {x: 1}\nb: &b {x: 2}\nc: {<<: *a, <<: *b}"
+    with pytest.raises(ValueError, match="duplicate key '<<'"):
+        yaml_text.load_yaml(text)
+
+
+def test_a_merge_of_a_deeper_template_may_be_overridden() -> None:
+    text = """
+use: {<<: *base, alpha: 2.0}
+templates:
+  base: &base {<<: {alpha: 0.5}, alpha: 1.0, start: 0}
+"""
+    # PyYAML wants an anchor before its alias, so the template comes first.
+    text = "\n".join(reversed(text.strip().split("\n", 1)))
+    data = yaml_text.load_yaml(text)
+    assert data["use"] == {"alpha": 2.0, "start": 0}
+    assert data["templates"]["base"] == {"alpha": 1.0, "start": 0}
 
 
 def test_a_merge_may_be_overridden() -> None:
@@ -199,3 +271,18 @@ def test_writing_refuses_anything_but_a_schedule(value: object) -> None:
     for write in (yaml_io.to_mapping, yaml_io.to_yaml):
         with pytest.raises(ValueError, match="not a Schedule"):
             write(value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["1e-3", "010", "1:20", "0x10", "yes", "off", "2026-11-07", ".5", "~", "<<", "-"],
+)
+def test_dump_yaml_writes_what_load_yaml_reads_back(text: str) -> None:
+    data = {"name": text, "alpha": 1e-20, "end": None, "flag": True}
+    assert yaml_text.load_yaml(yaml_text.dump_yaml(data)) == data
+
+
+def test_yaml_text_doctests() -> None:
+    result = doctest.testmod(yaml_text)
+    assert result.attempted > 0
+    assert result.failed == 0

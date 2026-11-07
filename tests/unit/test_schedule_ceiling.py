@@ -2,6 +2,7 @@
 
 import math
 import random
+import time
 import warnings
 from fractions import Fraction
 
@@ -10,7 +11,7 @@ import pytest
 from pushlab.models.registry import REGISTRY
 from pushlab.schedules.model import Schedule, Segment
 from pushlab.schedules.shapes import alternate, constant
-from pushlab.schedules.validation import layer_peaks, validate
+from pushlab.schedules.validation import TooManyPasses, layer_peaks, validate
 from pushlab.units.neuron import NeuronUnit
 
 QWEN = REGISTRY["qwen3.5-4b"]
@@ -110,6 +111,44 @@ def test_a_unit_that_meets_an_alternation_is_caught_on_its_turn() -> None:
     schedule = Schedule("x", [*turns, Segment(A3, 1.0, 1.0, 30)])
     message = _refused(schedule, "reaches 1.414 on reply token 30")
     assert "qwen3.5-4b:L14:N100 at +1, qwen3.5-4b:L14:N200 at +1" in message
+
+
+def test_a_ramp_that_ends_at_the_ceiling_stays_under_it() -> None:
+    # Two ends a hair apart: rounding inside the ramp must not pass 1.4.
+    _quiet(Schedule("x", [Segment(A, math.nextafter(1.4, 0.0), 1.4, 0, 30)]))
+
+
+def test_alternations_in_different_layers_are_checked_apart() -> None:
+    # Periods 23 to 31 line up only every 27,913,950 tokens across layers,
+    # but each layer repeats every 2 * its own period.
+    segments = []
+    for layer, period in zip(range(2, 7), (23, 25, 27, 29, 31), strict=True):
+        a, b = NeuronUnit("qwen3.5-4b", layer, 1), NeuronUnit("qwen3.5-4b", layer, 2)
+        segments += alternate(a, b, 1.0, -1.0, period).segments
+    began = time.perf_counter()
+    _quiet(Schedule("x", segments))
+    assert time.perf_counter() - began < 2
+
+
+def test_a_far_end_costs_no_more_than_an_open_one() -> None:
+    began = time.perf_counter()
+    _quiet(alternate(A, B, 1.0, -1.0, 1, 0, 200))
+    assert layer_peaks(alternate(A, A2, 1.0, -1.0, 1, 0, 10**9)) == {14: (1.0, 0)}
+    assert time.perf_counter() - began < 2
+
+
+def test_repeats_in_one_layer_that_line_up_too_rarely_are_refused() -> None:
+    # Cycles 202, 206 and 214 line up every 2,226,242 tokens.
+    units = [NeuronUnit("qwen3.5-4b", 14, index) for index in range(6)]
+    segments = []
+    for (a, b), period in zip(
+        [units[0:2], units[2:4], units[4:6]], (101, 103, 107), strict=True
+    ):
+        segments += alternate(a, b, 0.1, 0.1, period).segments
+    schedule = Schedule("x", segments)
+    with pytest.raises(TooManyPasses, match="every 2,226,242 reply tokens"):
+        layer_peaks(schedule)
+    _refused(schedule, "layer 14: its repeating segments line up again only every")
 
 
 def test_a_push_too_large_for_a_float_is_refused() -> None:

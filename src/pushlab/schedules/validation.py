@@ -118,28 +118,60 @@ def _window_problems(segment: Segment) -> list[str]:
     return []
 
 
-def _passes(schedule: Schedule) -> list[int | None]:
-    """The prompt pass, and the reply tokens where a layer's push can peak.
+# A layer needing more passes than this to check is refused: its repeating
+# segments line up again only after that many reply tokens.
+MOST_PASSES = 1_000_000
 
-    Between two reply tokens where some segment starts, ends, turns on or
-    turns off, the same segments are on, and each dose is constant or moves
-    in a straight line. A sum of squares of straight lines is highest at one
-    end of the stretch, so the first and last token of every stretch are
-    enough. Past the last start or end, only segments with no end are on:
-    constant ones, and repeating ones, which repeat together every
-    lcm(cycles) tokens, so one such stretch of tokens is enough.
+
+class TooManyPasses(ValueError):
+    """A layer's repeating segments would take more than MOST_PASSES passes to check."""
+
+
+def _layer_passes(segments: list[Segment], layer: int) -> list[int | None]:
+    """The passes where one layer's combined push can peak: None (the prompt
+    pass), then reply tokens in order.
+
+    The reply tokens where a segment starts or ends cut the reply into
+    stretches, and in each the same segments are present. Those that repeat
+    line up again every lcm of their cycles, L tokens: tokens L apart have
+    the same segments on, each dose constant or moving in a straight line,
+    so along them the push is highest at the first or the last. The first L
+    and the last L tokens of a stretch are therefore enough, and past the
+    last start or end, where every dose is constant, the first L are.
     """
-    reply = [s for s in schedule.segments if s.region == "reply"]
-    boundaries = {s.start for s in reply} | {s.end for s in reply if s.end is not None}
-    cycles = [s.on_for + s.off_for for s in reply if s.on_for and s.off_for]
-    if cycles:
-        horizon = max(boundaries) + math.lcm(*cycles)
-        for s in reply:
-            if s.on_for and s.off_for:
-                stop = horizon if s.end is None else min(s.end, horizon)
-                for first in range(s.start, stop, s.on_for + s.off_for):
-                    boundaries |= {first, first + s.on_for}
-    tokens = boundaries | {token - 1 for token in boundaries if token > 0}
+    reply = [s for s in segments if s.region == "reply"]
+    bounds = sorted(
+        {s.start for s in reply} | {s.end for s in reply if s.end is not None}
+    )
+    stretches = []
+    for left, right in zip(bounds, [*bounds[1:], None][: len(bounds)], strict=True):
+        present = [
+            s
+            for s in reply
+            if s.start <= left
+            and (s.end is None or (right is not None and s.end >= right))
+        ]
+        cycle = math.lcm(
+            *(s.on_for + s.off_for for s in present if s.on_for and s.off_for)
+        )
+        stretches.append((left, right, cycle))
+    count = sum(
+        cycle if right is None else min(right - left, 2 * cycle)
+        for left, right, cycle in stretches
+    )
+    if count > MOST_PASSES:
+        raise TooManyPasses(
+            f"layer {layer}: its repeating segments line up again only every "
+            f"{max(cycle for _, _, cycle in stretches):,} reply tokens, too many "
+            "to check; give them periods with common factors"
+        )
+    tokens: set[int] = set()
+    for left, right, cycle in stretches:
+        if right is None:
+            tokens.update(range(left, left + cycle))
+        else:
+            tokens.update(range(left, min(left + cycle, right)))
+            tokens.update(range(max(right - cycle, left), right))
     return [None, *sorted(tokens)]
 
 
@@ -153,9 +185,11 @@ def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
     The combined push on a pass is the square root of the summed squares of
     the layer's units' doses there; a pass is a reply token, or None for the
     prompt pass, which comes first. Each segment must be valid on its own
-    terms (validate checks them first). The peak is exact up to rounding:
-    a dose inside a ramp is worked by a formula, and can differ from its
-    straight line in the last of its 16 digits.
+    terms (validate checks them first). Each layer is worked on its own,
+    and one whose repeating segments would need more than MOST_PASSES
+    passes is refused with TooManyPasses, a ValueError. The peak is exact
+    up to rounding: a dose inside a ramp is worked by a formula, and can
+    differ from its straight line in the last of its 16 digits.
 
     Example:
         >>> from pushlab.schedules.shapes import constant
@@ -167,12 +201,16 @@ def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
         (1.414, None)
     """
     peaks: dict[int, tuple[float, int | None]] = {}
-    for reply_token in _passes(schedule):
-        doses = schedule.doses_at(reply_token)
-        for layer in sorted({unit.layer for unit in doses}):
-            push = _combined(doses, layer)
-            if layer not in peaks or push > peaks[layer][0]:
-                peaks[layer] = (push, reply_token)
+    for layer in sorted({segment.unit.layer for segment in schedule.segments}):
+        own = Schedule(
+            schedule.name, [s for s in schedule.segments if s.unit.layer == layer]
+        )
+        for reply_token in _layer_passes(list(own.segments), layer):
+            doses = own.doses_at(reply_token)
+            if doses:
+                push = _combined(doses, layer)
+                if layer not in peaks or push > peaks[layer][0]:
+                    peaks[layer] = (push, reply_token)
     return peaks
 
 
@@ -196,15 +234,21 @@ def _reach_warning(segment: Segment, max_new_tokens: int) -> str | None:
             )
         return f"never pushes: {why}, and it starts at reply token {segment.start}"
     if segment.end is not None and segment.end > max_new_tokens:
-        lost = (
-            f"reply token {max_new_tokens} never comes"
-            if segment.end - 1 == max_new_tokens
-            else f"reply tokens {max_new_tokens} to {segment.end - 1} never come"
-        )
-        return (
-            f"runs past max_new_tokens {max_new_tokens}: a reply has tokens 0 to "
-            f"{max_new_tokens - 1}, so its {lost}"
-        )
+        first = max_new_tokens  # the first reply token it would push, past the end
+        if segment.on_for and segment.off_for:
+            cycle = segment.on_for + segment.off_for
+            phase = (first - segment.start) % cycle
+            first += 0 if phase < segment.on_for else cycle - phase
+        if first < segment.end:
+            lost = (
+                f"reply token {first} never comes"
+                if segment.end - 1 == first
+                else f"reply tokens {first} to {segment.end - 1} never come"
+            )
+            return (
+                f"runs past max_new_tokens {max_new_tokens}: a reply has tokens 0 "
+                f"to {max_new_tokens - 1}, so its {lost}"
+            )
     if segment.alpha_start != segment.alpha_end and segment.end == max_new_tokens:
         return (
             f"never reaches alpha_end: it falls on reply token {segment.end - 1}, "
@@ -293,7 +337,12 @@ def validate(
             good.append(segment)
     if not schedule.allow_over_ceiling:
         checked = Schedule(schedule.name, good)
-        for layer, (peak, reply_token) in sorted(layer_peaks(checked).items()):
+        try:
+            peaks = layer_peaks(checked)
+        except TooManyPasses as error:
+            problems.append(str(error))
+            peaks = {}
+        for layer, (peak, reply_token) in sorted(peaks.items()):
             # A push too large for a float is inf, and is refused as well.
             if not math.isfinite(peak) or peak > ceiling:
                 doses = checked.doses_at(reply_token)

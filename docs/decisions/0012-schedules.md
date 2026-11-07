@@ -33,9 +33,10 @@ Date: 2026-11-07 · Sprint: S2 · Status: accepted
 
 **Code.** `src/pushlab/schedules/`: `model.py` (Segment, Schedule,
 `describe_pass`, `dose_text`), `shapes.py` (the six helpers and `SHAPES`),
-`yaml_io.py` (`load_yaml`, `from_yaml`, `to_yaml`, `from_mapping`,
-`to_mapping`, `read_schedule`) and `validation.py` (`validate`,
-`layer_peaks`, `DEFAULT_CEILING`, `ScheduleWarning`). None of it loads a
+`yaml_io.py` (`from_yaml`, `to_yaml`, `from_mapping`, `to_mapping`,
+`read_schedule`), `yaml_text.py` (`load_yaml`, `dump_yaml`) and
+`validation.py` (`validate`, `layer_peaks`, `DEFAULT_CEILING`,
+`MOST_PASSES`, `ScheduleWarning`, `TooManyPasses`). None of it loads a
 model.
 
 **Passes, as decision 0008 counts them.** The decoding loop runs the prompt
@@ -65,9 +66,9 @@ detection. How the fields fit together is for `validate`.
 
 **The ramp formula.** On reply token k, with t = (k - start) / (end - 1 -
 start), a segment's dose is alpha_start + (alpha_end - alpha_start) * t,
-worked as alpha_start * (1 - t) + alpha_end * t so that alpha_start falls
-on its first token and alpha_end on its last (end - 1) exactly, with equal
-steps between. Equal doses make a constant push. A ramp needs an end and
+worked as alpha_start * (1 - t) + alpha_end * t and kept between the two
+ends, so that alpha_start falls on its first token and alpha_end on its
+last (end - 1) exactly, with equal steps between and no dose past an end. Equal doses make a constant push. A ramp needs an end and
 at least two reply tokens, and a segment that repeats, or a prompt
 segment, cannot ramp. By hand:
 
@@ -115,10 +116,14 @@ and either `segments` or `shape` with `params`. A segment takes `unit`,
 `start` (default 0), `end` (default null), `region` (default `reply`) and,
 when it repeats, `on_for` and `off_for`. Unknown keys, params, shapes and
 units, and a number given as text, are refused with a message that names
-them. `load_yaml` reads the text: a key given twice is refused (keys a
-merge brings in may still be overridden), and numbers and true/false
-follow YAML 1.2, so `010` is not 8, `1:20` is not 80, `1e-1` is a number
-and `yes` is text. `to_yaml` always writes the segments out, so
+them, by the key the file used. `yaml_text.load_yaml` reads the text: a
+key given twice in one mapping is refused, as each mapping is read in, so
+one only merged in (`<<`) is checked too, while a key may still override
+one that a merge brings in; and numbers and true/false follow YAML 1.2, so
+`010` is not 8, `1:20` is not 80, `1e-1` is a number, `yes` and dates are
+text, and an explicit tag such as `!!int 010` is refused. `to_yaml` always
+writes the segments out, through `dump_yaml`, which quotes text either
+YAML would read as something else (a name `1e-3`), so
 `from_yaml(to_yaml(s)) == s` with every dose bit for bit, the sign of a
 zero included, and a file in either form reads back to the same Schedule
 the helpers build.
@@ -140,19 +145,25 @@ the helpers build.
   they pass; +1 and -1 of one unit on the same tokens count as 0, and two
   +1 segments of one unit as 2. A push exactly at the ceiling passes; one
   too large for a float is refused.
-- **Every pass is checked:** the prompt pass and every reply token. Between
-  two tokens where a segment starts, ends, turns on or turns off, each dose
-  is constant or moves in a straight line, so the combined push is highest
-  at one end of the stretch. Past the last start or end, repeating
-  segments repeat together every lcm(cycles) tokens, so one such stretch
-  is enough. `layer_peaks` gives each layer's highest push and the first
-  pass with it, exact up to rounding in the last digit inside a ramp; a
-  test compares it with a scan of every pass in 400 random schedules.
+- **Every pass is checked:** the prompt pass and every reply token, each
+  layer on its own. The tokens where a segment starts or ends cut the
+  reply into stretches with the same segments present; those that repeat
+  line up again every lcm of their cycles, L tokens, and along tokens L
+  apart every dose is constant or moves in a straight line, so the push is
+  highest at the first or the last of them. The first and last L tokens of
+  each stretch are therefore enough, and past the last start or end the
+  first L are. `layer_peaks` gives each layer's highest push and the first
+  pass with it, exact up to rounding in the last digit where ramps add up;
+  tests compare it with a scan of every pass in 400 random schedules. A
+  layer whose repeating segments would need more than `MOST_PASSES`
+  (1,000,000) passes is refused with `TooManyPasses`: it takes several
+  alternations of large periods with no common factor in one layer.
 - The verdict does not depend on max_new_tokens. Only the warnings do: a
-  reply segment that starts past the last pass (max_new_tokens - 2), whose
-  end is past max_new_tokens, or whose ramp ends on the reply's last
-  token, which no pass reads, is accepted with a ScheduleWarning. validate
-  both issues each warning and returns them as a list.
+  reply segment that starts past the last pass (max_new_tokens - 2), that
+  would push a token past max_new_tokens (for one that repeats, an on-turn
+  there), or whose ramp ends on the reply's last token, which no pass
+  reads, is accepted with a ScheduleWarning. validate both issues each
+  warning and returns them as a list.
 
 ## Why this shape
 
@@ -178,7 +189,8 @@ the helpers build.
   unit of another model is unknown even when the two have the same shape
   (as `tiny` and `tiny-lm` do; decision 0006).
 - **YAML 1.2's numbers:** in a project about timing, `start: 010` read as 8
-  would move a window without a word.
+  would move a window without a word. Dates go too: no schedule field is a
+  date, and a date-shaped name or number is clearer refused as text.
 - **Warn and return.** A script that ignores the result still shows the
   warnings; a command can print the list in its own words and ignore
   ScheduleWarning.
@@ -191,7 +203,9 @@ the helpers build.
   per-pass amounts from `Schedule.doses_at`, which lists a unit pushed at
   dose 0 apart from one not pushed, and should call `validate` first.
 - An experiment file that holds a schedule should be read with
-  `load_yaml`, so its keys and numbers are read as a schedule file's are.
+  `yaml_text.load_yaml`, so its keys and numbers are read as a schedule
+  file's are; it does not belong to schedules alone, and can move when the
+  experiment files come.
 - A run's stored schedule is left for the steps that store schedules. The
   segments written here are not S1's records: `pushlab report`'s
   `describe_push` reads `include_prompt` and `alpha`, so it must learn
