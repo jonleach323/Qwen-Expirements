@@ -3,19 +3,20 @@
 It refuses, listing every problem at once:
 - units unknown to the model, and layers or neurons out of its range;
 - a reply segment that ends before it starts, or covers no reply token;
-- a prompt segment with a start or end, or a dose that ramps (the prompt
-  pass is one pass), and a ramp with no end or of a single reply token;
+- a prompt segment with a start or end, or that ramps or repeats (the
+  prompt pass is one pass); a ramp with no end, of a single reply token, or
+  that repeats;
 - any pass where the combined push in one layer is above the ceiling,
-  unless the schedule sets allow_over_ceiling.
+  unless the schedule sets allow_over_ceiling, which lifts that rule alone.
 
 The combined push in a layer is the square root of the summed squares of its
 units' doses on that pass (research plan, "Dosing rules"), each unit's dose
 being the sum of its segments there, as the engine adds them. Every pass is
 checked: the prompt pass and every reply token, however long the reply, so
 the verdict does not depend on max_new_tokens. Only the warnings do: a
-segment that runs past max_new_tokens, or that no pass reaches, is warned
-about but accepted. Nothing here needs model weights, so a dry run in a
-cloud session can use it.
+segment that no pass reaches, that runs past max_new_tokens, or whose ramp
+ends on a token no pass reads, is warned about but accepted. Nothing here
+needs model weights, so a dry run in a cloud session can use it.
 """
 
 import math
@@ -25,7 +26,7 @@ from collections.abc import Mapping
 
 from pushlab.models.discovery import ModelInfo
 from pushlab.models.registry import REGISTRY, ModelSpec
-from pushlab.schedules.model import Schedule, Segment
+from pushlab.schedules.model import Schedule, Segment, describe_pass, dose_text
 from pushlab.units.neuron import NeuronUnit
 
 # The low end of the collapse range Liu (2026) measured in Qwen and Llama
@@ -57,10 +58,12 @@ def _unit_problem(unit: NeuronUnit, name: str | None, shape: ModelInfo) -> str |
         return (
             f"unknown unit {unit}: it is a neuron of {unit.model_name}, not of {name}"
         )
-    spec = REGISTRY.get(unit.model_name)
-    if name is None and spec is None:
-        return f"unknown unit {unit}: {unit.model_name} is not in the model registry"
     if name is None:
+        spec = REGISTRY.get(unit.model_name)  # the registry may have changed since
+        if spec is None:
+            return (
+                f"unknown unit {unit}: {unit.model_name} is not in the model registry"
+            )
         registered = ModelInfo(spec.layers, spec.hidden_size, spec.mlp_size)
         if registered != shape:
             return (
@@ -76,58 +79,66 @@ def _unit_problem(unit: NeuronUnit, name: str | None, shape: ModelInfo) -> str |
 
 def _window_problems(segment: Segment) -> list[str]:
     """Why the segment's window and doses cannot be, as validate words it."""
-    problems = []
     ramps = segment.alpha_start != segment.alpha_end
     if segment.region == "prompt":
+        problems = []
         if segment.start != 0 or segment.end is not None:
             problems.append(
-                "a prompt segment covers the whole prompt pass, so it takes "
-                f"start 0 and end None, not start {segment.start} and end {segment.end}"
+                "a prompt segment covers the whole prompt pass, so it takes start "
+                f"0 and end None, not start {segment.start} and end {segment.end}"
             )
-        if ramps:
+        if ramps or segment.repeats:
             problems.append(
-                "the prompt pass is one pass, so a prompt segment cannot ramp: "
-                "give alpha_start and alpha_end the same dose"
+                "the prompt pass is one pass, so a prompt segment cannot ramp or "
+                "repeat: give it one dose, and no on_for or off_for"
             )
         return problems
     if segment.end is not None and segment.end < segment.start:
-        problems.append(
+        return [
             f"it ends before it starts: end {segment.end} is before start "
             f"{segment.start}, and end is the first reply token it no longer covers"
-        )
-    elif segment.end is not None and segment.end == segment.start:
-        problems.append(
+        ]
+    if segment.end is not None and segment.end == segment.start:
+        return [
             f"it covers no reply token: end {segment.end} is its start, and end "
             "is not included"
-        )
-    elif ramps and segment.end is None:
-        problems.append(
+        ]
+    if ramps and segment.repeats:
+        return ["a segment that repeats takes one dose: it cannot ramp"]
+    if ramps and segment.end is None:
+        return [
             "a ramp needs an end, for alpha_end to fall on; a segment with no "
             "end takes one dose"
-        )
-    elif ramps and segment.end == segment.start + 1:
-        problems.append(
+        ]
+    if ramps and segment.end == segment.start + 1:
+        return [
             "a ramp needs at least two reply tokens, alpha_start on the first and "
             f"alpha_end on the last; this one covers only reply token {segment.start}"
-        )
-    return problems
+        ]
+    return []
 
 
 def _passes(schedule: Schedule) -> list[int | None]:
     """The prompt pass, and the reply tokens where a layer's push can peak.
 
-    Between two reply tokens where a segment starts or ends, the same
-    segments are on, and each dose moves in a straight line. A sum of
-    squares of straight lines is highest at one end of the stretch, so the
-    first and last token of every stretch are enough. Past the last
-    boundary, every segment still on has no end and takes one dose.
+    Between two reply tokens where some segment starts, ends, turns on or
+    turns off, the same segments are on, and each dose is constant or moves
+    in a straight line. A sum of squares of straight lines is highest at one
+    end of the stretch, so the first and last token of every stretch are
+    enough. Past the last start or end, only segments with no end are on:
+    constant ones, and repeating ones, which repeat together every
+    lcm(cycles) tokens, so one such stretch of tokens is enough.
     """
-    boundaries = set()
-    for segment in schedule.segments:
-        if segment.region == "reply":
-            boundaries.add(segment.start)
-            if segment.end is not None:
-                boundaries.add(segment.end)
+    reply = [s for s in schedule.segments if s.region == "reply"]
+    boundaries = {s.start for s in reply} | {s.end for s in reply if s.end is not None}
+    cycles = [s.on_for + s.off_for for s in reply if s.on_for and s.off_for]
+    if cycles:
+        horizon = max(boundaries) + math.lcm(*cycles)
+        for s in reply:
+            if s.on_for and s.off_for:
+                stop = horizon if s.end is None else min(s.end, horizon)
+                for first in range(s.start, stop, s.on_for + s.off_for):
+                    boundaries |= {first, first + s.on_for}
     tokens = boundaries | {token - 1 for token in boundaries if token > 0}
     return [None, *sorted(tokens)]
 
@@ -142,7 +153,9 @@ def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
     The combined push on a pass is the square root of the summed squares of
     the layer's units' doses there; a pass is a reply token, or None for the
     prompt pass, which comes first. Each segment must be valid on its own
-    terms (validate checks them first).
+    terms (validate checks them first). The peak is exact up to rounding:
+    a dose inside a ramp is worked by a formula, and can differ from its
+    straight line in the last of its 16 digits.
 
     Example:
         >>> from pushlab.schedules.shapes import constant
@@ -161,10 +174,6 @@ def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
             if layer not in peaks or push > peaks[layer][0]:
                 peaks[layer] = (push, reply_token)
     return peaks
-
-
-def _pass_name(reply_token: int | None) -> str:
-    return "the prompt pass" if reply_token is None else f"reply token {reply_token}"
 
 
 def _reach_warning(segment: Segment, max_new_tokens: int) -> str | None:
@@ -187,12 +196,37 @@ def _reach_warning(segment: Segment, max_new_tokens: int) -> str | None:
             )
         return f"never pushes: {why}, and it starts at reply token {segment.start}"
     if segment.end is not None and segment.end > max_new_tokens:
+        lost = (
+            f"reply token {max_new_tokens} never comes"
+            if segment.end - 1 == max_new_tokens
+            else f"reply tokens {max_new_tokens} to {segment.end - 1} never come"
+        )
         return (
             f"runs past max_new_tokens {max_new_tokens}: a reply has tokens 0 to "
-            f"{max_new_tokens - 1}, so its reply tokens {max_new_tokens} to "
-            f"{segment.end - 1} never come"
+            f"{max_new_tokens - 1}, so its {lost}"
+        )
+    if segment.alpha_start != segment.alpha_end and segment.end == max_new_tokens:
+        return (
+            f"never reaches alpha_end: it falls on reply token {segment.end - 1}, "
+            f"the reply's last, and the last pass reads reply token {last_pass}"
         )
     return None
+
+
+def _is_finite(value: object) -> bool:
+    if not isinstance(value, numbers.Real) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        return False
+
+
+def _exact(value: float) -> str:
+    """A number, short when that is exact (a Fraction ceiling becomes a float)."""
+    value = float(value)
+    short = format(value, "g")
+    return short if float(short) == value else repr(value)
 
 
 def validate(
@@ -205,10 +239,11 @@ def validate(
 
     model_info is the model's registry entry, such as REGISTRY["qwen3.5-4b"]:
     then every unit must be one of its neurons. A ModelInfo, which has no
-    name, checks the shape alone. ceiling bounds the combined push in one
-    layer on any pass (see the module's docstring). Every problem found is
-    listed in one ValueError. Otherwise each warning is issued as a
-    ScheduleWarning and returned, so a command can print them itself.
+    name, checks only that each unit's model has this shape. ceiling bounds
+    the combined push in one layer on any pass (see the module's docstring).
+    Every problem found is listed in one ValueError. Otherwise each warning
+    is issued as a ScheduleWarning and returned, so a command can print them
+    in its own words and ignore ScheduleWarning.
 
     Example:
         >>> from pushlab.schedules.shapes import constant, pulse
@@ -239,12 +274,7 @@ def validate(
         raise ValueError(
             f"max_new_tokens must be a whole number from 1, not {max_new_tokens!r}"
         )
-    if not (
-        isinstance(ceiling, numbers.Real)
-        and not isinstance(ceiling, bool)
-        and math.isfinite(ceiling)
-        and ceiling > 0
-    ):
+    if not (_is_finite(ceiling) and ceiling > 0):
         raise ValueError(f"ceiling must be a finite number above 0, not {ceiling!r}")
 
     problems: list[str] = []
@@ -264,10 +294,11 @@ def validate(
     if not schedule.allow_over_ceiling:
         checked = Schedule(schedule.name, good)
         for layer, (peak, reply_token) in sorted(layer_peaks(checked).items()):
-            if peak > ceiling:
+            # A push too large for a float is inf, and is refused as well.
+            if not math.isfinite(peak) or peak > ceiling:
                 doses = checked.doses_at(reply_token)
                 units = ", ".join(
-                    f"{unit} at {dose:+g}"
+                    f"{unit} at {dose_text(dose)}"
                     for unit, dose in doses.items()
                     if unit.layer == layer
                 )
@@ -276,8 +307,8 @@ def validate(
                     shown = repr(peak)
                 problems.append(
                     f"layer {layer}: the combined push reaches {shown} on "
-                    f"{_pass_name(reply_token)} ({units}), above the ceiling of "
-                    f"{ceiling:g}; set allow_over_ceiling: true to allow it"
+                    f"{describe_pass(reply_token)} ({units}), above the ceiling of "
+                    f"{_exact(ceiling)}; set allow_over_ceiling: true to allow it"
                 )
     if problems:
         listed = "\n".join(f"- {problem}" for problem in problems)

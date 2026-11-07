@@ -32,6 +32,17 @@ def _reply(unit: NeuronUnit, alpha: float, start: int, end: int | None) -> Segme
     return Segment(unit, alpha, alpha, start, end, "reply")
 
 
+def _turns(
+    unit: NeuronUnit, alpha: float, start: int, end: int | None, period: int
+) -> Segment:
+    return Segment(unit, alpha, alpha, start, end, "reply", period, period)
+
+
+def _same_pushes(schedule: Schedule, by_hand: Schedule, passes: int) -> None:
+    for reply_token in [None, *range(passes)]:
+        assert schedule.doses_at(reply_token) == by_hand.doses_at(reply_token)
+
+
 def test_constant_runs_from_the_prompt_pass_to_the_end() -> None:
     assert constant(A, 1.0) == Schedule(
         "constant", [_prompt(A, 1.0), _reply(A, 1.0, 0, None)]
@@ -57,6 +68,12 @@ def test_pulse_later_in_the_reply() -> None:
 def test_a_pulse_lasts_at_least_one_reply_token(length: object) -> None:
     with pytest.raises(ValueError, match="length must be a whole number from 1"):
         pulse(A, 1.0, 0, length)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("start", [None, "abc", [1], -1, 1.5])
+def test_a_pulse_starts_at_a_reply_token(start: object) -> None:
+    with pytest.raises(ValueError, match="start must be a whole number from 0"):
+        pulse(A, 1.0, start, 16)  # type: ignore[arg-type]
 
 
 def test_onset_runs_from_a_reply_token_to_the_end() -> None:
@@ -94,7 +111,7 @@ def test_handoff_without_the_prompt_pass() -> None:
 
 
 def test_handoff_at_0_pushes_a_on_the_prompt_pass_only() -> None:
-    # The research plan's A6: A while reading the prompt, B while writing.
+    # A only while the prompt is read, as in question A6, then B.
     assert handoff(A, B, 1.0, -1.0, 0) == Schedule(
         "handoff", [_prompt(A, 1.0), _reply(B, -1.0, 0, None)]
     )
@@ -136,8 +153,13 @@ def test_a_handoff_where_a_never_pushes_is_refused(extra: dict[str, int]) -> Non
 
 
 def test_alternate_every_4_reply_tokens_from_token_10() -> None:
-    assert alternate(A, B, 1.0, -1.0, period=4, start=10, end=26) == Schedule(
-        "alternate",
+    schedule = alternate(A, B, 1.0, -1.0, period=4, start=10, end=26)
+    assert schedule == Schedule(
+        "alternate", [_turns(A, 1.0, 10, 26, 4), _turns(B, -1.0, 14, 26, 4)]
+    )
+    # The turns, one segment each, as you would write them by hand.
+    by_hand = Schedule(
+        "by-hand",
         [
             _reply(A, 1.0, 10, 14),
             _reply(B, -1.0, 14, 18),
@@ -145,11 +167,25 @@ def test_alternate_every_4_reply_tokens_from_token_10() -> None:
             _reply(B, -1.0, 22, 26),
         ],
     )
+    _same_pushes(schedule, by_hand, 40)
+
+
+def test_alternate_runs_to_the_end_of_the_reply_by_default() -> None:
+    schedule = alternate(A, B, 1.0, -1.0, 4, start=10)
+    assert schedule == Schedule(
+        "alternate", [_turns(A, 1.0, 10, None, 4), _turns(B, -1.0, 14, None, 4)]
+    )
+    assert schedule.doses_at(10**6 + 2) == {A: 1.0}  # (10**6 + 2 - 10) // 4 is even
+    assert schedule.doses_at(10**6 + 6) == {B: -1.0}
 
 
 def test_alternate_cuts_the_last_turn_short_at_its_end() -> None:
-    assert alternate(A, B, 1.0, -1.0, 4, 10, 24) == Schedule(
-        "alternate",
+    schedule = alternate(A, B, 1.0, -1.0, 4, 10, 24)
+    assert schedule == Schedule(
+        "alternate", [_turns(A, 1.0, 10, 24, 4), _turns(B, -1.0, 14, 24, 4)]
+    )
+    by_hand = Schedule(
+        "by-hand",
         [
             _reply(A, 1.0, 10, 14),
             _reply(B, -1.0, 14, 18),
@@ -157,11 +193,13 @@ def test_alternate_cuts_the_last_turn_short_at_its_end() -> None:
             _reply(B, -1.0, 22, 24),
         ],
     )
+    _same_pushes(schedule, by_hand, 40)
 
 
 def test_alternate_every_reply_token() -> None:
-    assert alternate(A, B, 1.0, -1.0, 1, end=4) == Schedule(
-        "alternate",
+    schedule = alternate(A, B, 1.0, -1.0, 1, end=4)
+    by_hand = Schedule(
+        "by-hand",
         [
             _reply(A, 1.0, 0, 1),
             _reply(B, -1.0, 1, 2),
@@ -169,32 +207,30 @@ def test_alternate_every_reply_token() -> None:
             _reply(B, -1.0, 3, 4),
         ],
     )
+    _same_pushes(schedule, by_hand, 10)
 
 
 def test_alternate_can_give_the_prompt_pass_to_a() -> None:
     assert alternate(A, B, 1.0, -1.0, 4, end=8, include_prompt=True) == Schedule(
         "alternate",
-        [_prompt(A, 1.0), _reply(A, 1.0, 0, 4), _reply(B, -1.0, 4, 8)],
+        [_prompt(A, 1.0), _turns(A, 1.0, 0, 8, 4), _turns(B, -1.0, 4, 8, 4)],
     )
-
-
-def test_alternate_needs_an_end() -> None:
-    with pytest.raises(ValueError, match="alternate needs an end"):
-        alternate(A, B, 1.0, -1.0, 4)
 
 
 @pytest.mark.parametrize(
     "numbers, problem",
     [
-        ({"period": 0, "end": 8}, "period must be a whole number from 1"),
-        ({"period": 1.5, "end": 8}, "period must be a whole number from 1"),
-        ({"period": 2, "start": -1, "end": 8}, "start must be a whole number from 0"),
+        ({"period": 0}, "period must be a whole number from 1"),
+        ({"period": 1.5}, "period must be a whole number from 1"),
+        ({"period": 2, "start": -1}, "start must be a whole number from 0"),
         ({"period": 2, "start": 8, "end": 8}, "end must be a reply token after start"),
         ({"period": 2, "start": 8, "end": 4}, "end must be a reply token after start"),
         ({"period": 2, "end": 8.0}, "end must be a reply token after start"),
+        ({"period": 4, "start": 10, "end": 14}, "B would never be pushed"),
+        ({"period": 4, "start": 10, "end": 12}, "B would never be pushed"),
     ],
 )
-def test_alternate_refuses_numbers_that_make_no_turns(
+def test_alternate_refuses_numbers_that_make_no_alternation(
     numbers: dict[str, object], problem: str
 ) -> None:
     with pytest.raises(ValueError, match=problem):
@@ -205,11 +241,11 @@ def test_alternation_puts_exactly_one_unit_on_each_token_of_its_window() -> None
     rng = random.Random(20261107)
     for _ in range(300):
         period, start = rng.randrange(1, 9), rng.randrange(0, 40)
-        end = start + rng.randrange(1, 80)
+        end = rng.choice([None, start + period + rng.randrange(1, 80)])
         schedule = alternate(A, B, 1.0, -1.0, period, start, end)
-        for k in range(start + end + 5):
+        for k in range(start + (end or start + 100) + 5):
             doses = schedule.doses_at(k)
-            if not start <= k < end:
+            if k < start or (end is not None and k >= end):
                 assert doses == {}
             elif (k - start) // period % 2 == 0:
                 assert doses == {A: 1.0}
@@ -222,6 +258,18 @@ def test_ramp_is_one_segment_from_one_dose_to_another() -> None:
     assert ramp(A, 0.0, 1.0, 10, 30) == Schedule(
         "ramp", [Segment(A, 0.0, 1.0, 10, 30, "reply")]
     )
+
+
+@pytest.mark.parametrize("end", [None, 10, 4, 12.0])
+def test_a_ramp_ends_after_it_starts(end: object) -> None:
+    with pytest.raises(ValueError, match="end must be a reply token after start"):
+        ramp(A, 0.0, 1.0, 10, end)  # type: ignore[arg-type]
+
+
+def test_a_ramp_between_two_doses_takes_two_reply_tokens() -> None:
+    with pytest.raises(ValueError, match="a ramp needs at least two reply tokens"):
+        ramp(A, 0.0, 1.0, 10, 11)
+    assert ramp(A, 1.0, 1.0, 10, 11) == pulse(A, 1.0, 10, 1, name="ramp")
 
 
 def test_shapes_take_a_name() -> None:

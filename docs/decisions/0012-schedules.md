@@ -12,7 +12,8 @@ Date: 2026-11-07 · Sprint: S2 · Status: accepted
   - a Segment (unit, alpha_start, alpha_end, start, end, region), whose
     dose moves in a straight line from alpha_start to alpha_end, and a
     Schedule, a name and a list of segments;
-  - six helpers: constant, pulse, onset, handoff, alternate and ramp;
+  - six helpers, among them `alternate(a, b, alpha_a, alpha_b, period,
+    start=0, end=None)`;
   - YAML, as a shape name with parameters or as segments written out;
   - `validate(schedule, model_info, max_new_tokens, ceiling)`, refusing
     unknown units, layers or neurons out of range, a segment that ends
@@ -30,10 +31,12 @@ Date: 2026-11-07 · Sprint: S2 · Status: accepted
 
 ## Decision
 
-**Code.** `src/pushlab/schedules/`: `model.py` (Segment, Schedule),
-`shapes.py` (the six helpers and `SHAPES`), `yaml_io.py` (reading and
-writing) and `validation.py` (`validate`, `layer_peaks`, `DEFAULT_CEILING`,
-`ScheduleWarning`). None of it loads a model.
+**Code.** `src/pushlab/schedules/`: `model.py` (Segment, Schedule,
+`describe_pass`, `dose_text`), `shapes.py` (the six helpers and `SHAPES`),
+`yaml_io.py` (`load_yaml`, `from_yaml`, `to_yaml`, `from_mapping`,
+`to_mapping`, `read_schedule`) and `validation.py` (`validate`,
+`layer_peaks`, `DEFAULT_CEILING`, `ScheduleWarning`). None of it loads a
+model.
 
 **Passes, as decision 0008 counts them.** The decoding loop runs the prompt
 pass, then the pass that reads reply token k, for k from 0. A segment in
@@ -51,21 +54,22 @@ only the prompt pass reaches token 0. For a handoff at 40:
 
 Token 41 is the first that B can change.
 
-**Segment.** Each field is checked on its own when a Segment is made: a
-NeuronUnit, finite doses (kept as floats), start a whole number from 0, end
-None or a whole number from 0, region `prompt` or `reply`. Other regions,
-such as thinking, come with thinking detection. How the fields fit together
-is for `validate`, so that a segment read from a file can be shown with all
-its problems at once.
+**Segment.** The prompt's six fields, then two optional ones, `on_for` and
+`off_for`: a reply segment that repeats is on for on_for tokens from its
+start, off for off_for, on again, until its end. Each field is checked on
+its own when a Segment is made: a NeuronUnit, finite doses (kept as
+floats), start a whole number from 0, end None or a whole number from 0,
+region `prompt` or `reply`, and on_for and off_for both None or both
+whole numbers from 1. Other regions, such as thinking, come with thinking
+detection. How the fields fit together is for `validate`.
 
-**The ramp formula.** On reply token k, a segment's dose is
-
-    alpha_start + (alpha_end - alpha_start) * (k - start) / (end - 1 - start)
-
-so alpha_start goes on its first token, alpha_end exactly on its last
-(end - 1), and the steps between are equal. Equal doses make a constant
-push. A ramp needs an end and at least two reply tokens, and a prompt
-segment cannot ramp. By hand:
+**The ramp formula.** On reply token k, with t = (k - start) / (end - 1 -
+start), a segment's dose is alpha_start + (alpha_end - alpha_start) * t,
+worked as alpha_start * (1 - t) + alpha_end * t so that alpha_start falls
+on its first token and alpha_end on its last (end - 1) exactly, with equal
+steps between. Equal doses make a constant push. A ramp needs an end and
+at least two reply tokens, and a segment that repeats, or a prompt
+segment, cannot ramp. By hand:
 
 | Segment | Doses on its reply tokens |
 | --- | --- |
@@ -85,8 +89,9 @@ segment cannot ramp. By hand:
 | `handoff(A, B, 1, -1, 40)` | A on the prompt pass; A on 0 to 39; B from 40 to the end |
 | `... overlap=2` | A on the prompt pass; A on 0 to 41; B from 40 |
 | `... gap=3` | A on the prompt pass; A on 0 to 39; B from 43 |
-| `handoff(A, B, 1, -1, 0)` | A on the prompt pass only; B from 0 (A6) |
-| `alternate(A, B, 1, -1, 4, 10, 26)` | A on 10 to 13; B on 14 to 17; A on 18 to 21; B on 22 to 25 |
+| `handoff(A, B, 1, -1, 0)` | A on the prompt pass only; B from 0 |
+| `alternate(A, B, 1, -1, 4, 10)` | A from 10, 4 on then 4 off; B from 14, 4 on then 4 off |
+| `alternate(A, B, 1, -1, 4, 10, 26)` | the same, ending before 26: A on 10 to 13 and 18 to 21, B on 14 to 17 and 22 to 25 |
 | `ramp(A, 0, 1, 10, 30)` | A from 0 to 1 on tokens 10 to 29 |
 
 - constant and handoff start with the reply, so they push the prompt pass
@@ -95,20 +100,28 @@ segment cannot ramp. By hand:
   token you choose (pulse, onset, alternate, ramp) push only reply tokens;
   `alternate(..., include_prompt=True)` gives the prompt pass to A.
 - A handoff overlaps or leaves a gap, not both. One where A would push
-  nothing (no prompt pass, switch at 0) is refused.
-- `alternate` lists every turn as a segment, the last cut short at end, so
-  it needs an end: to alternate to the end of the reply, give the reply's
-  max_new_tokens. Its period counts reply tokens.
+  nothing (no prompt pass, switch at 0) is refused, and so is an
+  alternation that ends before B's first turn.
+- An alternation is one repeating segment per unit, so `end=None`, the
+  default, runs it to the end of a reply of any length, and a record holds
+  two segments however short the period. Its period counts reply tokens.
+- Parameters that would push nothing, or not what the shape's name says,
+  are refused when the shape is built: a pulse of no tokens, a ramp of one
+  token, a period of 0, a start or end that is not a reply token.
 
 **YAML.** A schedule is a mapping: `name`, optional `allow_over_ceiling`,
 and either `segments` or `shape` with `params`. A segment takes `unit`,
 `alpha` (a constant push) or `alpha_start` and `alpha_end` (a ramp),
-`start` (default 0), `end` (default null) and `region` (default `reply`).
-Unknown keys, params, shapes and units, a key given twice, and a number
-YAML read as text (`1e-1`, or a quoted number) are refused with a message
-that names them. `to_yaml` always writes the segments out, every field
-given, so `from_yaml(to_yaml(s)) == s` with every dose bit for bit, and a
-file in either form reads back to the same Schedule the helpers build.
+`start` (default 0), `end` (default null), `region` (default `reply`) and,
+when it repeats, `on_for` and `off_for`. Unknown keys, params, shapes and
+units, and a number given as text, are refused with a message that names
+them. `load_yaml` reads the text: a key given twice is refused (keys a
+merge brings in may still be overridden), and numbers and true/false
+follow YAML 1.2, so `010` is not 8, `1:20` is not 80, `1e-1` is a number
+and `yes` is text. `to_yaml` always writes the segments out, so
+`from_yaml(to_yaml(s)) == s` with every dose bit for bit, the sign of a
+zero included, and a file in either form reads back to the same Schedule
+the helpers build.
 
 **validate(schedule, model_info, max_new_tokens, ceiling=1.4).**
 - model_info is the model's registry entry (a ModelSpec): a unit of
@@ -116,31 +129,43 @@ file in either form reads back to the same Schedule the helpers build.
   that each unit's model has this shape and that the units name one model.
 - It refuses, every problem listed in one ValueError: unknown units;
   layers and neurons out of range; a reply segment whose end is not after
-  its start; a prompt segment with a start or end, or a ramp; a ramp with
-  no end, or of one reply token; and a combined push above the ceiling.
+  its start; a prompt segment with a start or end, or that ramps or
+  repeats; a ramp with no end, of one reply token, or that repeats; and a
+  combined push above the ceiling. allow_over_ceiling lifts that last rule
+  and no other.
 - **The combined push** in a layer on a pass is the square root of the
   summed squares of its units' doses there, each unit's dose being the sum
   of its segments on that pass, as the hook adds pushes (decision 0008).
   So two pushes of 1 in one layer give 1.41 and are refused; in two layers
   they pass; +1 and -1 of one unit on the same tokens count as 0, and two
-  +1 segments of one unit as 2. A push exactly at the ceiling passes.
+  +1 segments of one unit as 2. A push exactly at the ceiling passes; one
+  too large for a float is refused.
 - **Every pass is checked:** the prompt pass and every reply token. Between
-  two tokens where a segment starts or ends, each dose moves in a straight
-  line, so the combined push is highest at one end of the stretch, and
-  checking those ends checks every token, however long the reply.
-  `layer_peaks` gives each layer's highest push and the first pass with it;
-  a test compares it with a scan of every pass in 400 random schedules.
+  two tokens where a segment starts, ends, turns on or turns off, each dose
+  is constant or moves in a straight line, so the combined push is highest
+  at one end of the stretch. Past the last start or end, repeating
+  segments repeat together every lcm(cycles) tokens, so one such stretch
+  is enough. `layer_peaks` gives each layer's highest push and the first
+  pass with it, exact up to rounding in the last digit inside a ramp; a
+  test compares it with a scan of every pass in 400 random schedules.
 - The verdict does not depend on max_new_tokens. Only the warnings do: a
-  reply segment whose end is past max_new_tokens, or whose start is past
-  the last pass (max_new_tokens - 2), is accepted with a ScheduleWarning.
-  validate both issues each warning and returns them as a list.
+  reply segment that starts past the last pass (max_new_tokens - 2), whose
+  end is past max_new_tokens, or whose ramp ends on the reply's last
+  token, which no pass reads, is accepted with a ScheduleWarning. validate
+  both issues each warning and returns them as a list.
 
 ## Why this shape
 
+- **Repeating segments.** The prompt's `alternate(..., end=None)` means to
+  the end of the reply, and a list of turns with fixed ends cannot say that
+  without the reply's length. Two optional fields keep the prompt's six,
+  let `end=None` mean what it says, and keep an alternation every token
+  over 600 tokens to two segments in every record.
 - **alpha_end on the last token,** rather than the dose the line would
-  reach at end: every dose written in a schedule is a dose some pass gets,
-  so the ceiling check reads as the file does. A 0-to-1 ramp then a hold
-  at 1 is `ramp(A, 0, 1, 10, 30)` and `onset(A, 1, 30)`.
+  reach at end: the doses written in a schedule are the doses passes get,
+  as long as the reply is long enough (validate warns when it is not), so
+  the ceiling check reads as the file does. A 0-to-1 ramp then a hold at 1
+  is `ramp(A, 0, 1, 10, 30)` and `onset(A, 1, 30)`.
 - **The prompt pass counts for the ceiling,** although the prompt asked
   for reply tokens: the prompt pass is pushed like any other, and Liu's
   collapse point is about the size of a push, not when it comes.
@@ -149,21 +174,29 @@ file in either form reads back to the same Schedule the helpers build.
   is a guard, not a dose that an experiment chooses, and validate takes any
   other ceiling. Liu measured 1.65 for Qwen3.5-4B; each model's own ceiling
   should replace it once the dose ladder measures one.
-- **A ModelSpec rather than only a ModelInfo,** because a shape cannot tell
-  models apart: L14 N8949 is in range for Qwen3-8B too (decision 0006).
+- **A ModelSpec as well as a ModelInfo:** a ModelSpec names the model, so a
+  unit of another model is unknown even when the two have the same shape
+  (as `tiny` and `tiny-lm` do; decision 0006).
+- **YAML 1.2's numbers:** in a project about timing, `start: 010` read as 8
+  would move a window without a word.
 - **Warn and return.** A script that ignores the result still shows the
   warnings; a command can print the list in its own words and ignore
   ScheduleWarning.
-- **Problems all at once:** a schedule file is fixed in one pass.
+- **Problems all at once:** validate lists every problem of a schedule it
+  can read. Reading stops at the first problem in the file itself.
 
 ## Consequences
 
 - The engine does not follow schedules yet. The next step can build its
   per-pass amounts from `Schedule.doses_at`, which lists a unit pushed at
   dose 0 apart from one not pushed, and should call `validate` first.
-- An alternation every token over 600 tokens is 600 segments. A compact
-  stored form for runs, and S1's run records read as schedules, are left
-  for the steps that store schedules.
+- An experiment file that holds a schedule should be read with
+  `load_yaml`, so its keys and numbers are read as a schedule file's are.
+- A run's stored schedule is left for the steps that store schedules. The
+  segments written here are not S1's records: `pushlab report`'s
+  `describe_push` reads `include_prompt` and `alpha`, so it must learn
+  `region`, `alpha_start`, `alpha_end`, `on_for` and `off_for`, or refuse
+  them, before these are stored as they are.
 - Every model gets the same ceiling until one is measured, and a schedule
   over it says so only through `allow_over_ceiling`; no run records it yet.
 - Schedule names follow experiment names (lowercase letters and digits

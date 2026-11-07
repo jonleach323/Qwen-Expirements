@@ -10,9 +10,10 @@ choose (pulse, onset, alternate, ramp) push only reply tokens unless told
 otherwise. Every helper takes a keyword-only name, which defaults to the
 shape's own.
 
-Parameters that make no segment (a period of 0, an alternation with no end)
-are refused here. How the segments fit together, and whether they suit a
-model, is for pushlab.schedules.validation.validate.
+Parameters that would push nothing, or not what the shape's name says (a
+pulse of no tokens, a period of 0, an alternation that ends before B's first
+turn, a ramp of one token), are refused here. Whether the segments suit a
+model and a reply length is for pushlab.schedules.validation.validate.
 """
 
 from collections.abc import Callable
@@ -25,6 +26,14 @@ def _whole(name: str, value: object, minimum: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
         raise ValueError(f"{name} must be a whole number from {minimum}, not {value!r}")
     return value
+
+
+def _token_after(start: int, end: object) -> int:
+    if not isinstance(end, int) or isinstance(end, bool) or end <= start:
+        raise ValueError(
+            f"end must be a reply token after start ({start}), not {end!r}"
+        )
+    return end
 
 
 def _named(name: str | None, default: str) -> str:
@@ -88,6 +97,7 @@ def pulse(
         >>> pulse(unit, 1.0, 0, 16).segments[0].describe()
         'qwen3.5-4b:L14:N8949 at +1 on reply tokens 0 to 15'
     """
+    _whole("start", start, 0)
     _whole("length", length, 1)
     return Schedule(
         _named(name, "pulse"), [_on_reply(unit, alpha, start, start + length)]
@@ -176,41 +186,43 @@ def alternate(
 ) -> Schedule:
     """A and B take turns every period reply tokens, A first, from start to end.
 
-    Each turn is a segment of its own: A on start to start + period - 1, B on
-    the next period tokens, and so on; the last turn stops at end (not
-    included). period counts reply tokens, so B's first pass is the one that
-    reads token start + period and first changes the token after it. end is
-    required: a schedule lists every turn, so to alternate to the end of the
-    reply give the reply's max_new_tokens. With include_prompt=True, A also
-    pushes the prompt pass.
+    end is not included, and None, the default, runs to the end of the reply.
+    Each unit is one segment that repeats (Segment.on_for and off_for): A is
+    on for period tokens from start, then off for period, and B, starting
+    period tokens later, is on while A is off. The last turn stops at end.
+    period counts reply tokens, so B's first pass is the one that reads token
+    start + period, and it first changes the token after it. With
+    include_prompt=True, A also pushes the prompt pass.
 
     Example:
         >>> a = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
         >>> b = NeuronUnit.parse("qwen3.5-4b:L13:N7956")
-        >>> for segment in alternate(a, b, 1.0, -1.0, 4, start=10, end=24).segments:
+        >>> schedule = alternate(a, b, 1.0, -1.0, 4, start=10)
+        >>> for segment in schedule.segments:
         ...     print(segment.describe())
-        qwen3.5-4b:L14:N8949 at +1 on reply tokens 10 to 13
-        qwen3.5-4b:L13:N7956 at -1 on reply tokens 14 to 17
-        qwen3.5-4b:L14:N8949 at +1 on reply tokens 18 to 21
-        qwen3.5-4b:L13:N7956 at -1 on reply tokens 22 to 23
+        qwen3.5-4b:L14:N8949 at +1 from reply token 10 to the end, 4 on then 4 off
+        qwen3.5-4b:L13:N7956 at -1 from reply token 14 to the end, 4 on then 4 off
+        >>> turns = [schedule.doses_at(k) for k in range(8, 28)]
+        >>> "".join("A" if a in on else "B" if b in on else "." for on in turns)
+        '..AAAABBBBAAAABBBBAA'
     """
     _whole("period", period, 1)
     _whole("start", start, 0)
-    if end is None:
-        raise ValueError(
-            "alternate needs an end: a schedule lists every turn as a segment, "
-            "so to alternate to the end of the reply, give end=max_new_tokens"
-        )
-    if not isinstance(end, int) or isinstance(end, bool) or end <= start:
-        raise ValueError(
-            f"end must be a reply token after start ({start}), not {end!r}"
-        )
+    if end is not None:
+        _token_after(start, end)
+        if end <= start + period:
+            raise ValueError(
+                f"B would never be pushed: the alternation stops at reply token "
+                f"{end}, and B's first turn starts at {start + period}; give an "
+                f"end after {start + period}, or use pulse() for A alone"
+            )
     segments = (
         [_on_prompt(a, alpha_a)] if _flag("include_prompt", include_prompt) else []
     )
-    for turn, first in enumerate(range(start, end, period)):
-        unit, alpha = (a, alpha_a) if turn % 2 == 0 else (b, alpha_b)
-        segments.append(_on_reply(unit, alpha, first, min(first + period, end)))
+    for unit, alpha, first in ((a, alpha_a, start), (b, alpha_b, start + period)):
+        segments.append(
+            Segment(unit, alpha, alpha, first, end, "reply", period, period)
+        )
     return Schedule(_named(name, "alternate"), segments)
 
 
@@ -226,8 +238,9 @@ def ramp(
     """One neuron whose dose moves in a straight line over reply tokens start to end.
 
     alpha_from goes on reply token start and alpha_to on end - 1, with equal
-    steps between (Segment.alpha_at). A dose held after the ramp is a segment
-    of its own, such as onset(unit, alpha_to, end).
+    steps between (Segment.alpha_at), so a ramp with two different doses needs
+    at least two reply tokens. A dose held after the ramp is a segment of its
+    own, such as onset(unit, alpha_to, end).
 
     Example:
         >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
@@ -235,9 +248,14 @@ def ramp(
         >>> [round(up.alpha_at(k), 3) for k in range(10, 14)]
         [0.0, 0.333, 0.667, 1.0]
     """
-    return Schedule(
-        _named(name, "ramp"), [Segment(unit, alpha_from, alpha_to, start, end)]
-    )
+    _whole("start", start, 0)
+    segment = Segment(unit, alpha_from, alpha_to, start, _token_after(start, end))
+    if segment.alpha_start != segment.alpha_end and end - start < 2:
+        raise ValueError(
+            f"a ramp needs at least two reply tokens, alpha_from on the first and "
+            f"alpha_to on the last, not only reply token {start}"
+        )
+    return Schedule(_named(name, "ramp"), [segment])
 
 
 # Every shape by name, as schedule files name them.

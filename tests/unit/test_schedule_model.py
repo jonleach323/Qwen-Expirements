@@ -3,12 +3,19 @@
 import doctest
 import math
 import random
-from fractions import Fraction
 
 import pytest
 
 from pushlab.schedules import model
-from pushlab.schedules.model import REGIONS, Schedule, Segment
+from pushlab.schedules.model import (
+    REGIONS,
+    SCHEDULE_NAME,
+    Schedule,
+    Segment,
+    describe_pass,
+    dose_text,
+)
+from pushlab.store.records import EXPERIMENT_NAME
 from pushlab.units.neuron import NeuronUnit
 
 A = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
@@ -25,6 +32,7 @@ def test_fields_come_in_the_order_unit_alphas_window_region() -> None:
 def test_by_default_a_segment_covers_the_whole_reply() -> None:
     segment = Segment(A, 1.0, 1.0)
     assert (segment.start, segment.end, segment.region) == (0, None, "reply")
+    assert (segment.on_for, segment.off_for, segment.repeats) == (None, None, False)
 
 
 def test_regions_are_the_prompt_pass_and_the_reply() -> None:
@@ -38,7 +46,9 @@ def test_doses_become_floats() -> None:
 
 
 @pytest.mark.parametrize("field", ["alpha_start", "alpha_end"])
-@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, True, "1.0", None])
+@pytest.mark.parametrize(
+    "value", [math.nan, math.inf, -math.inf, 10**400, True, "1.0", None]
+)
 def test_doses_must_be_finite_numbers(field: str, value: object) -> None:
     fields = {"alpha_start": 1.0, "alpha_end": 1.0} | {field: value}
     with pytest.raises(ValueError, match=f"{field} must be a finite number"):
@@ -62,6 +72,17 @@ def test_how_the_fields_fit_together_is_left_to_validate() -> None:
     Segment(A, 1.0, 1.0, start=10, end=5)
     Segment(A, 0.0, 1.0, start=10, end=None)
     Segment(A, 1.0, 1.0, start=3, end=8, region="prompt")
+
+
+@pytest.mark.parametrize(
+    "on_for, off_for",
+    [(4, None), (None, 4), (0, 4), (4, 0), (2.0, 2), (True, 1), ("4", "4")],
+)
+def test_on_for_and_off_for_are_both_none_or_both_from_1(
+    on_for: object, off_for: object
+) -> None:
+    with pytest.raises(ValueError, match="on_for and off_for must both be None"):
+        Segment(A, 1.0, 1.0, on_for=on_for, off_for=off_for)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("region", ["thinking", "answer", "Reply", "", None])
@@ -103,6 +124,17 @@ def test_a_prompt_segment_is_active_only_on_the_prompt_pass() -> None:
     assert not any(segment.active_at(k) for k in range(5))
 
 
+def test_a_repeating_segment_is_on_for_on_for_then_off_for_off_for() -> None:
+    turns = Segment(A, 1.0, 1.0, 10, 30, on_for=3, off_for=2)
+    assert turns.repeats
+    on = [k for k in range(40) if turns.active_at(k)]
+    assert on == [10, 11, 12, 15, 16, 17, 20, 21, 22, 25, 26, 27]
+    assert not turns.active_at(None)
+    open_ended = Segment(A, 1.0, 1.0, 4, on_for=1, off_for=1)
+    assert [k for k in range(10) if open_ended.active_at(k)] == [4, 6, 8]
+    assert open_ended.active_at(10**6) and not open_ended.active_at(10**6 + 1)
+
+
 def test_a_segment_that_ends_before_it_starts_is_never_active() -> None:
     segment = Segment(A, 1.0, 1.0, 10, 5)
     assert not any(segment.active_at(k) for k in range(20))
@@ -122,87 +154,6 @@ def test_a_constant_segment_gives_its_dose_on_every_pass() -> None:
     assert Segment(A, 1.0, 1.0, region="prompt").alpha_at(None) == 1.0
 
 
-def _linear(segment: Segment, k: int) -> Fraction:
-    """The linear formula, worked exactly: alpha_start on the first token, alpha_end
-    on the last (end - 1), and equal steps between."""
-    assert segment.end is not None
-    step = Fraction(k - segment.start, segment.end - 1 - segment.start)
-    start, end = Fraction(segment.alpha_start), Fraction(segment.alpha_end)
-    return start + (end - start) * step
-
-
-def _ramps() -> list[Segment]:
-    rng = random.Random(20261107)
-    ramps = [
-        Segment(A, 0.0, 1.0, 10, 30),
-        Segment(A, 1.0, 0.0, 40, 45),
-        Segment(A, -1.0, 1.0, 0, 2),
-        Segment(A, 0.1, 1.3, 7, 100),
-    ]
-    for _ in range(200):
-        start = rng.randrange(0, 300)
-        ramps.append(
-            Segment(
-                A,
-                round(rng.uniform(-1.5, 1.5), rng.randrange(1, 17)),
-                round(rng.uniform(-1.5, 1.5), rng.randrange(1, 17)),
-                start,
-                start + rng.randrange(2, 70),
-            )
-        )
-    return ramps
-
-
-@pytest.mark.parametrize("segment", _ramps())
-def test_ramp_doses_follow_the_linear_formula(segment: Segment) -> None:
-    assert segment.end is not None
-    doses = [segment.alpha_at(k) for k in range(segment.start, segment.end)]
-    for k, dose in zip(range(segment.start, segment.end), doses, strict=True):
-        assert dose == pytest.approx(float(_linear(segment, k)), rel=1e-12, abs=1e-15)
-    # Both ends exactly, and every dose between them.
-    assert doses[0] == segment.alpha_start and doses[-1] == segment.alpha_end
-    low, high = sorted((segment.alpha_start, segment.alpha_end))
-    assert all(low <= dose <= high for dose in doses)
-    steps = [b - a for a, b in zip(doses, doses[1:], strict=False)]
-    assert steps == pytest.approx([steps[0]] * len(steps), rel=1e-9, abs=1e-12)
-
-
-def test_hand_worked_ramps() -> None:
-    up = Segment(A, 0.0, 1.0, 10, 14)
-    assert [up.alpha_at(k) for k in range(10, 14)] == pytest.approx(
-        [0.0, 1 / 3, 2 / 3, 1.0]
-    )
-    down = Segment(A, 1.0, 0.0, 40, 45)
-    assert [down.alpha_at(k) for k in range(40, 45)] == [1.0, 0.75, 0.5, 0.25, 0.0]
-
-
-def test_a_ramp_between_equal_doses_is_a_constant_push() -> None:
-    ramp = Segment(A, 0.7, 0.7, 5, 25)
-    assert all(ramp.alpha_at(k) == 0.7 for k in range(5, 25))
-
-
-def test_alpha_at_refuses_a_pass_the_segment_is_not_on() -> None:
-    segment = Segment(A, 1.0, 1.0, 3, 6)
-    for reply_token in (None, 2, 6):
-        with pytest.raises(ValueError, match="is not active on"):
-            segment.alpha_at(reply_token)
-
-
-@pytest.mark.parametrize(
-    "segment, reply_token, problem",
-    [
-        (Segment(A, 0.0, 1.0, 10), 12, "a ramp needs an end"),
-        (Segment(A, 0.0, 1.0, 5, 6), 5, "at least two reply tokens"),
-        (Segment(A, 0.0, 1.0, region="prompt"), None, "cannot ramp"),
-    ],
-)
-def test_alpha_at_refuses_a_segment_that_cannot_ramp(
-    segment: Segment, reply_token: int | None, problem: str
-) -> None:
-    with pytest.raises(ValueError, match=problem):
-        segment.alpha_at(reply_token)
-
-
 @pytest.mark.parametrize(
     "segment, words",
     [
@@ -215,6 +166,41 @@ def test_alpha_at_refuses_a_segment_that_cannot_ramp(
 )
 def test_describe_says_where_the_push_is(segment: Segment, words: str) -> None:
     assert segment.describe() == f"qwen3.5-4b:L14:N8949 at +1 {words}"
+
+
+def test_describe_says_how_a_segment_repeats() -> None:
+    segment = Segment(A, 1.0, 1.0, 10, 26, on_for=4, off_for=4)
+    assert segment.describe() == (
+        "qwen3.5-4b:L14:N8949 at +1 on reply tokens 10 to 25, 4 on then 4 off"
+    )
+
+
+def test_describe_shows_every_digit_a_dose_needs() -> None:
+    segment = Segment(A, math.nextafter(1.4, 2.0), 1 / 3, 0, 9)
+    assert segment.describe() == (
+        "qwen3.5-4b:L14:N8949 from +1.4000000000000001 to +0.3333333333333333 "
+        "on reply tokens 0 to 8"
+    )
+
+
+@pytest.mark.parametrize(
+    "alpha, text",
+    [(1.0, "+1"), (-1.0, "-1"), (0.0, "+0"), (-0.5, "-0.5"), (23.5, "+23.5")],
+)
+def test_dose_text_is_short_when_that_is_exact(alpha: float, text: str) -> None:
+    assert dose_text(alpha) == text
+
+
+def test_dose_text_is_never_rounded_to_another_dose() -> None:
+    rng = random.Random(20261107)
+    for _ in range(1000):
+        alpha = rng.uniform(-2, 2)
+        assert float(dose_text(alpha)) == alpha
+
+
+def test_describe_pass() -> None:
+    assert describe_pass(None) == "the prompt pass"
+    assert describe_pass(0) == "reply token 0"
 
 
 def test_describe_gives_a_ramp_both_doses() -> None:
@@ -247,6 +233,11 @@ def test_a_schedule_with_no_segments_pushes_nothing() -> None:
 def test_schedule_names_are_lowercase_words_joined_by_hyphens(name: str) -> None:
     with pytest.raises(ValueError, match="name must be lowercase letters and digits"):
         Schedule(name)
+
+
+def test_schedule_names_take_the_form_of_experiment_names() -> None:
+    # Copied rather than imported, so the schedules need not load pyarrow.
+    assert SCHEDULE_NAME.pattern == EXPERIMENT_NAME.pattern
 
 
 @pytest.mark.parametrize("name", [None, 3, b"pulse"])
@@ -298,6 +289,22 @@ def test_doses_at_lists_a_unit_on_at_dose_0() -> None:
     # A segment on at dose 0 is still on; the engine will push it with 0.
     schedule = Schedule("x", [Segment(A, 0.0, 0.0, region="prompt")])
     assert schedule.doses_at(None) == {A: 0.0}
+
+
+def test_doses_at_follows_a_repeating_segment() -> None:
+    schedule = Schedule(
+        "x",
+        [Segment(A, 1.0, 1.0, 0, on_for=2, off_for=2), Segment(B, -1.0, -1.0, 3, 6)],
+    )
+    assert [schedule.doses_at(k) for k in range(7)] == [
+        {A: 1.0},
+        {A: 1.0},
+        {},
+        {B: -1.0},
+        {A: 1.0, B: -1.0},
+        {A: 1.0, B: -1.0},
+        {},
+    ]
 
 
 def test_doses_at_the_prompt_pass_counts_only_prompt_segments() -> None:

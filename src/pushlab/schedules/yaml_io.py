@@ -18,14 +18,20 @@ or its segments, one mapping each:
 
 A segment takes alpha for a constant push, or alpha_start and alpha_end for a
 ramp; start defaults to 0, end to null (the end of the reply) and region to
-reply. allow_over_ceiling: true lets validate() accept a combined push above
-the dose ceiling. Unknown keys, params, shapes and units are refused with a
-message that names them, and so is a key given twice. Schedules are always
-written out as segments, every field given, so reading one back gives an
-equal schedule, every dose bit for bit.
+reply. A segment that repeats also takes on_for and off_for.
+allow_over_ceiling: true lets validate() accept a combined push above the dose
+ceiling. Unknown keys, params, shapes and units are refused with a message that
+names them. Schedules are always written out as segments, so reading one back
+gives an equal schedule, every dose bit for bit.
+
+load_yaml reads the text more strictly than PyYAML's safe_load: a key given
+twice is refused, not overwritten, and numbers and true/false follow YAML 1.2,
+so 010 is not 8 (octal), 1:20 is not 80 (base 60), 1e-1 is a number and yes is
+text. An experiment file that holds a schedule should be read with it too.
 """
 
 import inspect
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -37,22 +43,32 @@ from pushlab.schedules.shapes import SHAPES
 from pushlab.units.neuron import NeuronUnit
 
 SCHEDULE_KEYS = ("name", "allow_over_ceiling", "segments", "shape", "params")
-SEGMENT_KEYS = ("unit", "alpha", "alpha_start", "alpha_end", "start", "end", "region")
+SEGMENT_KEYS = (
+    "unit",
+    "alpha",
+    "alpha_start",
+    "alpha_end",
+    "start",
+    "end",
+    "region",
+    "on_for",
+    "off_for",
+)
 # The shapes' params that name a unit, as text such as qwen3.5-4b:L14:N8949.
 UNIT_PARAMS = ("unit", "a", "b")
 
+_BOOL, _INT, _FLOAT = (f"tag:yaml.org,2002:{tag}" for tag in ("bool", "int", "float"))
+_MERGE = "tag:yaml.org,2002:merge"
 
-class _UniqueKeyLoader(yaml.SafeLoader):
-    """PyYAML's safe loader, except that a key given twice is refused.
 
-    PyYAML keeps the last of two equal keys without a word, so a file that
-    gives alpha twice would push the second dose.
-    """
+class _ScheduleLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, with a key given twice refused (merges excepted)."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
-        self.flatten_mapping(node)  # resolves merge keys (<<) first, as PyYAML does
         seen = set()
         for key_node, _ in node.value:
+            if key_node.tag == _MERGE:  # "<<: *base": its keys may be overridden
+                continue
             key = self.construct_object(key_node, deep=deep)
             try:
                 repeated = key in seen
@@ -66,6 +82,44 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+# YAML 1.2's true/false, decimal integers and floats in place of YAML 1.1's,
+# which read yes and on as true, 010 as 8 and 1:20 as 80, and 1e-1 as text.
+_ScheduleLoader.yaml_implicit_resolvers = {
+    first: [
+        (tag, regexp) for tag, regexp in resolvers if tag not in (_BOOL, _INT, _FLOAT)
+    ]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+for _tag, _pattern, _first in [
+    (_BOOL, r"true|True|TRUE|false|False|FALSE", "tTfF"),
+    (_INT, r"[-+]?(?:0|[1-9][0-9]*)", "-+0123456789"),
+    (
+        _FLOAT,
+        r"[-+]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|[0-9]+[eE][-+]?[0-9]+)"
+        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)",
+        "-+0123456789.",
+    ),
+]:
+    _ScheduleLoader.add_implicit_resolver(_tag, re.compile(f"^(?:{_pattern})$"), _first)
+
+
+def load_yaml(text: str) -> Any:
+    """Parse YAML text as schedule files are read (see the module's docstring).
+
+    Example:
+        >>> load_yaml("start: 010\\nend: 16\\nalpha: 1e-1\\ninclude_prompt: yes")
+        {'start': '010', 'end': 16, 'alpha': 0.1, 'include_prompt': 'yes'}
+        >>> load_yaml("alpha: 1\\nalpha: 2")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: the text is not valid YAML: ...duplicate key 'alpha'...
+    """
+    try:
+        return yaml.load(text, Loader=_ScheduleLoader)  # safe: a SafeLoader
+    except (yaml.YAMLError, ValueError) as error:  # ValueError: a bad date, say
+        raise ValueError(f"the text is not valid YAML: {error}") from None
+
+
 def _keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
     unknown = [key for key in given if key not in allowed]
     if unknown:
@@ -74,16 +128,15 @@ def _keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
 
 
 def _number_as_text(where: str, key: str, value: object) -> None:
-    """Refuse a number YAML read as text, such as 1e-1, with the reason."""
+    """Refuse a number that YAML read as text, such as '16' or 010, by name."""
     if isinstance(value, str):
         try:
             float(value)
         except ValueError:
             return
         raise ValueError(
-            f"{where}: {key} is the text {value!r}, not a number; YAML reads a "
-            "quoted number, or one such as 1e-1 with no decimal point, as text: "
-            "write 0.1 or 1.0e-1"
+            f"{where}: {key} is the text {value!r}, not a number; write a plain "
+            "decimal number, without quotes or leading zeros, such as 16 or 0.5"
         )
 
 
@@ -100,8 +153,9 @@ def _segment(data: object, where: str) -> Segment:
     _keys(data, SEGMENT_KEYS, where)
     if "unit" not in data:
         raise ValueError(f"{where} needs a unit, such as qwen3.5-4b:L14:N8949")
-    for key in ("alpha", "alpha_start", "alpha_end", "start", "end"):
-        _number_as_text(where, key, data.get(key))
+    for key in SEGMENT_KEYS:
+        if key not in ("unit", "region"):
+            _number_as_text(where, key, data.get(key))
     if "alpha" in data:
         if "alpha_start" in data or "alpha_end" in data:
             raise ValueError(
@@ -114,18 +168,19 @@ def _segment(data: object, where: str) -> Segment:
         raise ValueError(f"{where}: give alpha_start and alpha_end together")
     else:
         raise ValueError(f"{where} needs alpha, or alpha_start and alpha_end")
+    unit = _unit(where, data["unit"])
     try:
         return Segment(
-            _unit(where, data["unit"]),
+            unit,
             alpha_start,
             alpha_end,
             data.get("start", 0),
             data.get("end"),
             data.get("region", "reply"),
+            data.get("on_for"),
+            data.get("off_for"),
         )
     except ValueError as error:
-        if str(error).startswith(where):
-            raise
         raise ValueError(f"{where}: {error}") from None
 
 
@@ -168,6 +223,9 @@ def _from_shape(shape: object, params: object) -> list[Segment]:
 def from_mapping(data: Mapping) -> Schedule:
     """Read a schedule from a mapping, such as one inside an experiment file.
 
+    Parse the file with load_yaml: other loaders keep the last of two equal
+    keys and read 010 as 8, and from_mapping cannot see either.
+
     Example:
         >>> schedule = from_mapping(
         ...     {
@@ -190,8 +248,14 @@ def from_mapping(data: Mapping) -> Schedule:
             f"shape with params, not {data!r}"
         )
     _keys(data, SCHEDULE_KEYS, "the schedule")
-    if "name" not in data:
+    name = data.get("name")
+    if name is None:
         raise ValueError("the schedule needs a name, such as pulse16")
+    if not isinstance(name, str):
+        raise ValueError(
+            f"the schedule's name must be text, but YAML read {name!r}; "
+            "put it in quotes"
+        )
     if "segments" in data and ("shape" in data or "params" in data):
         raise ValueError("give the schedule's segments or a shape, not both")
     if "segments" in data:
@@ -203,20 +267,21 @@ def from_mapping(data: Mapping) -> Schedule:
         segments = _from_shape(data["shape"], data.get("params"))
     else:
         raise ValueError("give segments, or a shape with params")
-    return Schedule(data["name"], segments, data.get("allow_over_ceiling", False))
+    return Schedule(name, segments, data.get("allow_over_ceiling", False))
 
 
 def _check_schedule(schedule: object) -> Schedule:
     if not isinstance(schedule, Schedule):
-        raise ValueError(f"{schedule!r} is not a Schedule")
+        raise ValueError(f"a {type(schedule).__name__} is not a Schedule")
     return schedule
 
 
 def to_mapping(schedule: Schedule) -> dict[str, Any]:
     """The schedule as a mapping with every segment written out, ready for YAML.
 
-    A constant segment gets alpha, a ramp alpha_start and alpha_end; every
-    segment gets its start, end and region.
+    A constant segment gets alpha, a ramp alpha_start and alpha_end. Every
+    segment gets its start, end and region, and one that repeats its on_for
+    and off_for.
 
     Example:
         >>> from pushlab.schedules.shapes import onset
@@ -230,15 +295,17 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
     """
     segments = []
     for segment in _check_schedule(schedule).segments:
-        if segment.alpha_start == segment.alpha_end:
-            doses = {"alpha": segment.alpha_start}
-        else:
-            doses = {"alpha_start": segment.alpha_start, "alpha_end": segment.alpha_end}
-        segments.append(
-            {"unit": str(segment.unit)}
-            | doses
-            | {"start": segment.start, "end": segment.end, "region": segment.region}
+        start, end = segment.alpha_start, segment.alpha_end
+        # The same bits, so a dose of 0.0 next to -0.0 keeps both signs.
+        doses = (
+            {"alpha": start}
+            if start.hex() == end.hex()
+            else {"alpha_start": start, "alpha_end": end}
         )
+        window = {"start": segment.start, "end": segment.end, "region": segment.region}
+        if segment.repeats:
+            window |= {"on_for": segment.on_for, "off_for": segment.off_for}
+        segments.append({"unit": str(segment.unit)} | doses | window)
     return {
         "name": schedule.name,
         "allow_over_ceiling": schedule.allow_over_ceiling,
@@ -258,11 +325,7 @@ def from_yaml(text: str) -> Schedule:
         >>> schedule.name, schedule.segments[0].start, schedule.segments[0].end
         ('late', 50, None)
     """
-    try:
-        data = yaml.load(text, Loader=_UniqueKeyLoader)  # safe: a SafeLoader
-    except yaml.YAMLError as error:
-        raise ValueError(f"the schedule is not valid YAML: {error}") from None
-    return from_mapping(data)
+    return from_mapping(load_yaml(text))
 
 
 def to_yaml(schedule: Schedule) -> str:
@@ -292,8 +355,7 @@ def read_schedule(path: str | Path) -> Schedule:
         Schedule(name='pulse16', segments=(...), allow_over_ceiling=False)
     """
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
     try:
-        return from_yaml(text)
-    except ValueError as error:
+        return from_yaml(path.read_text(encoding="utf-8"))
+    except ValueError as error:  # UnicodeDecodeError, for a file not in UTF-8, too
         raise ValueError(f"{path}: {error}") from None

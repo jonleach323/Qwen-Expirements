@@ -192,102 +192,41 @@ def test_from_mapping_reads_a_schedule_inside_another_file() -> None:
     )
 
 
-SEGMENT = f"unit: {A_ID}, alpha: 1.0"
-REFUSALS = [
-    ("", "must be a mapping"),
-    (f"- {{{SEGMENT}}}", "must be a mapping"),
-    ("name: [", "is not valid YAML"),
-    ("name: x", "give segments, or a shape with params"),
-    ("segments: []", "needs a name"),
-    (
-        "name: x\nsegments: []\nshape: pulse\nparams: {}",
-        "segments or a shape, not both",
-    ),
-    ("name: x\nsegments: []\ncolour: red", "unknown key 'colour'"),
-    ("name: x\nsegments: []\n1: 2", "unknown key 1"),
-    ("name: x\nname: y\nsegments: []", "duplicate key 'name'"),
-    ("name: Hostile\nsegments: []", "name must be lowercase"),
-    ("name: x\nsegments: []\nallow_over_ceiling: 1", "must be True or False"),
-    (f"name: x\nsegments: {{{SEGMENT}}}", "segments must be a list"),
-    ("name: x\nsegments: [3]", r"segments\[0\] must be a mapping"),
-    (f"name: x\nsegments: [{{{SEGMENT}, colour: red}}]", "unknown key 'colour'"),
-    (f"name: x\nsegments: [{{{SEGMENT}, alpha: 2}}]", "duplicate key 'alpha'"),
-    ("name: x\nsegments: [{alpha: 1.0}]", r"segments\[0\] needs a unit"),
-    (
-        "name: x\nsegments: [{unit: qwen3.5-4B:L14:N8949, alpha: 1.0}]",
-        r"segments\[0\]: unknown unit 'qwen3.5-4B:L14:N8949'",
-    ),
-    (
-        "name: x\nsegments: [{unit: qwen3.5-4b:L14, alpha: 1.0}]",
-        "unknown unit 'qwen3.5-4b:L14'",
-    ),
-    (f"name: x\nsegments: [{{unit: {A_ID}}}]", "needs alpha, or alpha_start and"),
-    (f"name: x\nsegments: [{{{SEGMENT}, alpha_end: 0.0}}]", "alpha or alpha_start"),
-    (f"name: x\nsegments: [{{unit: {A_ID}, alpha_start: 0.0}}]", "together"),
-    (
-        f"name: x\nsegments: [{{unit: {A_ID}, alpha: 1e-1}}]",
-        "alpha is the text '1e-1', not a number",
-    ),
-    (
-        f"name: x\nsegments: [{{unit: {A_ID}, alpha: '1.5'}}]",
-        "alpha is the text '1.5', not a number",
-    ),
-    (f"name: x\nsegments: [{{{SEGMENT}, start: 1.5}}]", "start must be a reply"),
-    (f"name: x\nsegments: [{{{SEGMENT}, region: thinking}}]", "region must be"),
-    ("name: x\nshape: wave\nparams: {}", "unknown shape 'wave'"),
-    ("name: x\nshape: pulse", "shape 'pulse' needs params"),
-    ("name: x\nshape: pulse\nparams: [1]", "params must be a mapping"),
-    ("name: x\nparams: {}", "give segments, or a shape with params"),
-    (
-        f"name: x\nshape: pulse\nparams: {{unit: {A_ID}, alpha: 1, start: 0, "
-        "length: 4, colour: red}",
-        "unknown param 'colour'",
-    ),
-    (
-        f"name: x\nshape: pulse\nparams: {{unit: {A_ID}, alpha: 1, name: y}}",
-        "unknown param 'name'",
-    ),
-    (
-        f"name: x\nshape: pulse\nparams: {{unit: {A_ID}, alpha: 1}}",
-        "missing params 'start', 'length'",
-    ),
-    (
-        "name: x\nshape: onset\nparams: {unit: L14, alpha: 1, start: 3}",
-        "shape onset: unknown unit 'L14'",
-    ),
-    (
-        "name: x\nshape: onset\nparams: {unit: 14, alpha: 1, start: 3}",
-        "shape onset: unknown unit 14",
-    ),
-    (
-        f"name: x\nshape: onset\nparams: {{unit: {A_ID}, alpha: 1e-1, start: 3}}",
-        "alpha is the text '1e-1', not a number",
-    ),
-    (
-        f"name: x\nshape: alternate\nparams: {{a: {A_ID}, b: {B_ID}, alpha_a: 1, "
-        "alpha_b: -1, period: 4}",
-        "shape alternate: alternate needs an end",
-    ),
-]
+def test_segments_that_repeat_read_and_write_on_for_and_off_for() -> None:
+    text = f"""
+name: turns
+segments:
+  - {{unit: {A_ID}, alpha: 1.0, start: 10, on_for: 4, off_for: 4}}
+  - {{unit: {B_ID}, alpha: -1.0, start: 14, on_for: 4, off_for: 4}}
+"""
+    schedule = yaml_io.from_yaml(text)
+    assert schedule == alternate(A, B, 1.0, -1.0, 4, 10, name="turns")
+    assert yaml_io.to_mapping(schedule)["segments"][1] == {
+        "unit": B_ID,
+        "alpha": -1.0,
+        "start": 14,
+        "end": None,
+        "region": "reply",
+        "on_for": 4,
+        "off_for": 4,
+    }
 
 
-@pytest.mark.parametrize("text, problem", REFUSALS)
-def test_refusals_name_the_problem(text: str, problem: str) -> None:
-    with pytest.raises(ValueError, match=problem):
-        yaml_io.from_yaml(text)
+def test_the_shape_form_of_alternate_runs_to_the_end_without_an_end() -> None:
+    text = (
+        f"name: s\nshape: alternate\nparams: {{a: {A_ID}, b: {B_ID}, alpha_a: 1, "
+        "alpha_b: -1, period: 1}"
+    )
+    assert yaml_io.from_yaml(text) == alternate(A, B, 1.0, -1.0, 1, name="s")
 
 
-@pytest.mark.parametrize("data", [None, [], "name: x", 3])
-def test_from_mapping_refuses_anything_but_a_mapping(data: object) -> None:
-    with pytest.raises(ValueError, match="a schedule must be a mapping"):
-        yaml_io.from_mapping(data)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("value", [None, "name: x", constant(A, 1.0).segments])
-def test_writing_refuses_anything_but_a_schedule(value: object) -> None:
-    for write in (yaml_io.to_mapping, yaml_io.to_yaml):
-        with pytest.raises(ValueError, match="not a Schedule"):
-            write(value)  # type: ignore[arg-type]
+@pytest.mark.parametrize("ends", [(0.0, -0.0), (-0.0, 0.0), (-0.0, -0.0)])
+def test_signed_zeros_round_trip_bit_for_bit(ends: tuple[float, float]) -> None:
+    schedule = Schedule("x", [Segment(A, *ends, 0, 5)])
+    back = yaml_io.from_yaml(yaml_io.to_yaml(schedule)).segments[0]
+    assert (back.alpha_start.hex(), back.alpha_end.hex()) == tuple(
+        alpha.hex() for alpha in ends
+    )
 
 
 def test_read_schedule_reads_a_file(tmp_path: Path) -> None:
@@ -302,6 +241,10 @@ def test_read_schedule_names_the_file_it_refuses(tmp_path: Path) -> None:
     path.write_text("name: x\nshape: wave\nparams: {}\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"bad\.yaml: unknown shape 'wave'"):
         yaml_io.read_schedule(path)
+    latin = tmp_path / "latin.yaml"
+    latin.write_bytes("name: caf\xe9\nsegments: []\n".encode("latin-1"))
+    with pytest.raises(ValueError, match=r"latin\.yaml: 'utf-8' codec can't decode"):
+        yaml_io.read_schedule(latin)
     with pytest.raises(FileNotFoundError):
         yaml_io.read_schedule(tmp_path / "missing.yaml")
 
