@@ -13,8 +13,11 @@ layer's residual size (`pushlab calibrate`), and generate replies to a batch
 of prompts with pushes on chosen neurons (`pushlab.engine.generate`).
 `pushlab baseline` generates one unsteered reply and stores it with its
 manifest; `pushlab steer` stores pushed replies to a whole prompt set, and
-`pushlab report` lays run folders' replies side by side. Running
-experiments from YAML files comes in later sprints.
+`pushlab report` lays run folders' replies side by side. Schedules, which
+say when each push is on and how strong it is at every reply token, can be
+built, written as YAML and checked without loading a model
+(`pushlab.schedules`, decision 0012); the engine does not follow them yet.
+Running experiments from YAML files comes in later sprints.
 
 ## Getting started
 
