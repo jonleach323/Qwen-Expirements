@@ -228,3 +228,11 @@ def test_layer_peaks_by_hand() -> None:
     # Token 3: A at 0.75, A2 at -1: sqrt(0.5625 + 1) = 1.25.
     assert peaks[14] == (pytest.approx(1.25), 3)
     assert layer_peaks(Schedule("none")) == {}
+
+
+def test_no_ceiling_checks_none() -> None:
+    # As compile does: the engine pushes what it is given (S1's pushes had no
+    # ceiling); validate holds schedule files to one.
+    over = Schedule("x", constant(A, 2.0).segments + constant(A2, 2.0).segments)
+    _quiet(over, ceiling=None)
+    _refused(Schedule("x", [Segment(A, 1.0, 1.0, 5, 2)]), "ends", ceiling=None)

@@ -277,15 +277,16 @@ def validate(
     schedule: Schedule,
     model_info: ModelSpec | ModelInfo,
     max_new_tokens: int,
-    ceiling: float = DEFAULT_CEILING,
+    ceiling: float | None = DEFAULT_CEILING,
 ) -> list[str]:
     """Refuse a schedule that cannot run on the model; return its warnings.
 
     model_info is the model's registry entry, such as REGISTRY["qwen3.5-4b"]:
     then every unit must be one of its neurons. A ModelInfo, which has no
     name, checks only that each unit's model has this shape. ceiling bounds
-    the combined push in one layer on any pass (see the module's docstring).
-    Every problem found is listed in one ValueError. Otherwise each warning
+    the combined push in one layer on any pass (see the module's docstring);
+    None checks no ceiling, as compile does, since the engine pushes what it
+    is given. Every problem found is listed in one ValueError. Otherwise each warning
     is issued as a ScheduleWarning and returned, so a command can print them
     in its own words and ignore ScheduleWarning.
 
@@ -318,8 +319,10 @@ def validate(
         raise ValueError(
             f"max_new_tokens must be a whole number from 1, not {max_new_tokens!r}"
         )
-    if not (_is_finite(ceiling) and ceiling > 0):
-        raise ValueError(f"ceiling must be a finite number above 0, not {ceiling!r}")
+    if ceiling is not None and not (_is_finite(ceiling) and ceiling > 0):
+        raise ValueError(
+            f"ceiling must be a finite number above 0, or None, not {ceiling!r}"
+        )
 
     problems: list[str] = []
     if name is None and len(models := {u.model_name for u in schedule.units()}) > 1:
@@ -335,7 +338,7 @@ def validate(
         problems.extend(f"{where}: {problem}" for problem in found)
         if not found:
             good.append(segment)
-    if not schedule.allow_over_ceiling:
+    if ceiling is not None and not schedule.allow_over_ceiling:
         checked = Schedule(schedule.name, good)
         try:
             peaks = layer_peaks(checked)

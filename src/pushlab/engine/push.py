@@ -22,6 +22,7 @@ import torch
 from torch import nn
 
 from pushlab.models.discovery import find_mlp_modules
+from pushlab.schedules.model import Schedule, Segment
 from pushlab.units.dose import amount
 from pushlab.units.neuron import NeuronUnit
 
@@ -99,6 +100,42 @@ class Push:
         return self.start <= state.reply_token and (
             self.end is None or state.reply_token < self.end
         )
+
+    def segments(self) -> tuple[Segment, ...]:
+        """The push as schedule segments: the prompt pass if it is on, then its window.
+
+        They push exactly the passes the push does, at its dose.
+
+        Example:
+            >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
+            >>> push = Push(unit=unit, alpha=1.0, start=3, end=6, include_prompt=True)
+            >>> [
+            ...     segment.describe() for segment in push.segments()
+            ... ]  # doctest: +NORMALIZE_WHITESPACE
+            ['qwen3.5-4b:L14:N8949 at +1 on the prompt pass',
+             'qwen3.5-4b:L14:N8949 at +1 on reply tokens 3 to 5']
+        """
+        window = Segment(self.unit, self.alpha, self.alpha, self.start, self.end)
+        if self.include_prompt:
+            return (Segment(self.unit, self.alpha, self.alpha, region="prompt"), window)
+        return (window,)
+
+
+def schedule_of(pushes: Sequence[Push], name: str = "pushes") -> Schedule:
+    """S1's pushes as one schedule, each push's segments in the pushes' order.
+
+    Example:
+        >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
+        >>> recipe = Push(unit=unit, alpha=1.0, include_prompt=True)
+        >>> len(schedule_of([recipe]).segments)
+        2
+    """
+    segments: list[Segment] = []
+    for push in pushes:
+        if not isinstance(push, Push):
+            raise ValueError(f"pushes must be Push records, not {type(push).__name__}")
+        segments.extend(push.segments())
+    return Schedule(name, segments)
 
 
 def _checked_padding(padding: torch.Tensor | None) -> torch.Tensor | None:
@@ -179,6 +216,67 @@ class StepState:
         self.reply_token = k
 
 
+def add_amounts(
+    values: torch.Tensor,
+    neurons: torch.Tensor,
+    amounts: torch.Tensor,
+    active: torch.Tensor,
+    padding: torch.Tensor | None,
+) -> torch.Tensor:
+    """A copy of down_proj's input with each row's amounts added to its neurons.
+
+    values is (rows, positions, neurons of the MLP). neurons holds the K
+    pushed neurons' indices; amounts (rows, K) what each row adds to each,
+    and active (rows, K) which of them it pushes on this pass. Either may
+    have one row that every row shares. A pushed value and its amount are
+    added in float32 (float64 for a float64 model) and rounded once to the
+    activations' type (decision 0008); a neuron pushed at 0 still goes
+    through the add. Everything else, padding positions included, keeps
+    every bit.
+
+    Example:
+        >>> values = torch.zeros(2, 1, 4)
+        >>> pushed = add_amounts(
+        ...     values,
+        ...     torch.tensor([1]),
+        ...     torch.tensor([[2.5], [7.0]]),
+        ...     torch.tensor([[True], [False]]),
+        ...     None,
+        ... )
+        >>> pushed[:, 0].tolist()
+        [[0.0, 2.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+    """
+    if values.dim() != 3:
+        raise ValueError(
+            f"down_proj's input has shape {tuple(values.shape)}; "
+            "expected (rows, positions, neurons)"
+        )
+    rows, positions = values.shape[0], values.shape[1]
+    if amounts.shape[0] not in (1, rows) or active.shape != amounts.shape:
+        raise ValueError(
+            f"amounts for {amounts.shape[0]} rows and an active mask of "
+            f"{tuple(active.shape)}, but this pass has {rows} rows"
+        )
+    real = torch.ones(rows, positions, dtype=torch.bool, device=values.device)
+    padding = _checked_padding(padding)  # also when set directly
+    if padding is not None:
+        if tuple(padding.shape) != (rows, positions):
+            raise ValueError(
+                f"the padding mask is {tuple(padding.shape)}, but this "
+                f"pass has {rows} rows of {positions} positions"
+            )
+        real = ~padding.to(values.device)
+    # float32, or float64 for a float64 model: never less exact than the
+    # activations, so a dose of 0 changes nothing in any type.
+    compute = torch.promote_types(values.dtype, torch.float32)
+    columns = values[..., neurons]  # a copy: (rows, positions, K)
+    added = columns.to(compute) + amounts.to(compute)[:, None, :]
+    pushed_here = active.to(values.device)[:, None, :] & real[:, :, None]
+    pushed = values.clone()  # every other value stays exactly as it was
+    pushed[..., neurons] = torch.where(pushed_here, added.to(values.dtype), columns)
+    return pushed
+
+
 def _down_proj_hook(
     pushes: Sequence[tuple[Push, float]], state: StepState
 ) -> Callable[[nn.Module, tuple], tuple | None]:
@@ -192,32 +290,14 @@ def _down_proj_hook(
         if not totals:
             return None  # nothing active: the input passes on untouched
         values = args[0]
-        if values.dim() != 3:
-            raise ValueError(
-                f"down_proj's input has shape {tuple(values.shape)}; "
-                "expected (rows, positions, neurons)"
-            )
-        rows, positions = values.shape[0], values.shape[1]
-        # float32, or float64 for a float64 model: never less exact than the
-        # activations, so a dose of 0 changes nothing in any type.
         compute = torch.promote_types(values.dtype, torch.float32)
-        real = torch.ones(rows, positions, dtype=compute, device=values.device)
-        padding = _checked_padding(state.padding)  # also when set directly
-        if padding is not None:
-            if tuple(padding.shape) != (rows, positions):
-                raise ValueError(
-                    f"the padding mask is {tuple(padding.shape)}, but this "
-                    f"pass has {rows} rows of {positions} positions"
-                )
-            real = (~padding).to(device=values.device, dtype=compute)
-        pushed = values.clone()  # every other value stays exactly as it was
-        for index, total in totals.items():
-            # One amount per row. In S1 every row gets the same; S2's per-row
-            # schedules will fill this column with each row's own amount.
-            per_row = torch.full((rows, 1), total, dtype=compute, device=values.device)
-            # Added at that precision, then rounded once to the activations' type.
-            column = values[..., index].to(compute) + per_row * real
-            pushed[..., index] = column.to(values.dtype)
+        # One row of amounts, which every row of the batch shares.
+        amounts = torch.tensor([list(totals.values())], dtype=compute)
+        neurons = torch.tensor(list(totals), device=values.device)
+        active = torch.ones(amounts.shape, dtype=torch.bool)
+        pushed = add_amounts(
+            values, neurons, amounts.to(values.device), active, state.padding
+        )
         return (pushed, *args[1:])
 
     return hook
