@@ -14,7 +14,8 @@ suits the model is for expand, which also reads the prompt set. A spec's
 sha256 hashes every setting, each condition's schedules written out in
 full, but not the way the file is written: comments, spacing, the order of
 keys in a mapping, 1 against 1.0, and a shape against the same segments
-written out do not change it.
+written out do not change it. A grid's keys are the exception: their order
+sets the order of its points, so it is a setting.
 """
 
 import hashlib
@@ -29,7 +30,11 @@ from typing import Any
 from pushlab import PROJECT_ROOT
 from pushlab.engine.decoding import STRATEGIES
 from pushlab.models.registry import REGISTRY
-from pushlab.runs.conditions import Condition, condition_from_mapping
+from pushlab.runs.conditions import (
+    Condition,
+    condition_from_mapping,
+    refuse_unknown_keys,
+)
 from pushlab.schedules.yaml_io import to_mapping as schedule_mapping
 from pushlab.schedules.yaml_text import load_yaml
 from pushlab.store.records import EXPERIMENT_NAME, MAX_SEED
@@ -45,7 +50,9 @@ SPEC_KEYS = (
     "max_gpu_hours",
     "conditions",
 )
-DECODING_KEYS = ("strategy", "temperature", "top_p", "dtype")
+# What a file's decoding takes; a run's record holds DECODING_KEYS
+# (pushlab.store.records) and, when sampling, temperature and top_p.
+SPEC_DECODING_KEYS = ("strategy", "temperature", "top_p", "dtype")
 # Main runs use bfloat16; a sample reruns in 32-bit (development plan).
 DTYPES = ("bfloat16", "float32")
 
@@ -63,12 +70,6 @@ def _is_finite(value: object) -> bool:
         return False
 
 
-def _unknown(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
-    if unknown := [key for key in given if key not in allowed]:
-        names = ", ".join(repr(key) for key in unknown)
-        raise ValueError(f"{where}unknown key {names}; it takes {', '.join(allowed)}")
-
-
 @dataclass(frozen=True)
 class ExperimentSpec:
     """A whole experiment, as spec_from_yaml reads and checks it.
@@ -76,7 +77,9 @@ class ExperimentSpec:
     prompts is the prompt set's path as the file gives it, relative to the
     repository unless it is absolute (prompts_path resolves it). decoding
     has strategy, temperature (None for greedy decoding), top_p and dtype.
-    seeds are the sampling seeds in order; greedy decoding takes one.
+    seeds are the sampling seeds in order; greedy decoding takes one. Make
+    a spec with read_spec, spec_from_yaml or spec_from_mapping, which check
+    every setting: the class itself checks none.
 
     Example:
         >>> spec = read_spec(PROJECT_ROOT / "experiments/p0/s2_pulse_lengths.yaml")
@@ -150,7 +153,7 @@ def _decoding(data: object) -> dict[str, Any]:
         raise ValueError(
             f"decoding must be a mapping, such as {{strategy: greedy}}, not {data!r}"
         )
-    _unknown(data, DECODING_KEYS, "decoding: ")
+    refuse_unknown_keys(data, SPEC_DECODING_KEYS, "decoding: ")
     strategy = data.get("strategy")
     if not isinstance(strategy, str) or strategy not in STRATEGIES:
         raise ValueError(
@@ -227,19 +230,29 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
             "an experiment must be a mapping of its settings, such as name: and "
             f"model:, not {data!r}"
         )
-    _unknown(data, SPEC_KEYS, "")
+    refuse_unknown_keys(data, SPEC_KEYS, "")
     if missing := [key for key in SPEC_KEYS if key not in data]:
         raise ValueError(f"the experiment needs {', '.join(missing)}")
     name, model, prompts = data["name"], data["model"], data["prompts"]
-    if not isinstance(name, str) or not EXPERIMENT_NAME.fullmatch(name):
+    if not isinstance(name, str):
+        raise ValueError(
+            f"name must be text, such as pulse-lengths, but YAML read {name!r}; "
+            "put it in quotes"
+        )
+    if not EXPERIMENT_NAME.fullmatch(name):
         raise ValueError(
             "name must be lowercase letters and digits joined by hyphens, such as "
             f"pulse-lengths, not {name!r}"
         )
     models = sorted(n for n, spec in REGISTRY.items() if spec.kind != "test")
     if not isinstance(model, str) or model not in models:
+        what = (
+            "is the test suite's model"
+            if isinstance(model, str) and model in REGISTRY
+            else "is not in the model registry"
+        )
         raise ValueError(
-            f"model {model!r} is not in the model registry; it has {', '.join(models)}"
+            f"model {model!r} {what}; an experiment can use {', '.join(models)}"
         )
     if not isinstance(prompts, str) or not prompts.strip():
         raise ValueError(

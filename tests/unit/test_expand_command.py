@@ -1,8 +1,12 @@
 """`pushlab expand`: an experiment file's runs, listed or counted, none run."""
 
+import csv
 import doctest
+import io
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -14,47 +18,31 @@ from pushlab.runs.expand import expand
 from pushlab.runs.spec import read_spec
 
 EXAMPLE = PROJECT_ROOT / "experiments" / "p0" / "s2_pulse_lengths.yaml"
+SpecText = Callable[..., str]
 
 
 @pytest.fixture
-def spec(tmp_path: Path) -> Path:
-    """A spec of three pulse lengths with two controls, on two prompts and two seeds."""
-    prompts = tmp_path / "two.jsonl"
-    prompts.write_text(
-        '{"prompt_id": "p-1", "version": 1, "prompt": "Say hi."}\n'
-        '{"prompt_id": "p-2", "version": 1, "prompt": "Count to three."}\n',
-        encoding="utf-8",
-    )
+def spec(spec_text: SpecText, tmp_path: Path) -> Path:
+    """A file of three pulse lengths with two controls, on two prompts and seeds."""
     path = tmp_path / "pulses.yaml"
-    path.write_text(
-        f"""\
-name: pulse-lengths
-model: qwen3.5-4b
-prompts: {prompts}
-decoding: {{strategy: sample, temperature: 0.7}}
-seeds: [0, 1]
-max_new_tokens: 64
-batch_size: 8
-max_gpu_hours: 1
-conditions:
-  - label: pulse
-    shape: pulse
-    params: {{unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0}}
-    grid: {{length: [4, 16, 64]}}
-    controls: 2
-    control_seed: 7
-""",
-        encoding="utf-8",
-    )
+    path.write_text(spec_text(), encoding="utf-8")
     return path
+
+
+def _summary(path: Path, capsys: pytest.CaptureFixture[str]) -> list[str]:
+    assert main(["expand", str(path), "--summary"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    return out.splitlines()
 
 
 def test_expand_help_lists_the_options(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exit_info:
         main(["expand", "--help"])
     assert exit_info.value.code == 0
-    help_text = capsys.readouterr().out
+    help_text = " ".join(capsys.readouterr().out.split())
     assert "SPEC" in help_text and "--summary" in help_text
+    assert "print a line naming the columns and every run" in help_text
 
 
 def test_the_installed_command_answers_help() -> None:
@@ -69,28 +57,57 @@ def test_the_installed_command_answers_help() -> None:
 def test_the_summary_counts_each_condition_s_runs(
     spec: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(["expand", str(spec), "--summary"]) == 0
-    out, err = capsys.readouterr()
-    assert err == ""
+    lines = _summary(spec, capsys)
     expansion = expand(read_spec(spec))
-    lines = out.splitlines()
     assert lines[:2] == [
         "experiment      pulse-lengths",
         f"spec sha256     {expansion.spec_sha256}",
     ]
+    assert f"known sha256    {expansion.known_sha256}" in lines
     assert "decoding        sample, temperature 0.7, top_p 1.0, bfloat16" in lines
     assert "seeds           0, 1" in lines
-    assert "batches         8, each at most 8 runs" in lines  # 9 per prompt and seed
+    # 9 runs per prompt and seed, in batches of at most 8: 8, then 1.
+    assert "batches         8, of 1 to 8 runs each" in lines
+    assert "max_gpu_hours   1" in lines
     assert lines[-7:] == [
         "condition        own  controls  total",
         "pulse length=4     4         8     12",
         "pulse length=16    4         8     12",
         "pulse length=64    4         8     12",
-        "all               12        24     36",
+        "(all)             12        24     36",
         "",
         "36 runs, of which 24 are controls, at most 2,304 reply tokens. Nothing "
         "was run.",
     ]
+
+
+def test_the_summary_counts_one_of_a_thing_in_the_singular(
+    spec_text: SpecText, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prompt = tmp_path / "one.jsonl"
+    prompt.write_text('{"prompt_id": "p", "version": 1, "prompt": "Hi."}\n')
+    one = "conditions:\n  - {label: none, segments: []}\n"
+    path = tmp_path / "one.yaml"
+    path.write_text(
+        spec_text(one, prompts=str(prompt), seeds="[0]", max_gpu_hours="0.1234567")
+    )
+    lines = _summary(path, capsys)
+    assert f"prompts         {prompt}, 1 prompt" in lines
+    assert "known sha256" not in "\n".join(lines)  # no controls to draw
+    assert "batches         1, of 1 run each" in lines
+    assert "max_gpu_hours   0.1234567" in lines  # every digit
+    assert lines[-1] == (
+        "1 run, of which 0 are controls, at most 64 reply tokens. Nothing was run."
+    )
+    path.write_text(
+        spec_text(
+            "conditions:\n  - {label: one, segments: [{unit: qwen3.5-4b:L14:N1, "
+            "alpha: 1.0}], controls: 1, control_seed: 0}\n",
+            prompts=str(prompt),
+            seeds="[0]",
+        )
+    )
+    assert _summary(path, capsys)[-1].startswith("2 runs, of which 1 is a control,")
 
 
 def test_without_summary_every_run_gets_a_line(
@@ -117,12 +134,31 @@ def test_without_summary_every_run_gets_a_line(
     assert lines[-1].startswith("pulse-lengths-000036\tpulse length=64\t2\tp-2\t1\t")
 
 
+def test_a_prompt_id_with_a_tab_or_line_break_is_quoted(
+    spec_text: SpecText, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prompts = tmp_path / "odd.jsonl"
+    prompts.write_text(
+        '{"prompt_id": "a\\tb", "version": 1, "prompt": "Hi."}\n'
+        '{"prompt_id": "c\\nd", "version": 1, "prompt": "Bye."}\n'
+    )
+    path = tmp_path / "odd.yaml"
+    path.write_text(spec_text(prompts=str(prompts)))
+    assert main(["expand", str(path)]) == 0
+    rows = list(csv.reader(io.StringIO(capsys.readouterr().out), delimiter="\t"))
+    assert len(rows) == 1 + 36 and {len(row) for row in rows} == {7}
+    assert [rows[1][3], rows[-1][3]] == ["a\tb", "c\nd"]
+
+
 def test_the_example_file_expands_to_fifty_runs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(["expand", str(EXAMPLE), "--summary"]) == 0
-    out = capsys.readouterr().out
-    assert "50 runs, of which 30 are controls" in out
+    lines = _summary(EXAMPLE, capsys)
+    assert lines[-1].startswith("50 runs, of which 30 are controls")
+    # The README shows this part of the summary as it is.
+    readme = (PROJECT_ROOT / "experiments" / "README.md").read_text(encoding="utf-8")
+    (shown,) = re.findall(r"```text\n(.*?)```", readme, flags=re.DOTALL)
+    assert "\n".join(lines).endswith(shown.rstrip("\n"))
 
 
 def test_an_invalid_condition_is_refused_naming_the_file_and_condition(

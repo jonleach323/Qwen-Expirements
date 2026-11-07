@@ -5,7 +5,8 @@ control, in that order, nested as written: every run of the first prompt,
 its first seed first, then the next. Within a seed come the conditions in
 the file's order, each condition's own run followed by its controls. Run
 IDs count up in that order, `<experiment>-000001` first, so the same spec
-always gives the same IDs.
+always gives the same IDs. An experiment of more than 999,999 runs, which
+six digits cannot number, is refused.
 
 Before any run is made, every condition's schedule and every control's
 passes validate(), at the default dose ceiling unless the condition allows
@@ -21,16 +22,21 @@ point for point, and its runs' control_of names the run they mirror.
 
 Runs are batched in order: each batch holds runs of one prompt, so no row
 is padded, and one seed, since generate draws a batch's samples from one
-seed; at most batch_size of them. batch_key is `b<batch>:<row>`.
+seed; at most batch_size of them. batch_key is `b<batch>:<row>`. generate
+seeds each row's sampling from its place in the batch, so under sampling
+a control also draws other random numbers than the run it mirrors.
 
 Each run is a RunRecord with no reply yet: status "planned", which
 write_runs refuses, empty output, the model's revision, the run's
 sampling seed, and its schedule's segments, each with control_for (the
 unit a control replaces) and control_seed, both None for a condition's own
-run. The condition's label, which no RunRecord field holds, comes with it.
+run. The label of its condition's schedule, which no RunRecord field
+holds, comes with it.
 """
 
+import hashlib
 import warnings
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple
@@ -47,11 +53,15 @@ from pushlab.units.neuron import NeuronUnit
 
 # The status of a run that has not run yet; write_runs saves only results.
 PLANNED = "planned"
+# The most runs an experiment can have: run IDs count with six digits.
+MOST_RUNS = 999_999
 
 
 class PlannedRun(NamedTuple):
     """One run of an expansion: its condition, its control number and its record.
 
+    condition is the label of the run's schedule: its condition's label,
+    with the grid's values when it has a grid, such as "pulse length=16".
     control is 0 for the condition's own run and k for its k-th control.
     """
 
@@ -65,16 +75,19 @@ class Expansion:
     """Every run an experiment means, with the hashes of what they came from.
 
     spec_sha256 is the spec's hash and prompts_sha256 the prompt set file's.
-    warnings are validate()'s, each naming its condition.
+    known_sha256 is units/known.csv's, which the controls avoid, or None
+    when no condition has controls. warnings are validate()'s, each naming
+    its condition's schedule.
     """
 
     spec_sha256: str
     prompts_sha256: str
+    known_sha256: str | None
     runs: tuple[PlannedRun, ...]
     warnings: tuple[str, ...]
 
     def counts(self) -> dict[str, tuple[int, int]]:
-        """For each condition, in order: how many own runs and how many controls.
+        """For each schedule's label, in order: how many own runs and controls.
 
         Example:
             >>> from pushlab import PROJECT_ROOT
@@ -114,7 +127,16 @@ def _draw(
             f"condition {condition.label!r}: it pushes no unit to draw a control "
             "for; remove its controls"
         )
-    taken = set(avoid)
+    taken = set(avoid) | set(units)
+    for (name, layer), count in Counter((u.model_name, u.layer) for u in units).items():
+        used = {t.index for t in taken if (t.model_name, t.layer) == (name, layer)}
+        free, need = REGISTRY[name].mlp_size - len(used), condition.controls * count
+        if need > free:  # refused now, rather than after drawing all it can
+            raise ValueError(
+                f"condition {condition.label!r}: its {condition.controls} controls "
+                f"need {need} neurons of layer {layer} that are not known or "
+                f"pushed, and the layer has {free}"
+            )
     drawn = []
     for k in range(1, condition.controls + 1):
         try:
@@ -170,12 +192,21 @@ def _decoding(spec: ExperimentSpec) -> dict[str, Any]:
     return decoding
 
 
+def _known() -> tuple[frozenset[NeuronUnit], str]:
+    """The units in units/known.csv, and the file's hash."""
+    try:
+        content = controls.KNOWN_UNITS_FILE.read_bytes()
+        return controls.known_units(), hashlib.sha256(content).hexdigest()
+    except (OSError, ValueError) as error:
+        raise ValueError(f"cannot read the known units: {error}") from None
+
+
 def expand(spec: ExperimentSpec) -> Expansion:
     """Every run the spec means, in order, after checking every condition.
 
-    A condition that validate() refuses, controls that cannot be drawn, or
-    a prompt set that cannot be read raise ValueError, before any run is
-    made. Nothing loads a model.
+    A condition that validate() refuses, a prompt set that cannot be read,
+    more runs than MOST_RUNS, or controls that cannot be drawn raise
+    ValueError, before any run is made. Nothing loads a model.
 
     Example:
         >>> from pushlab import PROJECT_ROOT
@@ -192,12 +223,25 @@ def expand(spec: ExperimentSpec) -> Expansion:
     for condition in spec.conditions:
         for label, schedule in condition.points:
             found += _checked(label, schedule, model, spec.max_new_tokens)
+    path = spec.prompts_path
+    try:
+        prompt_set = read_prompt_set(path)
+    except OSError as error:
+        why = error.strerror or error
+        raise ValueError(f"cannot read the prompt set {path}: {why}") from None
+    except ValueError as error:
+        raise ValueError(f"cannot read the prompt set {path}: {error}") from None
+    per_seed = sum(len(c.points) * (1 + c.controls) for c in spec.conditions)
+    total = len(prompt_set.prompt_ids) * len(spec.seeds) * per_seed
+    if total > MOST_RUNS:
+        raise ValueError(
+            f"it means {total:,} runs, more than the {MOST_RUNS:,} that six-digit "
+            "run IDs can number; split it into smaller experiments"
+        )
     swaps: dict[str, list[dict[NeuronUnit, NeuronUnit]]] = {}
+    known_sha256 = None
     if any(condition.controls for condition in spec.conditions):
-        try:
-            known = controls.known_units()
-        except (OSError, ValueError) as error:
-            raise ValueError(f"cannot read the known units: {error}") from None
+        known, known_sha256 = _known()
         pushed = {
             unit
             for condition in spec.conditions
@@ -214,11 +258,6 @@ def expand(spec: ExperimentSpec) -> Expansion:
                         _checked(
                             label, _swapped(schedule, swap), model, spec.max_new_tokens
                         )
-    path = spec.prompts_path
-    try:
-        prompt_set = read_prompt_set(path)
-    except (OSError, ValueError) as error:
-        raise ValueError(f"cannot read the prompt set {path}: {error}") from None
 
     model_name = f"{spec.model}@{model.revision}"
     runs: list[PlannedRun] = []
@@ -253,4 +292,6 @@ def expand(spec: ExperimentSpec) -> Expansion:
                         status=PLANNED,
                     )
                     runs.append(PlannedRun(label, control, record))
-    return Expansion(spec.sha256, prompt_set.sha256, tuple(runs), tuple(found))
+    return Expansion(
+        spec.sha256, prompt_set.sha256, known_sha256, tuple(runs), tuple(found)
+    )

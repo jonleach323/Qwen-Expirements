@@ -3,13 +3,14 @@
 A condition's schedule is written as a schedule file writes one
 (pushlab.schedules.yaml_io): its segments, or a shape and its params. A grid
 gives some of a shape's params as lists of values, and the condition then
-holds one schedule per combination of values, labelled with them, such as
-`pulse length=16`; the first param changes slowest. controls asks for that
-many random controls of each run, drawn from control_seed by
-pushlab.runs.expand. experiments/README.md has the format.
+holds one schedule per combination of values, each labelled with its
+values, such as `pulse length=16`; the first param changes slowest.
+controls asks for that many random controls of each run, drawn from
+control_seed by pushlab.runs.expand. experiments/README.md has the format.
 """
 
 import itertools
+import numbers
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -34,6 +35,22 @@ def _is_whole(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def refuse_unknown_keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
+    """Raise ValueError naming every key of given that is not allowed.
+
+    where starts the message, such as "conditions[1] (pulse): ".
+
+    Example:
+        >>> refuse_unknown_keys({"colour": "red"}, ("label",), "conditions[0] (x): ")
+        Traceback (most recent call last):
+        ...
+        ValueError: conditions[0] (x): unknown key 'colour'; it takes label
+    """
+    if unknown := [key for key in given if key not in allowed]:
+        names = ", ".join(repr(key) for key in unknown)
+        raise ValueError(f"{where}unknown key {names}; it takes {', '.join(allowed)}")
+
+
 @dataclass(frozen=True)
 class Condition:
     """One condition: its label, its schedules, and how many random controls.
@@ -55,10 +72,17 @@ class Condition:
     control_seed: int | None = None
 
 
-def _value_text(value: object) -> str:
-    """A grid value as a label shows it: true and false as YAML writes them."""
+def _value_text(param: object, value: object) -> str:
+    """A grid value as its point's label shows it: true, false and null as
+    YAML writes them, and a dose as the float its schedule holds, so that
+    1 and 1.0 give one label."""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if value is None:
+        return "null"
+    dose = isinstance(param, str) and param.startswith("alpha")
+    if dose and isinstance(value, numbers.Real):  # checked finite by now
+        value = float(value)
     return repr(value) if isinstance(value, float) else str(value)
 
 
@@ -68,15 +92,19 @@ def _grid_points(
     """One (label, schedule) pair per combination of grid values, the first
     param varying slowest."""
     if "shape" not in schedule:
-        raise ValueError("a grid goes with a shape and its params, not with segments")
+        segments = ", not with segments" if "segments" in schedule else ""
+        raise ValueError(f"a grid goes with a shape and its params{segments}")
     if not isinstance(grid, Mapping) or not grid:
         raise ValueError(
             "grid must be a mapping of params to lists of values, such as "
             f"{{length: [4, 16, 64]}}, not {grid!r}"
         )
-    params = schedule.get("params", {})
+    params = schedule.get("params")
+    params = {} if params is None else params
     if not isinstance(params, Mapping):
-        raise ValueError(f"params must be a mapping, not {params!r}")
+        raise ValueError(
+            f"shape {schedule['shape']}: params must be a mapping, not {params!r}"
+        )
     for key, values in grid.items():
         if key in params:
             raise ValueError(f"{key} is in both params and grid; give it in one")
@@ -91,9 +119,10 @@ def _grid_points(
     points = []
     for values in itertools.product(*grid.values()):
         point = dict(zip(grid, values, strict=True))
-        name = label + "".join(f" {key}={_value_text(v)}" for key, v in point.items())
         mapping = schedule | {"name": label, "params": {**params, **point}}
-        points.append((name, from_mapping(mapping)))
+        built = from_mapping(mapping)  # before the label, which needs good values
+        text = "".join(f" {key}={_value_text(key, v)}" for key, v in point.items())
+        points.append((label + text, built))
     return tuple(points)
 
 
@@ -128,17 +157,18 @@ def condition_from_mapping(data: object, i: int) -> Condition:
     if "label" not in data:
         raise ValueError(f"conditions[{i}] needs a label, such as pulse-16")
     label = data["label"]
-    if not isinstance(label, str) or not SCHEDULE_NAME.fullmatch(label):
+    if not isinstance(label, str):
+        raise ValueError(
+            f"conditions[{i}]: label must be text, such as pulse-16, but YAML read "
+            f"{label!r}; put it in quotes"
+        )
+    if not SCHEDULE_NAME.fullmatch(label):
         raise ValueError(
             f"conditions[{i}]: label must be lowercase letters and digits joined "
             f"by single hyphens, such as pulse-16, not {label!r}"
         )
     where = f"conditions[{i}] ({label}): "
-    if unknown := [key for key in data if key not in CONDITION_KEYS]:
-        names = ", ".join(repr(key) for key in unknown)
-        raise ValueError(
-            f"{where}unknown key {names}; it takes {', '.join(CONDITION_KEYS)}"
-        )
+    refuse_unknown_keys(data, CONDITION_KEYS, where)
     controls = data.get("controls", 0)
     if not _is_whole(controls) or controls < 0:
         raise ValueError(
@@ -169,4 +199,9 @@ def condition_from_mapping(data: object, i: int) -> Condition:
             points = ((label, from_mapping(schedule | {"name": label})),)
     except ValueError as error:
         raise ValueError(f"{where}{error}") from None
+    if controls and not all(built.units() for _, built in points):
+        raise ValueError(
+            f"{where}it pushes no unit, so it cannot have controls; remove "
+            "controls and control_seed"
+        )
     return Condition(label, points, controls, seed)

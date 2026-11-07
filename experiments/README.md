@@ -2,9 +2,10 @@
 
 One YAML file describes a whole experiment: the model, the prompts, how
 replies are decoded, and the conditions to compare. `pushlab expand`
-turns it into the exact list of runs it means, the same list every time,
-without running anything or loading a model. Running the list comes in a
-later step.
+turns it into the exact list of runs it means, without running anything
+or loading a model. The list is the same every time, as long as
+`units/known.csv`, which the random controls avoid, stays the same.
+Running the list comes in a later step.
 
 `p0/s0_baseline.yaml` is older: S0's one-run file, in a format of its own
 that only `pushlab baseline` reads.
@@ -42,8 +43,9 @@ conditions:
     control_seed: 0
 ```
 
-It means 50 runs: 5 prompts, 1 seed, and 4 conditions (no push, and a
-pulse of each length), each pulse with 2 random controls.
+It has 2 conditions: no push, and a pulse whose grid gives it 3 lengths.
+That makes 4 schedules, each run on 5 prompts with 1 seed, and each pulse
+also runs on 2 random neurons: 50 runs in all.
 
 ```bash
 uv run pushlab expand experiments/p0/s2_pulse_lengths.yaml --summary
@@ -57,14 +59,18 @@ none               5         0      5
 pulse length=4     5        10     15
 pulse length=16    5        10     15
 pulse length=64    5        10     15
-all               20        30     50
+(all)             20        30     50
 
 50 runs, of which 30 are controls, at most 4,800 reply tokens. Nothing was run.
 ```
 
-Without `--summary` it prints every run on a line of its own: its ID,
-condition, control number (0 for the condition's own run), prompt, seed,
-batch and, for a control, the run it mirrors.
+The settings above the table include the experiment's hashes (below)
+and its batches. Without `--summary` it prints a line naming the
+columns, then every run on a line of its own: its ID, condition, control
+number (0 for the condition's own run), prompt, seed, batch and, for a
+control, the run it mirrors. The columns are separated by tabs, and a
+field holding a tab, a line break or a double quote is quoted, as CSV
+does.
 
 ## The settings
 
@@ -73,17 +79,18 @@ Every setting is required, and any other key is refused.
 | Key | What it is |
 | --- | --- |
 | `name` | The experiment's name: lowercase letters and digits joined by hyphens. Every run ID starts with it. |
-| `model` | A model in `src/pushlab/models/registry.py`: `qwen3.5-4b` or `qwen3-8b`. |
+| `model` | A model in `src/pushlab/models/registry.py`: `qwen3.5-4b` or `qwen3-8b`, not the test suite's. |
 | `prompts` | A prompt set (`prompts/*.jsonl`), as a path from the repository's root. |
 | `decoding` | `strategy: greedy`, or `strategy: sample` with a `temperature` above 0 and, if you like, a `top_p` above 0 and at most 1 (default 1). `dtype` is `bfloat16` (the default) or `float32`. Greedy decoding takes no temperature or top_p. |
 | `seeds` | A list of different whole numbers. Every run is repeated with each. Greedy decoding draws no random numbers, so it takes exactly one. |
 | `max_new_tokens` | The most tokens a reply may have. |
-| `batch_size` | The most runs that share a batch. |
+| `batch_size` | The most runs that share a batch. A batch holds runs of one prompt and one seed, so it can be shorter (below). |
 | `max_gpu_hours` | The GPU time the experiment may take, a number above 0, for the runner to hold it to. |
 | `conditions` | The conditions, at least one (below). |
 
 Numbers are read as YAML 1.2 reads them: `010` is text, not 8, and
-`1e-3` is a number. A key given twice is refused.
+`1e-3` is a number. A key given twice is refused. A name or label that
+YAML reads as a number, such as `2026`, needs quotes.
 
 ## Conditions
 
@@ -105,19 +112,25 @@ A condition may also have:
 - `grid`: some of a shape's params, each given as a list of values, such
   as `grid: {length: [4, 16, 64]}`. The condition then runs one schedule
   per value, labelled `pulse length=4` and so on. With several params it
-  runs every combination, the first param changing slowest. A param goes
-  in `params` or in `grid`, not both.
+  runs every combination, the first param changing slowest, so the order
+  of a grid's keys matters. A param goes in `params` or in `grid`, not
+  both. A dose is labelled as a number with a decimal point, so `alpha:
+  [1, -1]` gives `pulse alpha=1.0` and `pulse alpha=-1.0`.
 - `allow_over_ceiling: true`, which lets the combined push in one layer go
   above the ceiling of 1.4 times the layer's residual size (decision
   0012). Without it, a condition above the ceiling is refused.
 - `controls: n` and `control_seed: s`: n matched random controls, drawn
   from seed s. A control is a copy of the condition's schedule with each
   pushed neuron swapped for a random neuron of the same layer, at the same
-  doses on the same reply tokens, so the only difference is which neuron
-  is pushed. It is never a unit in `units/known.csv`, never a unit any
-  condition of the experiment pushes, and a condition's n controls are n
-  different neurons. Control k uses the same neurons for every prompt,
-  seed and grid value. A condition that pushes nothing has no controls.
+  doses on the same reply tokens, so its schedule differs only in which
+  neuron is pushed. It is never a unit in `units/known.csv`, never a unit
+  any condition of the experiment pushes, and a condition's n controls
+  are n different neurons. Control k uses the same neurons for every
+  prompt, seed and grid value. A condition that pushes nothing cannot
+  have controls, and asking for more than a layer has neurons left is
+  refused. With sampling, a control does not yet share its run's random
+  numbers: `generate` draws each row's from its place in the batch
+  (decision 0014).
 
 ## What expand does
 
@@ -127,19 +140,28 @@ A condition may also have:
    The first problem stops it, with the condition's label and the rule
    it broke. A segment that will not take effect in a reply this long,
    such as one starting after the last token, gets a warning instead.
-3. It reads the prompt set.
-4. It makes one run per prompt, seed, condition (each grid value its
+3. It reads the prompt set, and refuses an experiment of more than
+   999,999 runs, which six-digit run IDs cannot number.
+4. It draws the controls.
+5. It makes one run per prompt, seed, condition (each grid value its
    own) and control, in that order: all of the first prompt's runs, its
    first seed first, and within a seed the conditions in the file's
    order, each condition's own run followed by its controls. Run IDs
    count up in that order, from `<name>-000001`.
-5. It puts the runs into batches in order: a batch holds runs of one
-   prompt and one seed, at most `batch_size` of them. Each run's
-   `batch_key` is `b<batch>:<row>`, such as `b000002:0`.
+6. It puts the runs into batches in order: a batch holds runs of one
+   prompt and one seed, at most `batch_size` of them, so no row is padded.
+   Each run's `batch_key` is `b<batch>:<row>`, such as `b000002:0`. A
+   prompt and seed with fewer runs than `batch_size` make a short batch:
+   with one condition and no controls, every batch holds one run.
 
 Each run is a run record (`src/pushlab/store/records.py`) with no reply
 yet and the status `planned`. Its schedule lists the segments it pushes,
 each with `control_for` (for a control, the unit it replaces) and
-`control_seed`. The spec's hash, its `spec sha256`, changes whenever any
-setting does, but not with comments, spacing or the order of keys.
-Decision 0014 explains these choices.
+`control_seed`.
+
+Three hashes say what the runs came from. The `spec sha256` changes
+whenever any setting does, but not with comments, spacing, the order of
+keys (except a grid's), or 1 against 1.0. The `prompts sha256` is the
+prompt set file's, and the `known sha256` is that of `units/known.csv`,
+which the controls avoid, so a change there shows even when the spec is
+the same. Decision 0014 explains these choices.

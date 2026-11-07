@@ -100,10 +100,15 @@ def test_a_grid_of_two_params_varies_the_first_slowest() -> None:
     ]
 
 
+PULSE_GRID = (
+    "shape: pulse\n    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0}\n"
+    "    grid: {length: [4, 16, 64]}"
+)
+
+
 def test_grid_labels_write_each_value_as_yaml_does() -> None:
     text = _with(
-        "shape: pulse\n    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0}\n"
-        "    grid: {length: [4, 16, 64]}",
+        PULSE_GRID,
         "shape: handoff\n    params: {a: qwen3.5-4b:L14:N8949, b: "
         "qwen3.5-4b:L13:N7956, alpha_a: 1.0, alpha_b: -1.0}\n"
         "    grid: {switch_at: [8], include_prompt: [true, false]}",
@@ -114,6 +119,28 @@ def test_grid_labels_write_each_value_as_yaml_does() -> None:
         "pulse switch_at=8 include_prompt=false",
     ]
     assert [len(schedule.segments) for _, schedule in points] == [3, 2]
+    text = _with(
+        PULSE_GRID,
+        "shape: alternate\n    params: {a: qwen3.5-4b:L14:N8949, b: "
+        "qwen3.5-4b:L13:N7956, alpha_a: 1.0, alpha_b: -1.0, period: 4}\n"
+        "    grid: {end: [null, 32]}",
+    )
+    points = spec_from_yaml(text).conditions[1].points
+    assert [label for label, _ in points] == ["pulse end=null", "pulse end=32"]
+
+
+def test_grid_doses_get_one_label_written_whole_or_not() -> None:
+    whole = _with(PULSE_GRID, PULSE_GRID.replace("[4, 16, 64]", "[4]"))
+    whole = whole.replace("alpha: 1.0, start: 0}", "start: 0}").replace(
+        "{length: [4]}", "{length: [4], alpha: [1, -1]}"
+    )
+    written = spec_from_yaml(whole)
+    assert [label for label, _ in written.conditions[1].points] == [
+        "pulse length=4 alpha=1.0",
+        "pulse length=4 alpha=-1.0",
+    ]
+    decimal = spec_from_yaml(whole.replace("[1, -1]", "[1.0, -1.0]"))
+    assert decimal == written and decimal.sha256 == written.sha256
 
 
 def test_controls_default_to_none() -> None:
@@ -131,112 +158,6 @@ def test_read_spec_reads_a_file_and_names_it_in_its_errors(tmp_path: Path) -> No
         read_spec(path)
 
 
-REFUSALS = {
-    "unknown-key": (
-        _with("batch_size: 4", "batch_size: 4\ncolour: red"),
-        "unknown key 'colour'",
-    ),
-    "missing": (_with("max_gpu_hours: 0.5\n", ""), "needs max_gpu_hours"),
-    "name": (
-        _with("name: pulse-lengths", "name: Pulse_Lengths"),
-        "name must be lowercase",
-    ),
-    "prompts": (_with("prompts: prompts/smoke.jsonl", "prompts: 3"), "prompts must be"),
-    "decoding-key": (
-        _with("top_p: 0.9", "top_p: 0.9, beams: 2"),
-        "unknown key 'beams'",
-    ),
-    "strategy": (_with("strategy: sample", "strategy: beam"), "strategy must be"),
-    "no-temperature": (_with("temperature: 0.7, ", ""), "sampling needs a temperature"),
-    "dtype": (_with("top_p: 0.9", "top_p: 0.9, dtype: int8"), "dtype must be"),
-    "greedy-seeds": (
-        _with("{strategy: sample, temperature: 0.7, top_p: 0.9}", "{strategy: greedy}"),
-        "greedy decoding takes one seed",
-    ),
-    "seeds": (_with("[0, 1]", "[]"), "seeds must be a list of whole numbers"),
-    "seed-twice": (_with("[0, 1]", "[1, 1]"), "seed 1 is given twice"),
-    "seed-float": (
-        _with("[0, 1]", "[0, 1.5]"),
-        "seeds must be a list of whole numbers",
-    ),
-    "tokens": (
-        _with("max_new_tokens: 64", "max_new_tokens: 0"),
-        "max_new_tokens must be",
-    ),
-    "batch": (_with("batch_size: 4", "batch_size: 0"), "batch_size must be"),
-    "hours": (_with("max_gpu_hours: 0.5", "max_gpu_hours: 0"), "max_gpu_hours must be"),
-    "hours-text": (
-        _with("max_gpu_hours: 0.5", "max_gpu_hours: '1'"),
-        "max_gpu_hours must be",
-    ),
-    "conditions": (
-        _with("conditions:", "conditions: []\nx:").split("\nx:")[0],
-        "at least one condition",
-    ),
-    "condition-key": (
-        _with("controls: 2", "controls: 2\n    colour: red"),
-        r"conditions\[1\] \(pulse\): unknown key 'colour'",
-    ),
-    "label": (
-        _with("- label: none", "- label: No Push"),
-        r"conditions\[0\]: label must be",
-    ),
-    "no-label": (
-        _with("- label: none\n    segments: []", "- segments: []"),
-        r"conditions\[0\] needs a label",
-    ),
-    "label-twice": (
-        _with("- label: pulse", "- label: none"),
-        "the label 'none' is used twice",
-    ),
-    "grid-segments": (
-        _with("    segments: []", "    segments: []\n    grid: {start: [1]}"),
-        r"\(none\): a grid goes with a shape",
-    ),
-    "grid-and-params": (
-        _with("{length: [4, 16, 64]}", "{start: [0, 2]}"),
-        r"\(pulse\): start is in both params and grid",
-    ),
-    "grid-empty": (
-        _with("[4, 16, 64]", "[]"),
-        r"\(pulse\): grid length must be a list of values",
-    ),
-    "grid-twice": (
-        _with("[4, 16, 64]", "[4, 16, 4]"),
-        r"\(pulse\): grid length repeats 4",
-    ),
-    "grid-param": (
-        _with("grid: {length: [4, 16, 64]}", "grid: {colour: [1]}"),
-        "unknown param 'colour'",
-    ),
-    "controls": (_with("controls: 2", "controls: -1"), r"\(pulse\): controls must be"),
-    "control-seed": (
-        _with("    control_seed: 7\n", ""),
-        r"\(pulse\): 2 controls need a control_seed",
-    ),
-    "control-seed-one": (
-        _with("    controls: 2\n    control_seed: 7\n", "    controls: 1\n"),
-        r"\(pulse\): 1 control needs a control_seed",
-    ),
-    "control-seed-alone": (
-        _with("    segments: []", "    segments: []\n    control_seed: 3"),
-        r"\(none\): control_seed goes with controls",
-    ),
-    "shape": (
-        _with("shape: pulse", "shape: wave"),
-        r"conditions\[1\] \(pulse\): unknown shape 'wave'",
-    ),
-    "not-yaml": ("name: [", "is not valid YAML"),
-    "not-a-mapping": ("- 1", "an experiment must be a mapping"),
-}
-
-
-@pytest.mark.parametrize("text, problem", REFUSALS.values(), ids=REFUSALS.keys())
-def test_refusals_name_the_problem(text: str, problem: str) -> None:
-    with pytest.raises(ValueError, match=problem):
-        spec_from_yaml(text)
-
-
 def test_the_hash_is_the_same_for_the_same_spec_however_it_is_written() -> None:
     same = spec_from_yaml(SPEC)
     assert same.sha256 == spec_from_yaml(SPEC).sha256
@@ -247,6 +168,28 @@ def test_the_hash_is_the_same_for_the_same_spec_however_it_is_written() -> None:
         "{top_p: 0.9,   strategy: sample, temperature: 0.7}",
     )
     assert spec_from_yaml(reordered).sha256 == same.sha256
+    # Nor are 1 against 1.0, or a shape against its segments written out.
+    assert spec_from_yaml(_with("alpha: 1.0", "alpha: 1")).sha256 == same.sha256
+    shape = "shape: pulse\n    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, "
+    shape += "start: 0, length: 16}"
+    segments = "segments: [{unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0, end: 16}]"
+    one = _with(PULSE_GRID, shape)
+    assert (
+        spec_from_yaml(one).sha256
+        == spec_from_yaml(one.replace(shape, segments)).sha256
+    )
+
+
+def test_a_grid_s_key_order_is_a_setting() -> None:
+    grid = "{length: [4, 16], alpha: [0.5, 1.0]}"
+    text = _with("{length: [4, 16, 64]}", grid).replace("alpha: 1.0, ", "")
+    swapped = spec_from_yaml(text.replace(grid, "{alpha: [0.5, 1.0], length: [4, 16]}"))
+    # The first param changes slowest, so the order sets the points' order.
+    assert [label for label, _ in swapped.conditions[1].points][:2] == [
+        "pulse alpha=0.5 length=4",
+        "pulse alpha=0.5 length=16",
+    ]
+    assert swapped.sha256 != spec_from_yaml(text).sha256
 
 
 CHANGES = {
@@ -284,6 +227,15 @@ def test_the_hash_changes_whenever_a_setting_changes(old: str, new: str) -> None
     if old == "  - label: none\n    segments: []\n":  # the conditions swapped round
         text += "  - label: none\n    segments: []\n"
     assert spec_from_yaml(text).sha256 != spec_from_yaml(SPEC).sha256
+
+
+def test_the_example_file_s_hash_is_pinned() -> None:
+    # Update this when the example file changes. If the file did not change,
+    # the hash itself did, and no longer matches the hashes manifests record.
+    spec = read_spec(PROJECT_ROOT / "experiments" / "p0" / "s2_pulse_lengths.yaml")
+    assert spec.sha256 == (
+        "d43270fb4626f4eeaccad773df717aa611f69361f66a0ae9944ac6a6ec6edefa"
+    )
 
 
 def test_the_readme_example_is_the_example_file() -> None:

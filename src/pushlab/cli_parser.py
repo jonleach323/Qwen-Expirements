@@ -224,12 +224,13 @@ def _add_expand(commands: argparse._SubParsersAction) -> None:
         "expand",
         help="list the runs an experiment file means, without running anything",
         description="Read an experiment file (experiments/README.md has the "
-        "format), check every condition's schedule against the model, draw the "
-        "random controls and read the prompt set, then print every run the file "
-        "means, one per line: its ID, condition, control number (0 for the "
-        "condition's own run), prompt, seed, batch and, for a control, the run it "
-        "mirrors. With --summary, print the settings and how many runs each "
-        "condition gives instead. Nothing is run and no model is loaded.",
+        "format), check every condition's schedule against the model, read the "
+        "prompt set and draw the random controls, then print a line naming the "
+        "columns and every run the file means, one per line: its ID, condition, "
+        "control number (0 for the condition's own run), prompt, seed, batch and, "
+        "for a control, the run it mirrors. With --summary, print the settings and "
+        "how many runs each condition gives instead. Nothing is run and no model "
+        "is loaded.",
     )
     expand.add_argument(
         "spec",
