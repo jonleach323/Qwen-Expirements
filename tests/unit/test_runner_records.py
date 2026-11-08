@@ -135,3 +135,38 @@ conditions:
     changed = tiny_spec(conditions, max_gpu_hours="2")
     assert _run(changed, runs, "--overwrite-version", "--limit", "1") == 3
     assert read_identity(runs / NAME)["conditions"] == expected
+
+
+def test_a_new_version_that_keeps_every_run_restamps_the_manifest(
+    tiny_spec: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = tmp_path / "runs"
+    assert _run(tiny_spec(), runs) == 0
+    changed = tiny_spec(max_gpu_hours="2")  # keeps every run: nothing to run
+    assert _run(changed, runs, "--overwrite-version") == 0
+    assert "it keeps 10 runs saved" in capsys.readouterr().out
+    manifest = json.loads((runs / NAME / "manifest.json").read_text())
+    identity = read_identity(runs / NAME)
+    assert manifest["version"] == identity["version"] == 2
+    assert manifest["spec_sha256"] == identity["spec_sha256"]
+    assert manifest["runs_by_status"] == {"ok": 10, "failed": 0, "pending": 0}
+    assert len(manifest["sessions"]) == 1  # the session that made the runs
+    assert main(["verify", str(changed), "--runs-dir", str(runs)]) == 0
+
+
+def test_stale_counts_are_restamped_and_a_broken_manifest_only_warns(
+    tiny_spec: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs) == 0
+    path = runs / NAME / "manifest.json"
+    manifest = json.loads(path.read_text())
+    # As a session killed after its last batch leaves it.
+    stale = manifest | {"runs_by_status": {"ok": 8, "failed": 0, "pending": 2}}
+    path.write_text(json.dumps(stale))
+    assert _run(spec, runs) == 0
+    assert json.loads(path.read_text())["runs_by_status"]["ok"] == 10
+    path.write_text("{not json")
+    capsys.readouterr()
+    assert _run(spec, runs) == 0  # nothing to run, and no refusal
+    assert "warning: " in capsys.readouterr().err

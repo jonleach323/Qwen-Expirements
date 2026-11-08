@@ -1,9 +1,12 @@
 """The runner's manifest.json: one entry per session, and the code each ran.
 
 After every session the runner rewrites the experiment's manifest
-(pushlab.store.manifest), with this session last in its sessions. Before a
-session runs, code_changes says whether the sessions that made the
-version's runs so far, kept ones included, ran other code or libraries.
+(pushlab.store.manifest), with this session last in its sessions. When it
+runs no session, as when a new version keeps every run or a session was
+killed after its last batch, restamp_manifest brings the version, hashes
+and counts up to date. Before a session runs, code_changes says whether
+the sessions that made the version's runs so far, kept ones included, ran
+other code or libraries.
 """
 
 from collections import Counter
@@ -110,3 +113,39 @@ def write_experiment_manifest(
     check_experiment_manifest(info)
     write_manifest(path, info, overwrite=True)
     return info
+
+
+def restamp_manifest(
+    path: Path, identity: dict[str, Any], states: dict[str, str], total: int
+) -> bool:
+    """Bring manifest.json's version, hashes and counts up to experiment.json
+    and the index, keeping its sessions; True if it had to be rewritten.
+
+    It writes only when something changed, so a finished experiment run
+    again changes no file, and does nothing without a manifest.
+
+    Example:
+        >>> restamp_manifest(Path("/no/such/folder"), {}, {}, 0)
+        False
+    """
+    info = folder.read_json(path / MANIFEST_FILE)
+    if info is None:
+        return False
+    counts = Counter(states.values())
+    fresh = dict(info) | {key: identity.get(key) for key in plan.IDENTITY_KEYS}
+    fresh |= {
+        "version": identity["version"],
+        "spec_file": identity.get("spec_file"),
+        "model_revision": str(identity["model"]).rpartition("@")[2],
+        "run_count": total,
+        "runs_by_status": {
+            "ok": counts["ok"],
+            "failed": counts["failed"],
+            "pending": total - len(states),
+        },
+    }
+    if fresh == info:
+        return False
+    check_experiment_manifest(fresh)
+    write_manifest(path, fresh, overwrite=True)
+    return True

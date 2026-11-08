@@ -232,7 +232,11 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
         "baseline wrote them; repeat --runs to add more",
     )
     report.add_argument(
-        "--out", required=True, type=Path, help="the Markdown file to write"
+        "--out",
+        required=True,
+        type=Path,
+        help="the Markdown file to write; with an experiment file, outside its "
+        "runner folder",
     )
     report.add_argument(
         "--overwrite", action="store_true", help="replace the file if it exists"
@@ -246,8 +250,9 @@ def _add_verify(commands: argparse._SubParsersAction) -> None:
         help="check an experiment's saved runs and steps against its file",
         description="Check an experiment's runner folder: that no run ID is "
         "saved twice and none the experiment file plans is missing, that every "
-        "reply has its steps, one per token, and that the pushes each step "
-        "records are the ones its run's schedule gives that pass. It prints "
+        "reply has its steps, one per token, that the pushes each step "
+        "records are the ones its run's schedule gives that pass, and that "
+        "manifest.json agrees with the index and experiment.json. It prints "
         "each problem and exits 1 when it finds any, 0 when it finds none. It "
         "loads no model and writes nothing.",
     )

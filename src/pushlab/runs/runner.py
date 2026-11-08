@@ -29,7 +29,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from pushlab.runs import folder, plan, shards, versions
+from pushlab.runs import folder, manifest, plan, shards, versions
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.plan import Call, differences
@@ -190,6 +190,14 @@ def _start(
     version, total = identity["version"], len(expansion.runs)
     entries = folder.read_index(path)
     states = folder.latest(entries, version)
+    # Up to date even when no session runs: a new version that keeps every
+    # run, or a session killed after its last batch was marked.
+    try:
+        manifest.restamp_manifest(
+            path, identity, {k: s["status"] for k, s in states.items()}, total
+        )
+    except (OSError, ValueError) as error:  # metadata: say so, and go on
+        print(f"pushlab run: warning: {error}", file=sys.stderr)
     counts = Counter(state["status"] for state in states.values())
     left = sum(
         plan.is_due(states.get(run.record.run_id), retry_failed)

@@ -87,8 +87,10 @@ and a second one to watch it.
    ```
 
    Then write the replies of the conditions you want to read, with a
-   marker such as **[A on]** or **[A off, B on]** before the first token
-   each change of pushes chose, under a legend saying what A and B are:
+   marker such as [**A on**] or [**A off, B on**] before the first token
+   each change of pushes chose, under a legend saying what A and B are.
+   Save it outside the runner folder, as here: it refuses an `--out` inside
+   it.
 
    ```bash
    uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
