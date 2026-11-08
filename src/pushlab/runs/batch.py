@@ -5,17 +5,18 @@ What a run is made from was checked before the model loaded
 set again, as the session uses them, and refuses them if they changed in
 between. run_call then runs one call's runs together, every row where the
 plan puts it, and returns the records of its due runs: ok with their
-replies, or all failed with the error, so that one bad call never stops an
-unattended run.
+replies and their steps (pushlab.store.steps), or all failed with the
+error, so that one bad call never stops an unattended run.
 """
 
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pushlab.runs.plan import Call
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.records import RunRecord
+from pushlab.store.steps import StepRecord
 
 
 @dataclass(frozen=True)
@@ -64,13 +65,41 @@ def session_inputs(
 
 @dataclass(frozen=True)
 class Outcome:
-    """What one call gave: the due runs' records, the error if it raised, and
-    its generation seconds and reply tokens over all its rows."""
+    """What one call gave: the due runs' records and their steps, the error if
+    it raised, and its generation seconds and reply tokens over all its rows."""
 
     records: list[RunRecord]
     error: str | None
     seconds: float
     reply_tokens: int
+    steps: list[StepRecord] = field(default_factory=list)
+
+
+def reply_steps(run_id: str, reply: Any) -> list[StepRecord]:
+    """A reply's steps: each token, its log-probability and the pushes on
+    the pass that chose it (Generation.amounts and logprobs).
+
+    Example:
+        >>> from pushlab.engine.generate import Generation
+        >>> reply = Generation("Hi", (7, 8), "max_new_tokens", (), ((), ()))
+        >>> reply = replace(reply, logprobs=(-1.0, -2.0))
+        >>> [step.logprob for step in reply_steps("x-000001", reply)]
+        [-1.0, -2.0]
+    """
+    return [
+        StepRecord(
+            run_id,
+            step,
+            "reply",
+            token,
+            logprob,
+            tuple(str(pushed.unit) for pushed in pushes),
+            tuple(pushed.amount for pushed in pushes),
+        )
+        for step, (token, logprob, pushes) in enumerate(
+            zip(reply.token_ids, reply.logprobs, reply.amounts, strict=True)
+        )
+    ]
 
 
 def _schedule(record: RunRecord) -> Any:
@@ -146,17 +175,19 @@ def run_call(
         ]
         return Outcome(failed, message, time.perf_counter() - start, 0)
     seconds = time.perf_counter() - start
-    done = [
-        replace(
-            record,
-            model=model,
-            batch_key=f"{stem}:{row}",
-            output_text=reply.text,
-            output_tokens=list(reply.token_ids),
-            status="ok",
-        )
-        for row, (record, reply) in enumerate(zip(planned, replies, strict=True))
-        if record.run_id in call.due
-    ]
+    done, steps = [], []
+    for row, (record, reply) in enumerate(zip(planned, replies, strict=True)):
+        if record.run_id in call.due:
+            done.append(
+                replace(
+                    record,
+                    model=model,
+                    batch_key=f"{stem}:{row}",
+                    output_text=reply.text,
+                    output_tokens=list(reply.token_ids),
+                    status="ok",
+                )
+            )
+            steps += reply_steps(record.run_id, reply)
     tokens = sum(len(reply.token_ids) for reply in replies)
-    return Outcome(done, None, seconds, tokens)
+    return Outcome(done, None, seconds, tokens, steps)

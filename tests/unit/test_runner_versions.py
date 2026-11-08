@@ -15,8 +15,9 @@ from pushlab.cli import main
 from pushlab.engine import generate as generate_module
 from pushlab.models import load
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
-from pushlab.runs.folder import read_identity, read_index, read_results
+from pushlab.runs.folder import read_identity, read_index
 from pushlab.runs.runner import differences
+from pushlab.runs.shards import read_results
 
 NAME = "tiny-pulses"
 

@@ -29,7 +29,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from pushlab.runs import folder, plan, versions
+from pushlab.runs import folder, plan, shards, versions
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.plan import Call, differences
@@ -157,7 +157,7 @@ def _start(
     """Holding the lock: check the folder's version, then run what is left."""
     if problem := plan.folder_problem(path, spec.name):  # again, now it is ours
         return refuse(problem)
-    folder.remove_leftovers(path)
+    shards.remove_leftovers(path)
     folder.repair_index(path)
     identity = folder.read_identity(path)
     planned: list[Call] | None = None

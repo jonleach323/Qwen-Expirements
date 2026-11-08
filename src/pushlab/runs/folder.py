@@ -5,21 +5,23 @@ The folder is <runs dir>/<experiment name>, and holds:
   and version, and the hashes of what its runs were made from: the
   experiment file, the prompt set, units/known.csv, the model download and
   the calibration. A new version starts when one of them changes.
-- shards/: one Parquet file per saved batch, in the runs table's schema
-  (pushlab.store.records), named v<version>-<batch>-<attempt>.parquet.
-- index.jsonl: the progress index, one line per shard that counts, saying
-  which runs it holds and how each ended, with the batch's time and tokens.
+- shards/ and steps/: two Parquet files per saved batch, of one name, its
+  runs and its runs' steps (pushlab.runs.shards).
+- index.jsonl: the progress index, one line for each shard a version
+  counts, saying which runs it holds and how each ended, with the batch's
+  time and tokens.
 - heartbeat.json and progress.json, rewritten after every batch, and the
-  session's manifest.json; .lock, held while a runner works on the folder.
+  experiment's manifest.json; .lock, held while a runner works on the
+  folder.
 
-A shard is written to a hidden temporary file, flushed to the disk and
-renamed into place, and only then marked in the index. So a crash at any
-moment leaves each batch either marked, and saved, or not marked: a shard
-the index does not name is ignored, and its batch is run again under the
-next attempt's name. A line of the index that a crash cut short is ignored
-when read, and cut off by the next runner. Only a runner holding the lock
-writes, and the system lets go of the lock when the process ends, however
-it ends.
+A batch's files are written to hidden temporary files, flushed to the disk
+and renamed into place (write_whole), and only then is the batch marked in
+the index. So a crash at any moment leaves each batch either marked, and
+saved, or not marked: a shard the index does not name is ignored, and its
+batch is run again under the next attempt's name. A line of the index
+that a crash cut short is ignored when read, and cut off by the next
+runner. Only a runner holding the lock writes, and the system lets go of
+the lock when the process ends, however it ends.
 """
 
 import fcntl
@@ -32,15 +34,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-import pyarrow.parquet as pq
-
-from pushlab.store.records import RunRecord, read_runs_file, runs_table
-
 # The pod's volume, where the docs put run folders.
 RUNS_DIR = Path("/workspace/runs")
 IDENTITY_FILE = "experiment.json"
 INDEX_FILE = "index.jsonl"
 SHARDS = "shards"
+STEPS = "steps"
 HEARTBEAT_FILE = "heartbeat.json"
 PROGRESS_FILE = "progress.json"
 LOCK_FILE = ".lock"
@@ -100,8 +99,18 @@ def _sync_folder(path: Path) -> None:
         os.close(handle)
 
 
-def _write_whole(path: Path, write: Any) -> None:
-    """Write path through a hidden temporary file, flushed, then renamed."""
+def write_whole(path: Path, write: Any) -> None:
+    """Write path through a hidden temporary file, flushed, then renamed.
+
+    write(file) writes the content to the open temporary file. A crash
+    leaves the old path as it was, or none, and a hidden .tmp file that
+    the next runner deletes.
+
+    Example:
+        >>> write_whole(
+        ...     Path("runs/x/progress.json"), lambda file: file.write(b"{}")
+        ... )  # doctest: +SKIP
+    """
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with open(temporary, "xb") as file:
@@ -122,7 +131,7 @@ def write_json(path: Path, data: object) -> None:
         >>> write_json(Path("runs/x/progress.json"), {"ok": 2})  # doctest: +SKIP
     """
     text = json.dumps(data, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    _write_whole(path, lambda file: file.write(text.encode()))
+    write_whole(path, lambda file: file.write(text.encode()))
 
 
 def read_json(path: Path) -> Any:
@@ -281,100 +290,6 @@ def used_seconds(entries: list[dict[str, Any]], version: int) -> float:
         2.5
     """
     return sum(e.get("seconds", 0.0) for e in entries if e.get("version") == version)
-
-
-def next_shard_name(folder: Path, version: int, batch: str) -> str:
-    """The name for the next attempt at a batch: one no shard has yet.
-
-    Example:
-        >>> next_shard_name(Path("/no/such/folder"), 1, "b000001")
-        'v1-b000001-1.parquet'
-    """
-    taken = {p.name for p in (folder / SHARDS).glob(f"v{version}-{batch}-*.parquet")}
-    attempt = 1
-    while f"v{version}-{batch}-{attempt}.parquet" in taken:
-        attempt += 1
-    return f"v{version}-{batch}-{attempt}.parquet"
-
-
-def write_shard(folder: Path, name: str, records: list[RunRecord]) -> Path:
-    """Check records and save them as folder/shards/name, whole or not at all.
-
-    An existing shard of that name raises FileExistsError: shards are never
-    replaced.
-
-    Example:
-        >>> write_shard(folder, "v1-b000001-1.parquet", records)  # doctest: +SKIP
-        PosixPath('.../shards/v1-b000001-1.parquet')
-    """
-    table = runs_table(records)
-    shards = folder / SHARDS
-    shards.mkdir(parents=True, exist_ok=True)
-    path = shards / name
-    if path.exists():
-        raise FileExistsError(f"{path} already exists; shards are never replaced")
-    _write_whole(path, lambda file: pq.write_table(table, file))
-    return path
-
-
-def remove_leftovers(folder: Path) -> int:
-    """Delete the hidden temporary files of writes a crash stopped; how many.
-
-    Call it holding the lock, so that no runner is writing them.
-
-    Example:
-        >>> remove_leftovers(Path("/no/such/folder"))
-        0
-    """
-    leftovers = [*folder.glob(".*.tmp"), *(folder / SHARDS).glob(".*.tmp")]
-    for path in leftovers:
-        path.unlink()
-    return len(leftovers)
-
-
-def read_records(folder: Path, shards: dict[str, str]) -> dict[str, RunRecord]:
-    """The records of the given runs, each from the shard named for it.
-
-    Example:
-        >>> read_records(folder, {"x-000001": "v1-b000001-1.parquet"})  # doctest: +SKIP
-        {'x-000001': RunRecord(run_id='x-000001', ...)}
-    """
-    wanted: dict[str, set[str]] = {}
-    for run_id, shard in shards.items():
-        wanted.setdefault(shard, set()).add(run_id)
-    records: dict[str, RunRecord] = {}
-    for shard, run_ids in wanted.items():
-        found = {
-            record.run_id: record
-            for record in read_runs_file(folder / SHARDS / shard)
-            if record.run_id in run_ids
-        }
-        if missing := sorted(run_ids - set(found)):
-            raise ValueError(
-                f"{shard} lacks {', '.join(missing)}, which the index puts there"
-            )
-        records |= found
-    return records
-
-
-def read_results(folder: Path) -> list[RunRecord]:
-    """Every saved run of the folder's version, once each, in run order.
-
-    A run saved more than once, such as a failed run run again, counts as
-    its latest mark says.
-
-    Example:
-        >>> read_results(Path("/workspace/runs/s2-pulse-lengths"))[
-        ...     0
-        ... ].status  # doctest: +SKIP
-        'ok'
-    """
-    identity = read_identity(folder)
-    if identity is None:
-        return []
-    states = latest(read_index(folder), identity["version"])
-    records = read_records(folder, {k: v["shard"] for k, v in states.items()})
-    return [records[run_id] for run_id in sorted(records)]
 
 
 def lock_held(folder: Path) -> bool:

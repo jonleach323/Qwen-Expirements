@@ -22,7 +22,8 @@ from pushlab.models import load
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
 from pushlab.runs import folder as folder_module
 from pushlab.runs import runner
-from pushlab.runs.folder import FolderInUse, locked, read_index, read_results
+from pushlab.runs.folder import FolderInUse, locked, read_index
+from pushlab.runs.shards import read_results
 
 NAME = "tiny-pulses"
 

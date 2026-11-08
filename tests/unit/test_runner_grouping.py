@@ -13,8 +13,9 @@ import torch
 from pushlab.cli import main
 from pushlab.engine import generate as generate_module
 from pushlab.runs.expand import expand
-from pushlab.runs.folder import read_index, read_results
+from pushlab.runs.folder import read_index
 from pushlab.runs.plan import calls
+from pushlab.runs.shards import read_results
 from pushlab.runs.spec import read_spec
 
 NAME = "tiny-pulses"

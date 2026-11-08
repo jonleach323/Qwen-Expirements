@@ -14,15 +14,9 @@ import torch
 
 from pushlab.cli import main
 from pushlab.runs import folder as folder_module
-from pushlab.runs.folder import (
-    FolderInUse,
-    append_index,
-    latest,
-    locked,
-    read_index,
-    read_results,
-    write_shard,
-)
+from pushlab.runs import shards as shards_module
+from pushlab.runs.folder import FolderInUse, append_index, latest, locked, read_index
+from pushlab.runs.shards import read_results, write_shard
 from pushlab.store.records import RunRecord, make_run_id, write_runs
 
 NAME = "tiny-pulses"
@@ -204,7 +198,7 @@ def test_broken_folder_files_are_refused_by_name(tmp_path: Path) -> None:
         read_index(tmp_path)
     write_shard(tmp_path, "v1-b000001-1.parquet", [_record(1)])
     with pytest.raises(ValueError, match="lacks x-000002, which the index puts there"):
-        folder_module.read_records(tmp_path, {"x-000002": "v1-b000001-1.parquet"})
+        shards_module.read_records(tmp_path, {"x-000002": "v1-b000001-1.parquet"})
     assert read_results(tmp_path / "nowhere") == []
 
 
@@ -218,7 +212,8 @@ def test_a_file_where_the_folder_should_be_is_refused(
 
 
 @pytest.mark.parametrize(
-    "name", ["folder", "plan", "versions", "estimate", "session", "status_command"]
+    "name",
+    ["folder", "shards", "plan", "versions", "estimate", "session", "status_command"],
 )
 def test_doctests(name: str) -> None:
     import doctest

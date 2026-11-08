@@ -12,7 +12,8 @@ import torch
 from pushlab.cli import main
 from pushlab.models import load
 from pushlab.runs.expand import expand
-from pushlab.runs.folder import read_identity, read_index, read_results
+from pushlab.runs.folder import read_identity, read_index
+from pushlab.runs.shards import read_results
 from pushlab.runs.spec import read_spec
 from pushlab.store import environment
 

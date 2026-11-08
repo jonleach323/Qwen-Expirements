@@ -18,7 +18,9 @@ from pushlab.engine import generate as generate_module
 from pushlab.models import load
 from pushlab.runs import folder as folder_module
 from pushlab.runs import runner
-from pushlab.runs.folder import read_index, read_results
+from pushlab.runs import shards as shards_module
+from pushlab.runs.folder import read_index
+from pushlab.runs.shards import read_results
 
 NAME = "tiny-pulses"
 IDS = [f"{NAME}-{i:06d}" for i in range(1, 11)]
@@ -267,21 +269,21 @@ def test_a_batch_that_cannot_be_saved_stops_the_run_and_keeps_the_rest(
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
     folder = runs / NAME
-    real = folder_module.write_shard
+    real = shards_module.write_shard
 
     def disk_full(path: Path, name: str, records: list) -> Path:
         if name.startswith("v1-b000002"):
             raise OSError("No space left on device")
         return real(path, name, records)
 
-    monkeypatch.setattr(folder_module, "write_shard", disk_full)
+    monkeypatch.setattr(shards_module, "write_shard", disk_full)
     assert _run(spec, runs) == 1
     err = capsys.readouterr().err
     assert "pushlab run: cannot save b000002: No space left on device" in err
     assert [entry["batch"] for entry in read_index(folder)] == ["b000001"]
     beat = json.loads((folder / "heartbeat.json").read_text())
     assert beat["state"].startswith("stopped: cannot save b000002")
-    monkeypatch.setattr(folder_module, "write_shard", real)
+    monkeypatch.setattr(shards_module, "write_shard", real)
     assert _run(spec, runs) == 0
     assert [run.run_id for run in read_results(folder)] == IDS
 

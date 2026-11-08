@@ -60,7 +60,8 @@ and `status` all check this before anything else.
   `units/known.csv`, the model download (name and commit) and the
   calibration (None when nothing is pushed).
 - `shards/v<version>-<batch>-<attempt>.parquet`, one per saved batch, in
-  the runs table's schema; a shard is never replaced.
+  the runs table's schema, and `steps/` a file of the same name with its
+  runs' steps (decision 0016); neither is ever replaced.
 - `index.jsonl`, the progress index: one JSON line for each shard a
   version counts, with its version, the session that saved it, its batch,
   how many rows it ran, each saved run's status, the error, the batch's
@@ -81,10 +82,10 @@ and `status` all check this before anything else.
   type, written under its own lock, `.speeds.json.lock`, since runners of
   different experiments share it.
 
-**Saving a batch.** The runner writes the batch's records to a hidden
-temporary file, flushes it to the disk, renames it into place and flushes
-the folder, and only then appends the batch's line to the index and
-flushes that. A crash at any moment therefore leaves the batch either
+**Saving a batch.** The runner writes the batch's records, then its steps,
+each to a hidden temporary file that it flushes to the disk, renames into
+place and flushes the folder of, and only then appends the batch's line to
+the index and flushes that. A crash at any moment therefore leaves the batch either
 marked, and saved, or not marked. A shard the index does not name is
 ignored, and its batch runs again under the next attempt's name. A last
 index line a crash cut short is ignored when read and cut off by the next

@@ -13,9 +13,12 @@ prompt set (pushlab.runs.steer), and `pushlab report` lays run folders'
 replies side by side (pushlab.analysis.report). `pushlab expand` lists the
 runs an experiment file means without running them
 (pushlab.runs.expand_command), `pushlab run` runs them batch by batch
-(pushlab.runs.runner), and `pushlab status` says how far a run has got
-(pushlab.runs.status_command). The options of every subcommand are in
-pushlab.cli_parser.
+(pushlab.runs.runner), `pushlab status` says how far a run has got
+(pushlab.runs.status_command), and `pushlab verify` checks its saved runs
+and steps (pushlab.runs.verify). `pushlab report` also shows an
+experiment's replies with markers where its pushes switch
+(pushlab.analysis.experiment_report). The options of every subcommand are
+in pushlab.cli_parser.
 """
 
 import hashlib
@@ -25,6 +28,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -225,6 +229,39 @@ def run_baseline(
     return 0
 
 
+def _report(args: Any) -> int:
+    """pushlab report: on an experiment's runner folder, or on run folders."""
+    if args.spec is not None and args.runs:
+        print(
+            "pushlab report: give an experiment file or --runs, not both",
+            file=sys.stderr,
+        )
+        return 1
+    if args.spec is not None:
+        from pushlab.analysis.experiment_report import run_experiment_report
+
+        return run_experiment_report(
+            args.spec, args.conditions, args.out, args.runs_dir, args.overwrite
+        )
+    if not args.runs:
+        print(
+            "pushlab report: error: give an experiment file, or run folders with "
+            "--runs DIR",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if args.conditions or args.runs_dir is not None:
+        print(
+            "pushlab report: --conditions and --runs-dir go with an experiment "
+            "file, not with --runs",
+            file=sys.stderr,
+        )
+        return 1
+    from pushlab.analysis.report import run_report
+
+    return run_report(args.runs, args.out, args.overwrite)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the pushlab command with argv; return the exit status.
 
@@ -261,9 +298,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             overwrite=args.overwrite,
         )
     if args.command == "report":
-        from pushlab.analysis.report import run_report
+        return _report(args)
+    if args.command == "verify":
+        from pushlab.runs.verify import run_verify
 
-        return run_report(args.runs, args.out, args.overwrite)
+        return run_verify(args.spec, args.runs_dir)
     if args.command == "expand":
         from pushlab.runs.expand_command import run_expand
 

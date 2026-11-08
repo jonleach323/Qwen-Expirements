@@ -196,20 +196,40 @@ def _add_steer(commands: argparse._SubParsersAction, models: list[str]) -> None:
 def _add_report(commands: argparse._SubParsersAction) -> None:
     report = commands.add_parser(
         "report",
-        help="lay run folders' replies side by side in a Markdown table",
-        description="Write a Markdown file with one table: one row per prompt "
-        "and one column per run folder, each cell the reply that folder's run "
-        "gave. Above it, a list says what each folder pushed.",
+        help="an experiment's replies with markers where pushes switch, or run "
+        "folders' replies side by side",
+        description="With an experiment file: write a Markdown file with each "
+        "reply of the conditions asked for, prompt by prompt, and short markers "
+        "where the pushes active on the reply change, such as [A on], [A off, B "
+        "on] or [A/B x8] for a long alternation, under a one-line legend saying "
+        "what A and B are. It reads the experiment's runner folder and needs the "
+        "model's tokenizer to place the markers. With --runs: write a Markdown "
+        "table of S1's run folders' replies, one row per prompt and one column "
+        "per folder, under a list of what each folder pushed.",
+    )
+    report.add_argument(
+        "spec",
+        nargs="?",
+        type=Path,
+        metavar="SPEC",
+        help="an experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
+    )
+    report.add_argument(
+        "--conditions",
+        nargs="+",
+        action="extend",
+        metavar="LABEL",
+        help='the conditions to show, by label, such as none "pulse length=16" '
+        "(default: every condition, in the file's order)",
     )
     report.add_argument(
         "--runs",
-        required=True,
         nargs="+",
         action="extend",
         type=Path,
         metavar="DIR",
-        help="run folders, as pushlab steer or baseline wrote them; repeat "
-        "--runs to add more",
+        help="instead of an experiment file, run folders, as pushlab steer or "
+        "baseline wrote them; repeat --runs to add more",
     )
     report.add_argument(
         "--out", required=True, type=Path, help="the Markdown file to write"
@@ -217,6 +237,27 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
     report.add_argument(
         "--overwrite", action="store_true", help="replace the file if it exists"
     )
+    _add_runs_dir(report)
+
+
+def _add_verify(commands: argparse._SubParsersAction) -> None:
+    verify = commands.add_parser(
+        "verify",
+        help="check an experiment's saved runs and steps against its file",
+        description="Check an experiment's runner folder: that no run ID is "
+        "saved twice and none the experiment file plans is missing, that every "
+        "reply has its steps, one per token, and that the pushes each step "
+        "records are the ones its run's schedule gives that pass. It prints "
+        "each problem and exits 1 when it finds any, 0 when it finds none. It "
+        "loads no model and writes nothing.",
+    )
+    verify.add_argument(
+        "spec",
+        type=Path,
+        metavar="SPEC",
+        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
+    )
+    _add_runs_dir(verify)
 
 
 def _add_expand(commands: argparse._SubParsersAction) -> None:
@@ -348,4 +389,5 @@ def build_parser() -> argparse.ArgumentParser:
     _add_expand(commands)
     _add_run(commands)
     _add_status(commands)
+    _add_verify(commands)
     return parser

@@ -23,22 +23,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pushlab.runs import estimate, folder, plan
+from pushlab.runs import estimate, folder, manifest, shards
 from pushlab.runs.batch import Inputs, Outcome, run_call, session_inputs
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion
 from pushlab.runs.plan import Call
 from pushlab.runs.spec import ExperimentSpec
-from pushlab.store.records import MANIFEST_FILE, check_manifest, write_manifest
 
 EXIT_FAILED, EXIT_STOPPED, EXIT_INTERRUPTED = 2, 3, 130
 GO_ON = (
     "To go on, raise max_gpu_hours in the experiment file through a pull "
     "request, then run it with --overwrite-version, which keeps the saved runs."
 )
-# What a manifest's session records about the code and libraries it ran.
-SESSION_ENVIRONMENT = ("code_commit", "code_dirty", "lockfile_sha256", "gpu")
-SESSION_ENVIRONMENT += ("cuda", "driver", "torch", "transformers", "packages")
 
 
 def refuse(message: str) -> int:
@@ -202,9 +198,10 @@ class Session:
             self._manifest()
             for number, call in enumerate(chosen):
                 step = f"save {call.key}"
-                name = folder.next_shard_name(self.path, self.version, call.key)
+                name = shards.next_shard_name(self.path, self.version, call.key)
                 outcome = self._run_call(call, name, inputs, generate_module.generate)
-                folder.write_shard(self.path, name, outcome.records)
+                shards.write_shard(self.path, name, outcome.records)
+                shards.write_steps(self.path, name, outcome.steps)
                 now = self.clock()
                 seconds, last = now - last, now
                 folder.append_index(
@@ -276,80 +273,46 @@ class Session:
         print(line + (f" ({outcome.error})" if outcome.error else ""), flush=True)
         self._beat()
 
-    def _earlier_sessions(self) -> list[dict[str, Any]]:
-        earlier = folder.read_json(self.path / MANIFEST_FILE) or {}
-        return [s for s in earlier.get("sessions", []) if s.get("id") != self.id]
-
     def _warn_if_code_changed(self) -> None:
         """Say when this version's runs so far, kept ones included, ran other
         code or libraries."""
         assert self.environment is not None
-        mine = self.version
-        makers = {  # the sessions that made the runs the version's marks count
-            entry.get("session")
-            for entry in folder.read_index(self.path)
-            if entry.get("version") == mine
-        }
-        for session in self._earlier_sessions():
-            if session.get("id") not in makers:
-                continue
-            changed = [
-                key
-                for key in ("code_commit", "lockfile_sha256", "torch", "transformers")
-                if session.get(key) != self.environment.get(key)
-            ]
-            if changed:
-                print(
-                    f"pushlab run: warning: version {mine}'s runs so far ran with "
-                    f"another {', '.join(changed)}; this session's runs are made "
-                    "with the code and libraries as they are now",
-                    file=sys.stderr,
-                )
-                return
+        changed = manifest.code_changes(
+            self.path, self.version, self.id, self.environment
+        )
+        if changed:
+            print(
+                f"pushlab run: warning: version {self.version}'s runs so far ran "
+                f"with another {', '.join(changed)}; this session's runs are made "
+                "with the code and libraries as they are now",
+                file=sys.stderr,
+            )
 
     def _manifest(self) -> None:
         """Rewrite manifest.json, with this session last in its sessions."""
-        environment, loaded = self.environment, self.loaded
-        if environment is None or loaded is None:
+        if self.environment is None or self.loaded is None:
             return  # stopped before the model loaded: nothing ran to record
-        sessions = self._earlier_sessions()
-        sessions.append(
-            {key: environment.get(key) for key in SESSION_ENVIRONMENT}
-            | {
-                "id": self.id,
-                "started_at": self.started_at,
-                "finished_at": _now(),
-                "state": self.state,
-                "version": self.version,
-                "batches": self.tally.calls,
-                "runs": self.tally.runs,
-                "gpu_hours": self.tally.seconds / 3600,
-            }
-        )
-        counts = Counter(self.states.values())
-        total = len(self.expansion.runs)
-        info = environment | {
-            k: self.identity.get(k) for k in ("spec_file", *plan.IDENTITY_KEYS)
-        }
-        info |= {
-            "experiment": self.spec.name,
+        session = {
+            "environment": self.environment,
+            "id": self.id,
+            "started_at": self.started_at,
+            "finished_at": _now(),
+            "state": self.state,
             "version": self.version,
-            "model_id": loaded.spec.hf_id,
-            "model_revision": loaded.revision,
             "device": self.device,
-            "dtype": self.spec.decoding["dtype"],
-            "started_at": min(s["started_at"] for s in sessions),
-            "finished_at": sessions[-1]["finished_at"],
-            "run_count": total,
-            "runs_by_status": {
-                "ok": counts["ok"],
-                "failed": counts["failed"],
-                "pending": total - len(self.states),
-            },
-            "sessions": sessions,
+            "batches": self.tally.calls,
+            "runs": self.tally.runs,
+            "gpu_hours": self.tally.seconds / 3600,
         }
-        check_manifest(info)
-        write_manifest(self.path, info, overwrite=True)
+        manifest.write_experiment_manifest(
+            self.path,
+            self.spec,
+            self.identity,
+            self.loaded,
+            session,
+            self.states,
+            len(self.expansion.runs),
+        )
 
     def _save_speed(self) -> None:
         tally, spec = self.tally, self.spec

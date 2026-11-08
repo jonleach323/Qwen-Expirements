@@ -17,7 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from pushlab.runs import folder
+from pushlab.runs import folder, shards
 from pushlab.runs.expand import Expansion
 from pushlab.runs.plan import IDENTITY_KEYS, new_identity
 from pushlab.runs.spec import ExperimentSpec
@@ -82,7 +82,7 @@ def kept_runs(
     ):
         return {}
     states = folder.latest(folder.read_index(path), identity["version"])
-    saved = folder.read_records(path, {k: v["shard"] for k, v in states.items()})
+    saved = shards.read_records(path, {k: v["shard"] for k, v in states.items()})
     planned = {run.record.run_id: run.record for run in expansion.runs}
     kept = {}
     for run_id, record in saved.items():

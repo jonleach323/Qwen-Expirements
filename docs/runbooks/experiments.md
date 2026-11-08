@@ -78,11 +78,31 @@ and a second one to watch it.
    `--limit`, and 130 after Ctrl-C. After 130, or 3 from `--limit`, the
    same command goes on. After 1, 2, or 3 at the cap, read what it said
    first: it needs a fix, a look at the failed runs, or a higher cap.
-7. **Copy the folder off the pod** as above, with the speed it measured,
+7. **Check it, then read it.** Once it has finished, check that every run
+   and its steps are saved and agree with the experiment file. It loads no
+   model and writes nothing, and lists any problem it finds:
+
+   ```bash
+   uv run pushlab verify experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+   Then write the replies of the conditions you want to read, with a
+   marker such as **[A on]** or **[A off, B on]** before the first token
+   each change of pushes chose, under a legend saying what A and B are:
+
+   ```bash
+   uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
+   ```
+
+   Open it in JupyterLab (right-click, **Open With > Markdown Preview**), or
+   copy it off and read it on your phone. Labels with spaces, such as
+   `pulse length=16`, need the quotes; leaving out `--conditions` shows them
+   all.
+8. **Copy the folder off the pod** as above, with the speed it measured,
    for example:
 
    ```bash
-   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json)
+   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json reports/s2-pulse-lengths.md)
    ```
 
 ## Close S1 on the pod

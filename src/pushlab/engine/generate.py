@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from pushlab.engine.decoding import Decoding, TokenChooser
+from pushlab.engine.decoding import Decoding, TokenChooser, chosen_logprobs
 from pushlab.engine.hooks import doses_active
 from pushlab.engine.push import Push, StepState, schedule_of
 from pushlab.models.chat import chat_prompt_ids, stop_token_ids
@@ -55,6 +55,8 @@ class Generation:
     with the amount added to its neuron: the prompt pass for token 0, and
     the pass that read token j - 1 for token j (decision 0008). So there is
     one entry per token, and an empty one where nothing was pushed.
+    logprobs[j] is token j's log-probability on that same pass, from the
+    model's scores before temperature or top-p (decoding.chosen_logprobs).
 
     Example:
         >>> reply = Generation("Hi", (13048, 248046), "end_of_turn", (1,))
@@ -67,6 +69,10 @@ class Generation:
     stop_reason: str
     touched: tuple[int, ...]
     amounts: tuple[tuple[UnitAmount, ...], ...] = ()
+    # Not part of ==: across batch layouts a token's log-probability differs
+    # in its last bits, as its scores do (decision 0009), while the reply is
+    # the same.
+    logprobs: tuple[float, ...] = field(default=(), compare=False)
 
 
 @dataclass
@@ -82,6 +88,7 @@ class _Row:
     stop_reason: str | None = None
     touched: list[int] = field(init=False)
     amounts: list[tuple[UnitAmount, ...]] = field(default_factory=list)
+    logprobs: list[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.touched = [0] * len(self.counted)
@@ -171,11 +178,15 @@ def _decode(
     for r, row in enumerate(rows):  # what the prompt pass pushed, behind token 0
         row.amounts.append(table.amounts(r, None) if table else ())
     for k in itertools.count():  # returns once every row has finished
-        chosen = choose(output.logits[:, -1], [row.running for row in rows])
-        for row, token in zip(rows, chosen, strict=True):
+        scores = output.logits[:, -1]
+        chosen = choose(scores, [row.running for row in rows])
+        # A finished row's token is a stand-in, so that one call does all rows.
+        logprobs = chosen_logprobs(scores, [token or 0 for token in chosen])
+        for row, token, logprob in zip(rows, chosen, logprobs, strict=True):
             if token is None:
                 continue
             row.tokens.append(token)
+            row.logprobs.append(logprob)
             if token in stops:
                 row.stop_reason = "end_of_turn"
             elif len(row.tokens) == decoding.max_new_tokens:
@@ -337,6 +348,7 @@ def generate(
             stop_reason=row.stop_reason,
             touched=tuple(row.touched),
             amounts=tuple(row.amounts),
+            logprobs=tuple(row.logprobs),
         )
         for row in rows
     ]
