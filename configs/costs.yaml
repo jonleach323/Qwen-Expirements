@@ -1,0 +1,16 @@
+# What GPU time costs, and how fast each model writes, for the estimates of
+# `pushlab run --dry-run` and `pushlab status`. Change it through a pull
+# request, not on the pod.
+gpu: RTX 4090
+# RunPod's list prices in September 2026, Community Cloud to Secure Cloud
+# (docs/plan/research-plan.md, "Compute, tools and budget").
+dollars_per_hour: [0.34, 0.74]
+# Reply tokens a second over a whole batch, used until a run on the pod
+# measures its own speed (the runner saves that in <runs dir>/speeds.json,
+# and estimates use it instead).
+reply_tokens_per_second:
+  # S1's lower bound: 3,623 reply tokens in at most 83 s for batches of 5,
+  # model loading included (docs/sprints/S1-review.md).
+  qwen3.5-4b: 44
+  # Not measured: half of qwen3.5-4b's, for a model of about twice its size.
+  qwen3-8b: 22

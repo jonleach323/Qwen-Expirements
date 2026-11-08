@@ -20,7 +20,9 @@ built, written as YAML and checked without loading a model
 prompt, each row of a batch with its own (decision 0013). An experiment
 file in `experiments/` describes a whole experiment, and `pushlab expand`
 lists every run it means without running anything (decision 0014).
-Running those runs comes in a later step.
+`pushlab run` runs them batch by batch, saving each batch before the next
+so that a crash loses at most one, and `pushlab status` says how far it
+has got (decision 0015).
 
 ## Getting started
 

@@ -19,6 +19,57 @@ file, choose **Download**, and check that it opens on your computer before
 you delete anything on the pod. The brackets keep your terminal in the
 folder it was in.
 
+## Run an experiment file
+
+`pushlab run` runs an experiment file's runs in its runner folder,
+`/workspace/runs/<name>`, and saves every batch before the next starts
+(docs/decisions/0015-runner.md). Use one JupyterLab terminal for the run
+and a second one to watch it.
+
+1. **Check the cost first.** This loads nothing and writes nothing:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab run experiments/p0/s2_pulse_lengths.yaml --dry-run
+   ```
+
+   Read its `to run`, `gpu-hours` and `cost` lines. When the GPU-hours are
+   more than the file's `max_gpu_hours`, the run will stop part way.
+2. **Start it in tmux,** so that it survives a dropped connection:
+
+   ```bash
+   tmux new -s run
+   ```
+
+   and in the tmux window:
+
+   ```bash
+   uv run pushlab run experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+   Ctrl-B then D leaves it running; `tmux attach -t run` comes back to it.
+3. **Watch it** from the second terminal:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab status experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+4. **Stop and go on.** Ctrl-C in the tmux window stops it and loses only
+   the batch that was running; a crash or a stopped pod is the same. Start
+   the same command again and it skips every saved run.
+5. **Failed runs.** A batch that raises is saved with its runs failed, and
+   status lists them with their errors. Once the cause is fixed, run the
+   same command with `--retry-failed`.
+6. **The cap.** At `max_gpu_hours` it stops and says so. To go on, raise
+   `max_gpu_hours` in the experiment file through a pull request, `git
+   pull` on the pod, and run with `--overwrite-version`, which keeps every
+   saved run.
+7. **Copy the folder off the pod** as above, with the speed it measured,
+   for example:
+
+   ```bash
+   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json)
+   ```
+
 ## Close S1 on the pod
 
 S1's done-when is not met yet (docs/sprints/S1-review.md). These steps need

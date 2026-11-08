@@ -5,7 +5,7 @@ replies are decoded, and the conditions to compare. `pushlab expand`
 turns it into the exact list of runs it means, without running anything
 or loading a model. The list is the same every time, as long as the
 prompt set and `units/known.csv`, which the random controls avoid, stay
-the same. Running the list comes in a later step.
+the same. `pushlab run` runs the list batch by batch (decision 0015).
 
 `p0/s0_baseline.yaml` is older: S0's one-run file, in a format of its own
 that only `pushlab baseline` reads.

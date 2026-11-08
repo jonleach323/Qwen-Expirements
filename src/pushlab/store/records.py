@@ -240,17 +240,14 @@ def _replace_atomically(path: Path, write: Callable[[Path], object]) -> None:
         raise
 
 
-def write_runs(
-    records: Sequence[RunRecord], out_dir: Path, *, overwrite: bool = False
-) -> Path:
-    """Check records and save them as out_dir/runs.parquet; return its path.
+def runs_table(records: Sequence[RunRecord]) -> pa.Table:
+    """Check records and return them as one table of the runs schema.
 
-    A malformed record raises ValueError and nothing is written. An existing
-    runs.parquet raises FileExistsError unless overwrite is True.
+    A malformed record raises ValueError, naming its place in records.
 
     Example:
-        >>> write_runs([run], Path("outputs/s0-baseline"))  # doctest: +SKIP
-        PosixPath('outputs/s0-baseline/runs.parquet')
+        >>> runs_table([run]).num_rows  # doctest: +SKIP
+        1
     """
     if not records:
         raise ValueError("no records to write")
@@ -266,22 +263,36 @@ def write_runs(
     counts = Counter(row["run_id"] for row in rows)
     if duplicates := sorted(run_id for run_id, n in counts.items() if n > 1):
         raise ValueError(f"run_id {', '.join(duplicates)} appears more than once")
+    return pa.Table.from_pylist(rows, schema=RUNS_SCHEMA)
+
+
+def write_runs(
+    records: Sequence[RunRecord], out_dir: Path, *, overwrite: bool = False
+) -> Path:
+    """Check records and save them as out_dir/runs.parquet; return its path.
+
+    A malformed record raises ValueError and nothing is written. An existing
+    runs.parquet raises FileExistsError unless overwrite is True.
+
+    Example:
+        >>> write_runs([run], Path("outputs/s0-baseline"))  # doctest: +SKIP
+        PosixPath('outputs/s0-baseline/runs.parquet')
+    """
+    table = runs_table(records)
     path = Path(out_dir) / RUNS_FILE
     _refuse_existing(path, overwrite)
-    table = pa.Table.from_pylist(rows, schema=RUNS_SCHEMA)
     _replace_atomically(path, lambda temporary: pq.write_table(table, temporary))
     return path
 
 
-def read_runs(out_dir: Path) -> list[RunRecord]:
-    """Read out_dir/runs.parquet back into run records.
+def read_runs_file(path: Path) -> list[RunRecord]:
+    """Read a Parquet file of the runs schema, such as a runner's shard.
 
     Example:
-        >>> read_runs(Path("outputs/s0-baseline"))[0].status  # doctest: +SKIP
-        'ok'
+        >>> read_runs_file(Path("outputs/s0-baseline/runs.parquet"))  # doctest: +SKIP
+        [RunRecord(run_id='s0-baseline-000001', ...)]
     """
-    path = Path(out_dir) / RUNS_FILE
-    table = pq.read_table(path.absolute())
+    table = pq.read_table(Path(path).absolute())
     if not table.schema.equals(RUNS_SCHEMA):
         raise ValueError(
             f"{path} does not have the runs table's columns and types: "
@@ -293,6 +304,16 @@ def read_runs(out_dir: Path) -> list[RunRecord]:
         )
         for row in table.to_pylist()
     ]
+
+
+def read_runs(out_dir: Path) -> list[RunRecord]:
+    """Read out_dir/runs.parquet back into run records.
+
+    Example:
+        >>> read_runs(Path("outputs/s0-baseline"))[0].status  # doctest: +SKIP
+        'ok'
+    """
+    return read_runs_file(Path(out_dir) / RUNS_FILE)
 
 
 def check_manifest(info: Mapping[str, Any]) -> str:

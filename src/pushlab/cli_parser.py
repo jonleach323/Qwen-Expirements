@@ -245,6 +245,82 @@ def _add_expand(commands: argparse._SubParsersAction) -> None:
     )
 
 
+def _add_runs_dir(command: argparse.ArgumentParser) -> None:
+    command.add_argument(
+        "--runs-dir",
+        type=Path,
+        metavar="DIR",
+        help="the folder that holds one folder per experiment (default: "
+        "$PUSHLAB_RUNS_DIR, else /workspace/runs)",
+    )
+
+
+def _add_run(commands: argparse._SubParsersAction) -> None:
+    run = commands.add_parser(
+        "run",
+        help="run an experiment file batch by batch, saving each batch as it goes",
+        description="Run every run an experiment file means (pushlab expand "
+        "lists them) in DIR/<name>, its runner folder: one batch at a time, each "
+        "saved before the next starts, so a crash loses at most the batch that "
+        "was running. Run the same command again to go on where it stopped. A "
+        "batch that raises is saved with its runs failed. It stops cleanly once "
+        "the saved batches have taken max_gpu_hours. It refuses a folder made "
+        "from another experiment file, prompt set, known units, model download "
+        "or calibration, and one that another experiment or another runner "
+        "uses. It needs the model downloaded and, to push, its calibration.",
+    )
+    run.add_argument(
+        "spec",
+        type=Path,
+        metavar="SPEC",
+        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
+    )
+    run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the runs by condition, and the reply tokens, GPU-hours and "
+        "cost of those still to run; load, run and write nothing",
+    )
+    run.add_argument(
+        "--limit",
+        type=_positive_int,
+        metavar="N",
+        help="run at most N runs this time, in whole batches",
+    )
+    run.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="run again only the runs that failed, and nothing else",
+    )
+    run.add_argument(
+        "--overwrite-version",
+        action="store_true",
+        help="when the folder's runs were made from another experiment file, "
+        "prompt set, known units, model download or calibration, start a new "
+        "version of the folder, which keeps the saved runs that did not change",
+    )
+    _add_runs_dir(run)
+
+
+def _add_status(commands: argparse._SubParsersAction) -> None:
+    status = commands.add_parser(
+        "status",
+        help="how far an experiment has got, and how long the rest will take",
+        description="Print an experiment's runs saved ok, failed and pending, "
+        "the batches saved, the speed measured over them, the GPU-hours used "
+        "of max_gpu_hours and the time left, and whether a runner is working "
+        "on its folder. It loads no model and changes nothing, so it can run "
+        "while pushlab run is going.",
+    )
+    status.add_argument(
+        "spec",
+        type=Path,
+        metavar="SPEC",
+        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
+    )
+    _add_runs_dir(status)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The pushlab command's arguments, with one subparser per subcommand.
 
@@ -265,4 +341,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_steer(commands, models)
     _add_report(commands)
     _add_expand(commands)
+    _add_run(commands)
+    _add_status(commands)
     return parser

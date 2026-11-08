@@ -27,6 +27,12 @@ Current sprint: S0 (Bootstrap).
 - Run folders' replies side by side: uv run pushlab report --runs DIR DIR ... --out FILE.md
 - The runs an experiment file means, with nothing run (experiments/README.md
   has the format): uv run pushlab expand experiments/p0/s2_pulse_lengths.yaml --summary
+- What an experiment file would run and cost, with nothing run:
+  uv run pushlab run experiments/p0/s2_pulse_lengths.yaml --dry-run
+- Run an experiment file batch by batch, resumable (a GPU job: the owner runs
+  it on the pod, in tmux; docs/runbooks/experiments.md):
+  uv run pushlab run experiments/p0/s2_pulse_lengths.yaml
+- How far a run has got: uv run pushlab status experiments/p0/s2_pulse_lengths.yaml
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 
