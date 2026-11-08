@@ -25,6 +25,7 @@ it ends.
 import fcntl
 import json
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -65,9 +66,10 @@ class FolderInUse(RuntimeError):
 def locked(folder: Path) -> Iterator[None]:
     """Hold the folder's lock for the with block, making the folder if need be.
 
-    The lock is an exclusive flock on folder/.lock, refused at once with
-    FolderInUse when another process holds it. The file itself is never
-    written, and the system lets go of the lock when the process ends.
+    The lock is an exclusive flock on folder/.lock, refused with FolderInUse
+    when another process holds it for more than a moment (pushlab status
+    holds a shared one for an instant). The file itself is never written,
+    and the system lets go of the lock when the process ends.
 
     Example:
         >>> with locked(Path("/workspace/runs/s2-pulse-lengths")):  # doctest: +SKIP
@@ -76,10 +78,14 @@ def locked(folder: Path) -> Iterator[None]:
     folder.mkdir(parents=True, exist_ok=True)
     handle = os.open(folder / LOCK_FILE, os.O_RDONLY | os.O_CREAT, 0o644)
     try:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise FolderInUse(f"another pushlab run is working on {folder}") from None
+        for _attempt in range(20):  # about a tenth of a second
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(0.005)
+        else:
+            raise FolderInUse(f"another pushlab run is working on {folder}")
         yield
     finally:
         os.close(handle)  # which lets go of the lock
@@ -163,7 +169,7 @@ def read_index(folder: Path) -> list[dict[str, Any]]:
 
     A last line without its line feed is one a crash cut short, or one a
     runner is writing, and is left out. Any other line that is not a JSON
-    object is refused.
+    object with a version, a shard and its runs is refused.
 
     Example:
         >>> read_index(Path("/no/such/folder"))
@@ -181,8 +187,16 @@ def read_index(folder: Path) -> list[dict[str, Any]]:
             entry = json.loads(line)
         except ValueError as error:
             raise ValueError(f"{path}, line {number} is not JSON: {error}") from None
-        if not isinstance(entry, dict):
-            raise ValueError(f"{path}, line {number} is not a JSON object")
+        if not (
+            isinstance(entry, dict)
+            and isinstance(entry.get("version"), int)
+            and isinstance(entry.get("shard"), str)
+            and isinstance(entry.get("runs"), dict)
+        ):
+            raise ValueError(
+                f"{path}, line {number} is not a JSON object with a version, a "
+                "shard and its runs"
+            )
         entries.append(entry)
     return entries
 

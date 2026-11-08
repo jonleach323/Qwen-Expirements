@@ -62,7 +62,10 @@ and a second one to watch it.
    same command with `--retry-failed`. If it was in the experiment file,
    such as a lower `batch_size` after an out-of-memory error, run it with
    `--overwrite-version --retry-failed`: the new version keeps the saved
-   runs and runs the failed ones again.
+   runs and runs the failed ones again. Under sampling, a saved run whose
+   row the new batch size moves is not kept but run again: when it ends by
+   saying runs are still to run, run the same command without
+   `--retry-failed`.
 6. **The cap.** At `max_gpu_hours` it stops and says so. To go on, raise
    `max_gpu_hours` in the experiment file through a pull request, `git
    pull` on the pod, and run with `--overwrite-version`, which keeps every
@@ -70,9 +73,11 @@ and a second one to watch it.
    how many it would keep.
 
    When it ends, `echo $?` gives its exit status: 0 when it finished, 1
-   when it refused or could not save (it says why), 2 when a run failed,
-   3 when it stopped with runs left at `max_gpu_hours` or `--limit`, and
-   130 after Ctrl-C.
+   when it refused or an error stopped it (it says why), 2 when a run
+   failed, 3 when it stopped with runs left at `max_gpu_hours` or
+   `--limit`, and 130 after Ctrl-C. After 130, or 3 from `--limit`, the
+   same command goes on. After 1, 2, or 3 at the cap, read what it said
+   first: it needs a fix, a look at the failed runs, or a higher cap.
 7. **Copy the folder off the pod** as above, with the speed it measured,
    for example:
 

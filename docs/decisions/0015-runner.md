@@ -43,9 +43,11 @@ folder that is empty or whose `experiment.json` names the same
 experiment. It refuses any other, such as S0's `/workspace/runs/s0-baseline`,
 which holds a `runs.parquet`, and never writes there. It also refuses a
 runs dir that is a file, or that is a run folder or lies inside one (a
-folder holding `experiment.json`, `runs.parquet` or `manifest.json`), so a
-mistyped `--runs-dir` cannot put one experiment's folder inside another's.
-`run`, `run --dry-run` and `status` all check this before anything else.
+folder holding `experiment.json`, a runner folder, or `runs.parquet`, one
+of S0's or S1's), so a mistyped `--runs-dir` cannot put one experiment's
+folder inside another's. The path is resolved first, so a relative path,
+or one with `..`, is checked where it really leads. `run`, `run --dry-run`
+and `status` all check this before anything else.
 
 **The folder** (`pushlab.runs.folder`):
 - `experiment.json`, its identity: the experiment, its version, the
@@ -59,15 +61,19 @@ mistyped `--runs-dir` cannot put one experiment's folder inside another's.
   calibration (None when nothing is pushed).
 - `shards/v<version>-<batch>-<attempt>.parquet`, one per saved batch, in
   the runs table's schema; a shard is never replaced.
-- `index.jsonl`, the progress index: one JSON line per shard that counts,
-  with its version, the session that saved it, its batch, how many rows
-  it ran, each saved run's status, the error, the batch's seconds, its
-  generation seconds and its reply tokens. A line that a new version
-  wrote for runs it keeps says `kept_from`.
+- `index.jsonl`, the progress index: one JSON line for each shard a
+  version counts, with its version, the session that saved it, its batch,
+  how many rows it ran, each saved run's status, the error, the batch's
+  seconds, its generation seconds, its reply tokens and when it was saved
+  (`saved_at`). A line that a new version wrote for runs it keeps says
+  `kept_from`, names an earlier version's shard, and carries the session
+  that made those runs.
 - `heartbeat.json` (process, machine, session, state, last batch, time)
   and `progress.json` (runs ok, failed and pending, GPU-hours used of the
   cap, the speed and the hours left), rewritten when a session starts and
-  after every batch; `manifest.json`, the plan's manifest, with one entry
+  after every batch. The state is `running` until the session ends, then
+  `finished`, `stopped at max_gpu_hours`, `stopped at --limit`, `stopped by
+  Ctrl-C` or `stopped: <why>`; `manifest.json`, the plan's manifest, with one entry
   per session (its ID, the code commit, the lockfile's hash, the GPU,
   CUDA, driver, torch, transformers and package versions, its state, its
   batches, runs and GPU-hours); and `.lock`.
@@ -85,15 +91,18 @@ index line a crash cut short is ignored when read and cut off by the next
 runner; hidden temporary files are deleted. So a crash loses at most the
 batch that was running, and reading gives every saved run once: the
 latest mark of each run counts. A broken file (an index line that is not
-JSON, an `experiment.json` without a version, a shard that lacks a run the
-index puts there) is refused with its name, never guessed at.
+a JSON object with a version, a shard and its runs, an `experiment.json`
+without a version, a shard that lacks a run the index puts there) is
+refused with its name, never guessed at.
 
-**One runner at a time.** The runner holds an exclusive `flock` on `.lock`
-from before it reads the folder until it ends; a second one is refused at
-once, naming the first one's process when its heartbeat says. The system
-lets go of the lock when the process ends, even by a kill. Status writes
-nothing; it only tries a shared lock for an instant to see whether a
-runner holds the folder.
+**One runner at a time.** The runner takes an exclusive `flock` on
+`.lock` before it changes anything, checks the folder again once it holds
+it, and holds it until it ends; a second one is refused, naming the first
+one's process when its heartbeat says. The system lets go of the lock
+when the process ends, even by a kill. Status writes nothing; it only
+tries a shared lock for an instant to see whether a runner holds the
+folder, and a runner that starts at that instant waits about a tenth of
+a second for it rather than refusing.
 
 **Batches** (`pushlab.runs.plan.calls`). `expand` plans each batch from
 one prompt and seed: a run and its controls, together. The runner joins
@@ -120,12 +129,15 @@ model, the runner compares the inputs' hashes now with those in
 failed, that is still the same run, the same ID, experiment, model,
 prompt, schedule, decoding, seed and control_of (`versions.SAME_RUN`),
 from the same prompt set and calibration, is marked again for the new
-version in the shard that holds it, with its status, its error and its
-share of the batch's time, and all else is pending. Under sampling a run
-is kept only if the new layout gives it the same row, since a sampled
-reply depends on its row (decision 0014). The new version's number is one
-more than any the folder's identity or index has used, so a number is
-never used twice. The marks are written before `experiment.json`, so a
+version in the shard that holds it, with its status, its error, the
+session that made it and its share of the batch's time, and all else is
+pending. So a change to the prompt set, the model download or the
+calibration keeps no saved run, and the refusal says so. Under sampling a
+run that ended ok is kept only if the new layout gives it the same row,
+since a sampled reply depends on its row (decision 0014); a failed run
+has no reply, so it is kept on any row, for --retry-failed to find. The
+new version's number is one more than any the folder's identity or index
+has used, so a number is never used twice, and the refusal names it. The marks are written before `experiment.json`, so a
 crash in between leaves the old version as it was; the next attempt takes
 the next number, and the marks the crash left count for no version. Old
 shards stay on disk. Without this, raising `max_gpu_hours` or lowering
@@ -136,19 +148,22 @@ failed run would turn back into a pending one.
 with its runs failed, no reply and the error (`Type: message`; an
 out-of-memory error says to lower `batch_size`), and the runner goes on.
 A plain rerun leaves failed runs alone and says so; `--retry-failed` runs
-only those, in their batches. A batch that cannot be saved, such as on a
-full disk, stops the runner, which keeps what is saved and names the
-batch it could not save. Ctrl-C while the model loads stops cleanly too:
-the heartbeat says so, and no batch or manifest is written.
+only those, in their batches. Any other error stops the runner, which
+keeps what is saved, says which step failed (loading the model, reading
+the calibration and prompts, writing the manifest, or saving a batch, as
+on a full disk), prints the traceback of an error it did not expect, and
+writes the final heartbeat. Ctrl-C while the model or its tokenizer
+loads, or while a new version starts, stops cleanly too (exit 130): no
+batch is written, and nothing a new version wrote counts.
 
 **The cap and the limit.** The GPU time of a version is the wall time of
 its saved batches: each batch's seconds run from the save before it, or
 from the session's start, so loading the model counts. Before loading,
-the runner refuses to start when the version's time already reaches
-`max_gpu_hours`, saying how to go on (raise it in the experiment file
-through a pull request, then run with --overwrite-version, which keeps
-the saved runs); after each batch it stops once the time reaches it, so
-it stops after the batch that crosses it. `--limit N` runs at most N runs,
+the runner stops at once (exit 3) when the version's time already
+reaches `max_gpu_hours`, saying how to go on (raise it in the experiment
+file through a pull request, then run with --overwrite-version, which
+keeps the saved runs); after each batch it stops once the time reaches
+it, so it stops after the batch that crosses it. `--limit N` runs at most N runs,
 in whole batches: nothing when the next batch alone is larger.
 
 **Estimates** (`pushlab.runs.estimate`, `configs/costs.yaml`). The costs
@@ -157,13 +172,15 @@ RunPod's Community to Secure Cloud) and a speed per model in reply tokens
 a second over a batch: 44 for qwen3.5-4b, S1's lower bound with loading
 included, and 22 for qwen3-8b, an assumption. After a session, the runner
 saves its measured speed (reply tokens over the generation time of its
-batches that ran ok), the time the model took to load and the rows its
+batches that ran ok), the time the model took to load and the rows those
 batches held, in `<runs dir>/speeds.json`, keyed `model/dtype`, with the
 GPU, batch size, experiment and date; estimates use it in place of the
-costs file, and say what it was measured on. A broken speeds file is
-warned about and left out. Every reply is taken to reach max_new_tokens,
-so the reply tokens are "at most"; hours and cost are "about": they add
-the measured load time once, and depend on how full the batches are.
+costs file, and say what it was measured on. A speeds file that is not
+one the runner wrote is warned about by the dry run, status and the
+session, and left out. Every reply is taken to reach max_new_tokens, so
+the reply tokens are "at most"; hours and cost are "about": they add the
+measured load time once (none when nothing is left to run), and depend
+on how full the batches are.
 
 **The dry run** (`pushlab.runs.dry_run`) prints `pushlab expand
 --summary`, then the runs still to run in the folder (with --limit,
@@ -171,10 +188,14 @@ the measured load time once, and depend on how full the batches are.
 --overwrite-version, how many saved runs the new version would keep), the
 batches they run in, their reply tokens, the speed, the GPU-hours against
 what is left of the cap, with the share of runs it would stop after, and
-the cost. It loads no model and writes nothing. It says when the run
-would refuse the folder, when the cap is used up, and, in a cloud session
-without the model's download, that the download and calibration were not
-checked and that batches are counted one prompt each.
+the cost. It loads no model (only its tokenizer, for the prompts'
+lengths) and writes nothing. It says when the run would refuse, and why:
+a folder made from other inputs (then it counts the runs saved, and what
+--overwrite-version would keep), or a calibration not made yet; when the
+cap is used up; and, in a cloud session without the model's download,
+that the download and calibration were not checked and that batches are
+counted one prompt each, which under sampling makes the runs a new
+version would keep a guess.
 
 **Status** (`pushlab.runs.status_command`) prints the experiment and
 version; whether a runner works on it, from the heartbeat, the process
@@ -182,24 +203,27 @@ and the lock together (running, on another machine, gone without
 finishing, or ended); the runs ok, failed and pending; the batches saved,
 and those kept from earlier versions; the speed measured over them; the
 GPU-hours used of the cap; the time left at that speed, or before any
-batch at the estimates' speed; the first five failed runs with their
-errors; and a note when the experiment file, the prompt set or the known
-units changed since the folder's version, so that the run would refuse.
+batch at the estimates' speed with the model's load; the first five
+failed runs with their errors; a note when the experiment file, the
+prompt set or the known units changed since the folder's version, so
+that the run would refuse; and a note when the speeds file is broken.
 
 **Sessions and the manifest.** Each `pushlab run` that loads the model is
 a session with its own ID, which its index lines and its manifest entry
-carry. When a session finds that earlier sessions of the same version
-ran other code or libraries (another code commit, lockfile, torch or
-transformers), it warns before running: the version's runs would then
-mix two versions of the code. It still runs; the manifest records which
+carry. When a session finds that the sessions that made the version's
+runs so far, kept ones included, ran other code or libraries (another
+code commit, lockfile, torch or transformers), it warns before running:
+the version's runs would then mix two versions of the code. It still runs; the manifest records which
 session ran what.
 
 **Exit statuses.** 0 when it finished, or had nothing to do; 1 when it
-refuses or cannot save; 2 when a run failed in this session; 3 when it
-stopped cleanly with runs left, at the cap or the limit; 130 at Ctrl-C.
-When more than one applies, the first of 130, 1, 2 and 3 wins, so a
-script that loops until 0 neither stops early nor runs a failing
-experiment forever.
+refuses or another error stops it; 2 when a run failed in this session;
+3 when it stopped cleanly with runs left, at the cap or the limit; 130 at
+Ctrl-C. When more than one applies, the first of 130, 1, 2 and 3 wins. A
+script that runs it unattended may run the same command again after 130
+or a kill, and after 3 from --limit, but should stop on 1, on 2 and on 3
+at the cap: those need a person, to fix a cause, look at failed runs or
+raise the cap, and running again changes nothing.
 
 **The checks.** On the CPU with tiny-vl:
 - a run saves every planned run once in plan order; Ctrl-C in the third

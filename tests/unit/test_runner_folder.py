@@ -135,7 +135,8 @@ def test_a_torn_last_line_of_the_index_is_ignored_then_cut(
 
 
 def test_a_broken_line_inside_the_index_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "index.jsonl").write_text('{"version": 1}\nnot json\n{"version": 1}\n')
+    good = '{"version": 1, "shard": "s", "runs": {}}'
+    (tmp_path / "index.jsonl").write_text(f"{good}\nnot json\n{good}\n")
     with pytest.raises(ValueError, match=r"index\.jsonl, line 2 is not JSON"):
         read_index(tmp_path)
 
@@ -194,8 +195,12 @@ def test_broken_folder_files_are_refused_by_name(tmp_path: Path) -> None:
     (tmp_path / "experiment.json").write_text('{"experiment": "x"}')
     with pytest.raises(ValueError, match="lacks experiment and version"):
         folder_module.read_identity(tmp_path)
-    (tmp_path / "index.jsonl").write_text('{"version": 1}\n[1, 2]\n')
+    good = '{"version": 1, "shard": "s", "runs": {}}'
+    (tmp_path / "index.jsonl").write_text(f"{good}\n[1, 2]\n")
     with pytest.raises(ValueError, match=r"index\.jsonl, line 2 is not a JSON object"):
+        read_index(tmp_path)
+    (tmp_path / "index.jsonl").write_text(f'{good}\n{{"version": 1, "shard": "s"}}\n')
+    with pytest.raises(ValueError, match="line 2 is not a JSON object with a version"):
         read_index(tmp_path)
     write_shard(tmp_path, "v1-b000001-1.parquet", [_record(1)])
     with pytest.raises(ValueError, match="lacks x-000002, which the index puts there"):
@@ -224,26 +229,93 @@ def test_doctests(name: str) -> None:
     assert result.failed == 0
 
 
-@pytest.mark.parametrize("command", [["run"], ["run", "--dry-run"], ["status"]])
-def test_a_runs_dir_that_is_a_run_folder_or_a_file_is_refused(
+COMMANDS = [["run"], ["run", "--dry-run"], ["status"]]
+
+
+def _files(place: Path) -> list[str]:
+    return sorted(str(p.relative_to(place)) for p in place.rglob("*"))
+
+
+@pytest.mark.parametrize("inside", ["", "runs"])
+def test_a_runs_dir_in_an_s0_style_folder_is_refused(
     tiny_spec: Callable[..., Path],
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    command: list[str],
+    inside: str,
 ) -> None:
-    s1 = tmp_path / "s0-baseline"
-    write_runs([_record(1)], s1)  # S0's reference run, say
+    s0 = tmp_path / "s0-baseline"
+    write_runs([_record(1)], s0)  # S0's reference run, say
     spec = str(tiny_spec())
-    assert main([command[0], spec, *command[1:], "--runs-dir", str(s1)]) == 1
-    err = capsys.readouterr().err
-    assert f"{s1} is a run folder (it holds runs.parquet)" in err
-    assert sorted(p.name for p in s1.iterdir()) == ["runs.parquet"]
+    for command in COMMANDS:
+        runs_dir = str(s0 / inside)
+        assert main([command[0], spec, *command[1:], "--runs-dir", runs_dir]) == 1
+        err = capsys.readouterr().err
+        assert f"{s0} is a run folder (it holds runs.parquet)" in err
+    assert _files(s0) == ["runs.parquet"]  # nothing written
+
+
+@pytest.mark.parametrize("inside", ["", "shards"])
+def test_a_runs_dir_in_another_experiments_folder_is_refused(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    inside: str,
+) -> None:
+    runs = tmp_path / "runs"
+    assert _run(tiny_spec(name="tiny-other"), runs, "--limit", "2") == 3
+    other = runs / "tiny-other"
+    before = _files(other)
+    for command in COMMANDS:
+        runs_dir = str(other / inside)
+        assert (
+            main([command[0], str(tiny_spec()), *command[1:], "--runs-dir", runs_dir])
+            == 1
+        )
+        err = capsys.readouterr().err
+        assert f"{other} is a run folder (it holds experiment.json)" in err
+    assert _files(other) == before
+
+
+def test_a_relative_runs_dir_is_checked_where_it_leads(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    s0 = tmp_path / "s0-baseline"
+    write_runs([_record(1)], s0)
+    (s0 / "notes").mkdir()
+    spec = str(tiny_spec())
+    monkeypatch.chdir(s0 / "notes")
+    assert main(["run", spec, "--runs-dir", "runs"]) == 1
+    assert f"{s0} is a run folder" in capsys.readouterr().err
+    monkeypatch.chdir(tmp_path)  # .. that leaves the run folder is fine
+    assert main(["run", spec, "--dry-run", "--runs-dir", "s0-baseline/../runs"]) == 0
+    assert _files(s0) == ["notes", "runs.parquet"]
+
+
+def test_a_stray_manifest_above_the_runs_dir_does_not_block_it(
+    tiny_spec: Callable[..., Path], tmp_path: Path
+) -> None:
+    (tmp_path / "manifest.json").write_text("{}")  # another tool's
+    assert _run(tiny_spec(), tmp_path / "runs", "--limit", "2") == 3
+
+
+def test_a_runs_dir_that_is_a_file_or_lies_in_one_is_refused(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     file = tmp_path / "a-file"
     file.write_text("x")
-    assert main([command[0], spec, *command[1:], "--runs-dir", str(file)]) == 1
-    assert (
-        f"--runs-dir must be a folder, but {file} is a file" in capsys.readouterr().err
-    )
+    for command in COMMANDS:
+        for runs_dir in (file, file / "runs"):
+            args = [command[0], str(tiny_spec()), *command[1:], "--runs-dir"]
+            assert main([*args, str(runs_dir)]) == 1
+            err = capsys.readouterr().err
+            assert (
+                f"the runs dir {runs_dir} must be a folder, but {file} is a file" in err
+            )
 
 
 @pytest.mark.parametrize("dry", [False, True])

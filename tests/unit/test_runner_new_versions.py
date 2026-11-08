@@ -58,8 +58,8 @@ def test_a_crash_while_a_version_starts_never_counts_its_marks(
 
     monkeypatch.setattr(folder_module, "write_identity", killed)
     changed = tiny_spec(max_gpu_hours="2")
-    assert _run(changed, runs, "--overwrite-version") == 1
-    assert "stopped by Ctrl-C before the new version started" in capsys.readouterr().err
+    assert _run(changed, runs, "--overwrite-version") == 130
+    assert "Stopped by Ctrl-C before the new version started" in capsys.readouterr().out
     assert read_identity(folder)["version"] == 1  # as it was
     monkeypatch.setattr(folder_module, "write_identity", real)
     assert _run(changed, runs, "--overwrite-version") == 0

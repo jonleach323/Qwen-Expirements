@@ -21,7 +21,7 @@ from pushlab.runs import folder
 from pushlab.runs.expand import Expansion, PlannedRun
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.folders import shown_path
-from pushlab.store.records import MANIFEST_FILE, RUNS_FILE
+from pushlab.store.records import RUNS_FILE
 
 # Each input a folder's runs are made from, and its name in messages.
 IDENTITY_KEYS = {
@@ -83,21 +83,23 @@ def runs_dir_problem(runs_dir: Path) -> str | None:
     """Why runs_dir cannot hold experiments' folders, or None.
 
     It must be a folder, or not exist yet, and neither it nor a folder
-    above it may be a run folder: one with experiment.json, runs.parquet
-    or manifest.json.
+    above it may be a run folder: a runner folder, with experiment.json, or
+    one of S0's and S1's, with runs.parquet. The path is resolved first, so
+    a relative path or one with .. is checked where it really leads.
 
     Example:
         >>> runs_dir_problem(Path("/no/such/folder")) is None
         True
     """
-    for place in (runs_dir, *runs_dir.parents):
+    resolved = runs_dir.resolve()
+    for place in (resolved, *resolved.parents):
         if place.exists() and not place.is_dir():
-            return f"--runs-dir must be a folder, but {place} is a file"
-        names = (folder.IDENTITY_FILE, RUNS_FILE, MANIFEST_FILE)
+            return f"the runs dir {runs_dir} must be a folder, but {place} is a file"
+        names = (folder.IDENTITY_FILE, RUNS_FILE)
         if held := [name for name in names if (place / name).exists()]:
             return (
-                f"{place} is a run folder (it holds {', '.join(held)}), and "
-                "--runs-dir must be the folder above experiments' folders, such as "
+                f"{place} is a run folder (it holds {', '.join(held)}), and the "
+                "runs dir must be the folder above experiments' folders, such as "
                 "/workspace/runs; the runner never writes into another "
                 "experiment's folder"
             )
@@ -135,22 +137,35 @@ def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]
     }
 
 
-def changed_message(path: Path, identity: dict[str, Any], changed: list[str]) -> str:
+# A change to one of these makes every saved run another run: none is kept.
+KEEPS_NONE = ("model download", "prompt set", "calibration")
+
+
+def changed_message(
+    path: Path, identity: dict[str, Any], changed: list[str], upcoming: int
+) -> str:
     """Why a folder made from other inputs is refused, and what to do.
+
+    upcoming is the number a new version would take (versions.next_version).
 
     Example:
         >>> identity = {"experiment": "x", "version": 1}
-        >>> changed_message(
-        ...     Path("runs/x"), identity, ["prompt set"]
-        ... )  # doctest: +ELLIPSIS
-        'runs/x holds version 1 of x, made from another prompt set. Run with ...'
+        >>> message = changed_message(Path("runs/x"), identity, ["prompt set"], 3)
+        >>> message[:59]
+        'runs/x holds version 1 of x, made from another prompt set. '
+        >>> message[59:]  # doctest: +NORMALIZE_WHITESPACE
+        'Run with --overwrite-version to start version 3, which keeps no saved
+        run, since the prompt set changed, or move the folder away to start afresh'
     """
-    version = identity["version"]
+    if lost := [name for name in changed if name in KEEPS_NONE]:
+        keeps = f"which keeps no saved run, since the {' and '.join(lost)} changed"
+    else:
+        keeps = "which keeps the saved runs that did not change"
     return (
-        f"{path} holds version {version} of {identity['experiment']}, made from "
-        f"another {' and '.join(changed)}. Run with --overwrite-version to start "
-        f"version {version + 1}, which keeps the saved runs that did not change, "
-        "or move the folder away to start afresh"
+        f"{path} holds version {identity['version']} of {identity['experiment']}, "
+        f"made from another {' and '.join(changed)}. Run with --overwrite-version "
+        f"to start version {upcoming}, {keeps}, or move the folder away to start "
+        "afresh"
     )
 
 
@@ -190,9 +205,10 @@ def new_identity(
 class Call:
     """One generate() call: runs that can share a batch, in their rows' order.
 
-    due names the runs a session saves from it: all of them, unless some
-    are saved already (then the call still runs whole, so that every row is
-    where the plan puts it, and only the due ones are saved).
+    due names the runs a session saves from it, which work() fills in: all
+    of them, unless some are saved already (then the call still runs whole,
+    so that every row is where the plan puts it, and only the due ones are
+    saved). calls() leaves it empty.
     """
 
     key: str

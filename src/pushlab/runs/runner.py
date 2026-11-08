@@ -33,7 +33,14 @@ from pushlab.runs import folder, plan, versions
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.plan import Call, differences
-from pushlab.runs.session import EXIT_STOPPED, GO_ON, Session, refuse, runs_text
+from pushlab.runs.session import (
+    EXIT_INTERRUPTED,
+    EXIT_STOPPED,
+    GO_ON,
+    Session,
+    refuse,
+    runs_text,
+)
 from pushlab.runs.spec import ExperimentSpec, read_spec
 
 # The wall clock of a session, for the GPU-hours: tests stand a clock in.
@@ -98,8 +105,11 @@ def run_experiment(
         beat = folder.read_json(path / folder.HEARTBEAT_FILE) or {}
         pid = f" (pid {beat['pid']})" if beat.get("state") == "running" else ""
         return refuse(f"{error}{pid}")
-    except (FileNotFoundError, ValueError) as error:  # the inputs or the folder
+    except (OSError, ValueError) as error:  # the inputs, the folder or the disk
         return refuse(str(error))
+    except KeyboardInterrupt:  # before any batch ran, such as in the tokenizer
+        print("Stopped by Ctrl-C before any batch ran. Run the same command to go on.")
+        return EXIT_INTERRUPTED
 
 
 def layout(
@@ -110,6 +120,12 @@ def layout(
     With group_by_length it reads the prompts' lengths with the model's
     tokenizer, which must be downloaded; prompts_sha256 is the hash the
     prompt set must still have.
+
+    Example:
+        >>> [
+        ...     len(call.runs) for call in layout(spec, expansion, sha256)
+        ... ]  # doctest: +SKIP
+        [10, 10, 10, 10, 10]
     """
     lengths = None
     if spec.group_by_length:
@@ -150,7 +166,8 @@ def _start(
         folder.write_identity(path, identity)
     elif changed := differences(identity, inputs):
         if not overwrite_version:
-            return refuse(plan.changed_message(path, identity, changed))
+            upcoming = versions.next_version(identity, folder.read_index(path))
+            return refuse(plan.changed_message(path, identity, changed, upcoming))
         planned = layout(spec, expansion, inputs["prompts_sha256"])
         rows = {
             run.record.run_id: row
@@ -162,7 +179,11 @@ def _start(
                 path, identity, spec, spec_path, expansion, inputs, rows
             )
         except KeyboardInterrupt:
-            return refuse("stopped by Ctrl-C before the new version started; run again")
+            print(
+                "Stopped by Ctrl-C before the new version started: nothing of it "
+                "counts. Run the same command to go on."
+            )
+            return EXIT_INTERRUPTED
         print(
             f"Started version {identity['version']}; it keeps {runs_text(kept)} saved."
         )
@@ -176,7 +197,15 @@ def _start(
     )
     if not left:
         if retry_failed:
-            print(f"Nothing to retry: no run of version {version} failed.")
+            pending = total - len(states)
+            rest = (
+                f"; {runs_text(pending)} {'is' if pending == 1 else 'are'} still "
+                "to run, which the same command without --retry-failed runs"
+            )
+            print(
+                f"Nothing to retry: no run of version {version} failed"
+                f"{rest if pending else ''}."
+            )
             return 0
         ok, failed = counts["ok"], counts["failed"]
         retry = f"; rerun {'it' if failed == 1 else 'them'} with --retry-failed"

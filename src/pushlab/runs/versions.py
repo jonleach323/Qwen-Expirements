@@ -5,10 +5,11 @@ units/known.csv, a model download and a calibration (pushlab.runs.plan).
 When one of them changes, `pushlab run --overwrite-version` starts the next
 version. It keeps every saved run, ok or failed, that the new plan would
 make the same way (same_run), from the same prompt set and calibration,
-and under sampling on the same row; the index marks those again for the
-new version, with their share of their batch's time, and the rest are to
-run. The marks go first and experiment.json last, under a number no mark
-has used, so a crash in between changes nothing that counts.
+and under sampling, if it ended ok, on the same row; the index marks those
+again for the new version, with the session that made them and their
+share of their batch's time, and the rest are to run. The marks go first
+and experiment.json last, under a number no mark has used, so a crash in
+between changes nothing that counts.
 """
 
 from collections import Counter
@@ -64,8 +65,10 @@ def kept_runs(
 
     A run is kept, ok or failed as it ended, when the new plan has a run of
     the same ID made of the same (same_run), from the same prompt set and
-    calibration. Under sampling its row must also be the one the new plan
-    gives it (rows), since a sampled reply depends on its row.
+    calibration. Under sampling a run that ended ok must also be on the row
+    the new plan gives it (rows), since a sampled reply depends on its row;
+    a failed run has no reply, so it is kept on any row, for --retry-failed
+    to find.
 
     Example:
         >>> len(
@@ -86,7 +89,8 @@ def kept_runs(
         plan = planned.get(run_id)
         if plan is None or not same_run(record, replace(plan, model=inputs["model"])):
             continue
-        if sampled and int(record.batch_key.rsplit(":", 1)[1]) != rows.get(run_id):
+        row = int(record.batch_key.rsplit(":", 1)[1])
+        if sampled and record.status == "ok" and row != rows.get(run_id):
             continue
         kept[run_id] = states[run_id]
     return kept
@@ -128,10 +132,10 @@ def start_version(
     runs it keeps.
 
     The index marks each kept run again for the new version (kept_runs), in
-    the shard that holds it, ok or failed with its error, and with its share
-    of its batch's time. The marks go first and experiment.json last, under
-    a version number never used, so a crash in between changes nothing that
-    counts.
+    the shard that holds it, ok or failed with its error, with the session
+    that made it and with its share of its batch's time. The marks go first
+    and experiment.json last, under a version number never used, so a crash
+    in between changes nothing that counts.
 
     Example:
         >>> start_version(path, identity, spec, spec_path, expansion, inputs, rows)[
@@ -159,6 +163,7 @@ def start_version(
                 "runs": statuses,
                 "error": source.get("error") if "failed" in statuses.values() else None,
                 "kept_from": old,
+                "session": source.get("session"),  # the one that made the runs
                 "seconds": source.get("seconds", 0.0) * share,
                 "reply_tokens": 0,
             },

@@ -111,15 +111,49 @@ def read_costs(path: Path | None = None) -> Costs:
     )
 
 
+def _measured(speed: object) -> bool:
+    """Whether speed is a measured speed as save_speed writes it."""
+    return (
+        isinstance(speed, dict)
+        and _positive(speed.get("reply_tokens_per_second"))
+        and _positive(speed.get("rows_per_batch", speed.get("batch_size")))
+        and isinstance(speed.get("experiment"), str)
+        and isinstance(speed.get("measured_at"), str)
+    )
+
+
 def read_speeds(runs_dir: Path) -> dict[str, dict[str, Any]]:
     """The speeds runs have measured, by model and data type, such as
     "qwen3.5-4b/bfloat16"; empty when none has.
+
+    ValueError says when the file is not one save_speed wrote.
 
     Example:
         >>> read_speeds(Path("/no/such/folder"))
         {}
     """
-    return read_json(runs_dir / SPEEDS_FILE) or {}
+    path = runs_dir / SPEEDS_FILE
+    speeds = read_json(path) or {}
+    if not (isinstance(speeds, dict) and all(map(_measured, speeds.values()))):
+        raise ValueError(
+            f"{path} is not a speeds file as pushlab run writes it; delete it, "
+            "and the next run measures the speed again"
+        )
+    return speeds
+
+
+def speeds_problem(runs_dir: Path) -> str | None:
+    """Why the speeds file is left out of estimates, or None when it is not.
+
+    Example:
+        >>> speeds_problem(Path("/no/such/folder")) is None
+        True
+    """
+    try:
+        read_speeds(runs_dir)
+    except (OSError, ValueError) as error:
+        return f"{error}. Estimates leave it out"
+    return None
 
 
 def save_speed(runs_dir: Path, key: str, speed: dict[str, Any]) -> None:
@@ -150,16 +184,17 @@ def speed_for(model: str, dtype: str, runs_dir: Path, costs: Costs) -> Speed | N
     """
     try:
         measured = read_speeds(runs_dir).get(f"{model}/{dtype}")
-    except (OSError, ValueError):  # a broken speeds file: estimate without it
+    except (OSError, ValueError):  # a broken speeds file (speeds_problem says)
         measured = None
     if measured:
         where = measured.get("gpu") or "the CPU"
         rows = measured.get("rows_per_batch", measured["batch_size"])
+        load = measured.get("load_seconds")
         return Speed(
             float(measured["reply_tokens_per_second"]),
-            f"measured by {measured['experiment']} on {where} with {rows:.3g} rows "
-            f"a batch, {measured['measured_at'][:10]}",
-            float(measured.get("load_seconds") or 0.0),
+            f"measured by {measured['experiment']} on {where} with {rows:.3g} "
+            f"{'row' if rows == 1 else 'rows'} a batch, {measured['measured_at'][:10]}",
+            float(load) if _positive(load) else 0.0,
         )
     if model in costs.reply_tokens_per_second:
         rate = costs.reply_tokens_per_second[model]
@@ -208,7 +243,7 @@ def estimate_lines(
 
     runs are the rows the calls will run. used_hours are already spent on
     the experiment, against max_gpu_hours; the measured load time is added
-    once, for the session that runs them.
+    once, for the session that runs them, unless there is nothing to run.
 
     Example:
         >>> lines = estimate_lines(50, 96, Speed(44.0, "from x"), read_costs(), 0.25)
@@ -222,7 +257,8 @@ def estimate_lines(
             ("speed", f"unknown: add this model's to {shown_path(costs.path)}")
         )
         return lines
-    hours = (speed.load_seconds + tokens / speed.reply_tokens_per_second) / 3600
+    load = speed.load_seconds if runs else 0.0  # nothing to run: nothing loads
+    hours = (load + tokens / speed.reply_tokens_per_second) / 3600
     left = max_gpu_hours - used_hours
     cap = f"max_gpu_hours {exact(max_gpu_hours)}"
     if used_hours:

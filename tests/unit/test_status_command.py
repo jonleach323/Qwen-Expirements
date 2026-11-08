@@ -76,7 +76,7 @@ def test_status_before_anything_ran(
     assert status["runner"] == f"not started: {runs / NAME} does not exist yet"
     assert status["runs"] == "10: 0 ok, 0 failed, 10 pending"
     assert status["time left"] == (
-        f"at most 67 minutes, at 0.01 reply tokens a second, from {costs}"
+        f"about 67 minutes, at 0.01 reply tokens a second, from {costs}"
     )
     assert not runs.exists()
 
@@ -170,7 +170,7 @@ def test_status_of_a_folder_where_no_session_ran_yet(
     status = _status(spec, runs, capsys)
     assert status["runner"] == "not running: no session has started"
     assert status["runs"] == "10: 0 ok, 0 failed, 10 pending"
-    assert status["time left"].startswith("at most 67 minutes, at 0.01 reply tokens")
+    assert status["time left"].startswith("about 67 minutes, at 0.01 reply tokens")
 
 
 def test_status_of_a_runner_on_another_machine(

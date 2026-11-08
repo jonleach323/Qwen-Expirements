@@ -72,7 +72,7 @@ def test_a_dry_run_prints_the_counts_and_estimates_and_runs_nothing(
         settings["cost"]
         == "about $0.38 to $0.82, on an RTX 4090 at $0.34 to $0.74 an hour"
     )
-    assert "This was a dry run: nothing was loaded, run or written." in out
+    assert "This was a dry run: no model was loaded, and nothing was run" in out
     assert not runs.exists()
 
 
@@ -90,7 +90,7 @@ def test_a_dry_run_counts_only_what_is_left(
     _nothing_runs(monkeypatch)
     assert _run(spec, runs, "--dry-run") == 0
     settings = _settings(capsys.readouterr().out)
-    assert settings["to run"] == "6 of 10 runs; 4 are saved in version 1"
+    assert settings["to run"] == "6 of 10 runs; 4 runs are saved in version 1"
     assert settings["reply tokens"] == "at most 24, 4 for each run"
     assert {p: p.read_bytes() for p in runs.rglob("*") if p.is_file()} == before
     # A changed experiment file is shown, as the run would refuse it.

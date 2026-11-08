@@ -4,8 +4,9 @@ It reads the experiment file for the experiment's name, then its runner
 folder: experiment.json, the index and the heartbeat. It prints the runs
 saved ok, failed and pending, the batches saved, the speed measured over
 them, the GPU-hours used of max_gpu_hours and the time left at that speed
-(or, before any batch, at the speed estimates use). It loads no model,
-takes no lock and writes nothing, so it works while a run is going.
+(or, before any batch, at the speed estimates use, with the model's load).
+It loads no model and writes nothing, so it works while a run is going; to
+see whether a runner holds the folder, it tries a shared lock for an instant.
 """
 
 import os
@@ -16,7 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from pushlab.runs import folder
-from pushlab.runs.estimate import duration, exact, read_costs, speed_for
+from pushlab.runs.estimate import (
+    Speed,
+    duration,
+    exact,
+    read_costs,
+    speed_for,
+    speeds_problem,
+)
 from pushlab.runs.spec import ExperimentSpec, read_spec
 
 # The most failed runs it names; the count says how many there are.
@@ -66,6 +74,13 @@ def _runner(path: Path, beat: dict[str, Any] | None) -> str:
     return f"running, pid {pid}; the last batch was saved at {beat['updated_at']}"
 
 
+def _estimated(runs: int, max_new_tokens: int, speed: Speed) -> str:
+    """The time runs would take at an estimate's speed, the model's load in."""
+    tokens = runs * max_new_tokens
+    seconds = speed.load_seconds + tokens / speed.reply_tokens_per_second
+    return f"about {duration(seconds)}, at {speed.text()}"
+
+
 def _changed(spec: ExperimentSpec, identity: dict[str, Any]) -> list[str]:
     """The inputs that differ from those the folder's version was made from,
     of the ones status can check without the model's download."""
@@ -113,10 +128,9 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
             ("runs", f"{total}: 0 ok, 0 failed, {total} pending"),
         ]
         if speed is not None:
-            seconds = total * spec.max_new_tokens / speed.reply_tokens_per_second
-            lines.append(
-                ("time left", f"at most {duration(seconds)}, at {speed.text()}")
-            )
+            lines.append(("time left", _estimated(total, spec.max_new_tokens, speed)))
+        if problem := speeds_problem(runs_dir):
+            lines.append(("note", problem))
         return lines
     version, total = identity["version"], identity["runs"]
     entries = [e for e in folder.read_index(path) if e.get("version") == version]
@@ -158,8 +172,9 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
             ("time left", f"about {duration(left)} for {pending} runs at that speed")
         )
     elif speed is not None:
-        left = pending * identity["max_new_tokens"] / speed.reply_tokens_per_second
-        lines.append(("time left", f"at most {duration(left)}, at {speed.text()}"))
+        lines.append(
+            ("time left", _estimated(pending, identity["max_new_tokens"], speed))
+        )
     failed = sorted(run_id for run_id, s in states.items() if s["status"] == "failed")
     for run_id in failed[:FAILED_SHOWN]:
         lines.append(("failed", f"{run_id}: {states[run_id]['error']}"))
@@ -173,6 +188,8 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
                 "refuse it without --overwrite-version",
             )
         )
+    if problem := speeds_problem(runs_dir):
+        lines.append(("note", problem))
     return lines
 
 

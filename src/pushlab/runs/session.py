@@ -14,6 +14,7 @@ import os
 import socket
 import sys
 import time
+import traceback
 import uuid
 from collections import Counter
 from collections.abc import Callable
@@ -41,7 +42,12 @@ SESSION_ENVIRONMENT += ("cuda", "driver", "torch", "transformers", "packages")
 
 
 def refuse(message: str) -> int:
-    """Print why `pushlab run` refuses, and return its exit status, 1."""
+    """Print why `pushlab run` refuses, and return its exit status, 1.
+
+    Example:
+        >>> refuse("no such file")  # doctest: +SKIP
+        1
+    """
     print(f"pushlab run: {message}", file=sys.stderr)
     return 1
 
@@ -69,7 +75,8 @@ class Tally:
     failed: int = 0
     calls: int = 0
     seconds: float = 0.0
-    rows: int = 0  # rows of calls that ran ok, for the speed
+    ok_calls: int = 0  # calls that ran ok, and their rows, for the speed
+    rows: int = 0
     generate_seconds: float = 0.0
     reply_tokens: int = 0
     load_seconds: float | None = None
@@ -153,7 +160,16 @@ class Session:
         )
 
     def run(self, chosen: list[Call], limit: int | None) -> int:
-        """Load the model, run the chosen calls, and say how it ended."""
+        """Load the model, run the chosen calls, and say how it ended.
+
+        Returns the exit status (see pushlab.runs.runner).
+
+        Example:
+            >>> Session(
+            ...     spec, expansion, path, identity, states, 0.0, 50, time.monotonic
+            ... ).run(chosen, None)  # doctest: +SKIP
+            0
+        """
         import torch
 
         from pushlab.engine import generate as generate_module  # looked up per call
@@ -167,7 +183,7 @@ class Session:
             f"{spec.name}, version {self.version}: {runs_text(self.left)} to run, "
             f"{len(self.states)} of {len(self.expansion.runs)} saved."
         )
-        ending, current = "finished", chosen[0].key
+        ending, step = "finished", f"load {spec.model}"  # step: for an error
         try:
             device = self.device = load.default_device()
             dtype = spec.decoding["dtype"]
@@ -178,12 +194,14 @@ class Session:
                 spec.model, getattr(torch, dtype), device=device
             )
             self.tally.load_seconds = time.perf_counter() - loading
+            step = "read the calibration and the prompts"
             inputs = session_inputs(spec, self.loaded.revision, self.identity, chosen)
+            step = "write the manifest"
             self.environment = environment_info(device)
             self._warn_if_code_changed()
             self._manifest()
             for number, call in enumerate(chosen):
-                current = call.key
+                step = f"save {call.key}"
                 name = folder.next_shard_name(self.path, self.version, call.key)
                 outcome = self._run_call(call, name, inputs, generate_module.generate)
                 folder.write_shard(self.path, name, outcome.records)
@@ -205,8 +223,11 @@ class Session:
             ending = "stopped by Ctrl-C"
         except ValueError as error:  # the inputs changed while the model loaded
             ending = f"stopped: {error}"
-        except OSError as error:  # the disk, not a run: stop, and keep what is saved
-            ending = f"stopped: cannot save {current}: {error}"
+        except OSError as error:  # the disk or the download, not a run
+            ending = f"stopped: cannot {step}: {error}"
+        except Exception as error:  # anything else: say where, keep what is saved
+            traceback.print_exc()
+            ending = f"stopped: cannot {step}: {type(error).__name__}: {error}"
         return self._finish(ending, limit)
 
     def _run_call(
@@ -240,6 +261,7 @@ class Session:
         tally.calls += 1
         tally.seconds += seconds
         if outcome.error is None:
+            tally.ok_calls += 1
             tally.rows += len(call.runs)
             tally.generate_seconds += outcome.seconds
             tally.reply_tokens += outcome.reply_tokens
@@ -259,11 +281,17 @@ class Session:
         return [s for s in earlier.get("sessions", []) if s.get("id") != self.id]
 
     def _warn_if_code_changed(self) -> None:
-        """Say when this version's runs so far ran other code or libraries."""
+        """Say when this version's runs so far, kept ones included, ran other
+        code or libraries."""
         assert self.environment is not None
         mine = self.version
+        makers = {  # the sessions that made the runs the version's marks count
+            entry.get("session")
+            for entry in folder.read_index(self.path)
+            if entry.get("version") == mine
+        }
         for session in self._earlier_sessions():
-            if session.get("version") != mine or not session.get("runs"):
+            if session.get("id") not in makers:
                 continue
             changed = [
                 key
@@ -336,7 +364,7 @@ class Session:
                 "reply_tokens": tally.reply_tokens,
                 "seconds": tally.generate_seconds,
                 "load_seconds": tally.load_seconds,
-                "rows_per_batch": tally.rows / tally.calls,
+                "rows_per_batch": tally.rows / tally.ok_calls,
                 "batch_size": spec.batch_size,
                 "gpu": self.environment["gpu"],
                 "experiment": spec.name,
@@ -351,7 +379,7 @@ class Session:
         for step in (self._save_speed, self._beat, self._manifest):
             try:
                 step()
-            except (OSError, ValueError) as error:  # say so, and keep what is saved
+            except Exception as error:  # say so, and keep what is saved
                 print(f"pushlab run: warning: {error}", file=sys.stderr)
         counts = Counter(self.states.values())
         total = len(self.expansion.runs)
@@ -381,9 +409,11 @@ class Session:
                 f"{failed} failed, in {self.path}."
             )
         else:
-            rest = total - len(self.states)
+            rest = total - len(self.states)  # only after --retry-failed
             print(
-                f"Done: {runs_text(rest)} {'is' if rest == 1 else 'are'} still to run."
+                f"Done: {runs_text(rest)} {'is' if rest == 1 else 'are'} still to "
+                "run; the same command without --retry-failed runs "
+                f"{'it' if rest == 1 else 'them'}."
             )
         if failed and ending != "stopped at max_gpu_hours":
             what = (

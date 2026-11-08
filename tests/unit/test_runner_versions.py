@@ -206,7 +206,11 @@ def test_retry_failed_leaves_runs_not_yet_run_alone(
     capsys.readouterr()
     assert _run(spec, runs, "--retry-failed") == 0
     assert sizes == [1]
-    assert "Done: 8 runs are still to run." in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert (
+        "Done: 8 runs are still to run; the same command without --retry-failed "
+        "runs them." in out
+    )
     assert len(read_results(runs / NAME)) == 2
 
 

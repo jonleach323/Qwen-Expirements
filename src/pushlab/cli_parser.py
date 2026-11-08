@@ -282,7 +282,8 @@ def _add_run(commands: argparse._SubParsersAction) -> None:
         "--dry-run",
         action="store_true",
         help="print the runs by condition, and the reply tokens, GPU-hours and "
-        "cost of those still to run; load, run and write nothing",
+        "cost of those still to run; load no model (only its tokenizer), and "
+        "run and write nothing",
     )
     run.add_argument(
         "--limit",
@@ -300,7 +301,8 @@ def _add_run(commands: argparse._SubParsersAction) -> None:
         action="store_true",
         help="when the folder's runs were made from another experiment file, "
         "prompt set, known units, model download or calibration, start a new "
-        "version of the folder, which keeps the saved runs that did not change",
+        "version of the folder, which keeps the saved runs that did not change "
+        "(none, when the prompt set, model download or calibration changed)",
     )
     _add_runs_dir(run)
 
