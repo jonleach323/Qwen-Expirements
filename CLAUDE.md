@@ -25,6 +25,22 @@ Current sprint: S0 (Bootstrap).
   uv run pushlab steer --model qwen3.5-4b --prompts prompts/smoke.jsonl --out /workspace/runs/<name> --unit qwen3.5-4b:L14:N8949 --alpha 1
   (add --control random --control-seed N for a random neuron of the same layer)
 - Run folders' replies side by side: uv run pushlab report --runs DIR DIR ... --out FILE.md
+- The runs an experiment file means, with nothing run (experiments/README.md
+  has the format): uv run pushlab expand experiments/p0/s2_pulse_lengths.yaml --summary
+- What an experiment file would run and cost, with nothing run:
+  uv run pushlab run experiments/p0/s2_pulse_lengths.yaml --dry-run
+- Run an experiment file batch by batch, resumable (a GPU job: the owner runs
+  it on the pod, in tmux; docs/runbooks/experiments.md):
+  uv run pushlab run experiments/p0/s2_pulse_lengths.yaml
+- How far a run has got: uv run pushlab status experiments/p0/s2_pulse_lengths.yaml
+- Check a run's saved runs and steps against its file (loads no model):
+  uv run pushlab verify experiments/p0/s2_pulse_lengths.yaml
+- An experiment's replies, with markers where its pushes switch (needs the
+  model's tokenizer, as on the pod):
+  uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
+- Query every experiment's runs and steps in /workspace/runs (DuckDB views
+  runs, steps and conditions; runs nothing):
+  uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 

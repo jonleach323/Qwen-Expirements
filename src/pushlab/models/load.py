@@ -119,6 +119,22 @@ def downloaded_revision(name: str, models_dir: Path | None = None) -> str:
     return json.loads((folder / MARKER).read_text()).get("commit", spec.revision)
 
 
+def load_tokenizer(
+    name: str, *, models_dir: Path | None = None
+) -> PreTrainedTokenizerBase:
+    """Load only the tokenizer of the downloaded model name, not its weights.
+
+    The download must be finished, as load_model requires.
+
+    Example:
+        >>> load_tokenizer("qwen3.5-4b").eos_token  # doctest: +SKIP
+        '<|im_end|>'
+    """
+    downloaded_revision(name, models_dir)  # finished, or FileNotFoundError says how
+    folder = (models_dir or default_models_dir()) / name
+    return AutoTokenizer.from_pretrained(folder, local_files_only=True)
+
+
 def load_model(
     name: str,
     dtype: torch.dtype,

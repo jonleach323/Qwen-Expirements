@@ -164,3 +164,14 @@ def test_docstring_examples_run() -> None:
     result = doctest.testmod(load)
     assert result.attempted > 0
     assert result.failed == 0
+
+
+def test_the_tokenizer_loads_alone(tiny_downloads: dict[str, ModelSpec]) -> None:
+    from pushlab.models.load import load_tokenizer
+
+    alone = load_tokenizer("tiny-vl")
+    loaded = load_model("tiny-vl", torch.float32, device="cpu")
+    text = "Say hi."
+    assert alone(text)["input_ids"] == loaded.tokenizer(text)["input_ids"]
+    with pytest.raises(FileNotFoundError, match="is not downloaded"):
+        load_tokenizer("qwen3.5-4b")

@@ -374,10 +374,12 @@ def test_the_smoke_test_command_selects_only_the_gpu_smoke_tests(
     )
     (call,) = recorder.getcalls("pytest_collection_finish")
     selected = {item.nodeid.split("::")[0] for item in call.session.items}
-    # The GPU check, one reply from the real model with pushlab baseline, and
-    # the generation loop's batched replies against the same prompts alone.
+    # The GPU check, one reply from the real model with pushlab baseline, the
+    # generation loop's batched replies against the same prompts alone, and
+    # four rows with four schedules against the same prompts alone (S2).
     assert selected == {
         "tests/gpu/test_smoke.py",
         "tests/gpu/test_baseline_smoke.py",
         "tests/gpu/test_generate_smoke.py",
+        "tests/gpu/test_isolation_smoke.py",
     }

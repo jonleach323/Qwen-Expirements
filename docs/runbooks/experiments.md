@@ -19,6 +19,114 @@ file, choose **Download**, and check that it opens on your computer before
 you delete anything on the pod. The brackets keep your terminal in the
 folder it was in.
 
+## Run an experiment file
+
+`pushlab run` runs an experiment file's runs in its runner folder,
+`/workspace/runs/<name>`, and saves every batch before the next starts
+(docs/decisions/0015-runner.md). Use one JupyterLab terminal for the run
+and a second one to watch it.
+
+1. **Check the cost first.** This loads nothing and writes nothing:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab run experiments/p0/s2_pulse_lengths.yaml --dry-run
+   ```
+
+   Read its `to run`, `gpu-hours` and `cost` lines. When the GPU-hours are
+   more than the file's `max_gpu_hours`, the run will stop part way.
+2. **Start it in tmux,** so that it survives a dropped connection:
+
+   ```bash
+   tmux new -s run
+   ```
+
+   and in the tmux window:
+
+   ```bash
+   uv run pushlab run experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+   Ctrl-B then D leaves it running; `tmux attach -t run` comes back to it.
+3. **Watch it** from the second terminal:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab status experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+4. **Stop and go on.** Ctrl-C in the tmux window stops it and loses only
+   the batch that was running; a crash or a stopped pod is the same. Start
+   the same command again and it skips every saved run.
+5. **Failed runs.** A batch that raises is saved with its runs failed, and
+   status lists them with their errors. Fix the cause through a pull
+   request and `git pull` on the pod. If the fix was in the code, run the
+   same command with `--retry-failed`. If it was in the experiment file,
+   such as a lower `batch_size` after an out-of-memory error, run it with
+   `--overwrite-version --retry-failed`: the new version keeps the saved
+   runs and runs the failed ones again. Under sampling, a saved run whose
+   row the new batch size moves is not kept but run again: when it ends by
+   saying runs are still to run, run the same command without
+   `--retry-failed`.
+6. **The cap.** At `max_gpu_hours` it stops and says so. To go on, raise
+   `max_gpu_hours` in the experiment file through a pull request, `git
+   pull` on the pod, and run with `--overwrite-version`, which keeps every
+   saved run that is still the same, ok or failed. Its `--dry-run` says
+   how many it would keep.
+
+   When it ends, `echo $?` gives its exit status: 0 when it finished, 1
+   when it refused or an error stopped it (it says why), 2 when a run
+   failed, 3 when it stopped with runs left at `max_gpu_hours` or
+   `--limit`, and 130 after Ctrl-C. After 130, or 3 from `--limit`, the
+   same command goes on. After 1, 2, or 3 at the cap, read what it said
+   first: it needs a fix, a look at the failed runs, or a higher cap.
+7. **Check it, then read it.** Once `pushlab status` says every run is
+   saved, check that every run and its steps are saved and agree with the
+   experiment file. It loads no model and writes nothing, and lists any
+   problem it finds; before then it fails, naming the runs not saved yet:
+
+   ```bash
+   uv run pushlab verify experiments/p0/s2_pulse_lengths.yaml
+   ```
+
+   Failed runs have no reply and no steps, and verify passes them: its last
+   line counts them, and `--retry-failed` reruns them (step 5).
+
+   Then write the replies of the conditions you want to read. Each reply
+   has a marker, such as [**A on**] or [**A off, B on**], before the first
+   token chosen after each change of pushes, and a legend at the top says
+   what A and B are. Save it outside the runner folder, as here: it refuses
+   an `--out` inside it. Replies of a batch saved before steps were kept
+   have no markers, and say so.
+
+   ```bash
+   uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
+   ```
+
+   Open it in JupyterLab (right-click, **Open With > Markdown Preview**), or
+   copy it off and read it on your phone. Labels with spaces, such as
+   `pulse length=16`, need the quotes; leaving out `--conditions` shows them
+   all.
+
+   To count or average anything over every experiment in `/workspace/runs`,
+   ask DuckDB (`pushlab.store.query`). S0's and S1's folders are left out,
+   and so is a copy of a runner folder under another name, such as a
+   backup, with a warning that names it:
+
+   ```bash
+   uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
+   ```
+8. **Copy the folder off the pod** as above, with the speed it measured,
+   for example:
+
+   ```bash
+   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json)
+   ```
+
+   If you wrote a report in step 7, copy it too:
+
+   ```bash
+   (cd /workspace && tar -czf s2-pulse-lengths-report.tar.gz reports/s2-pulse-lengths.md)
+   ```
+
 ## Close S1 on the pod
 
 S1's done-when is not met yet (docs/sprints/S1-review.md). These steps need

@@ -194,3 +194,21 @@ class TokenChooser:
             draw = torch.multinomial(probabilities, 1, generator=self.generators[row])
             tokens.append(int(draw))
         return tokens
+
+
+def chosen_logprobs(scores: torch.Tensor, tokens: Sequence[int]) -> list[float]:
+    """Each row's log-probability of its token, from the row's scores.
+
+    scores are the model's next-token scores, (rows, vocabulary), before any
+    temperature or top-p, so the probability is the model's own, whether the
+    token was chosen greedily or drawn. Worked in float32: the token's score
+    less the log of the sum of the exponentials of the row's scores.
+
+    Example:
+        >>> chosen_logprobs(torch.tensor([[0.0, 0.0], [5.0, 5.0]]), [1, 0])
+        [-0.6931471824645996, -0.6931471824645996]
+    """
+    scores = scores.float()
+    index = torch.tensor(list(tokens), device=scores.device)[:, None]
+    chosen = scores.gather(-1, index)[:, 0]
+    return (chosen - torch.logsumexp(scores, dim=-1)).tolist()

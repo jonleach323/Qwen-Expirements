@@ -13,8 +13,21 @@ layer's residual size (`pushlab calibrate`), and generate replies to a batch
 of prompts with pushes on chosen neurons (`pushlab.engine.generate`).
 `pushlab baseline` generates one unsteered reply and stores it with its
 manifest; `pushlab steer` stores pushed replies to a whole prompt set, and
-`pushlab report` lays run folders' replies side by side. Running
-experiments from YAML files comes in later sprints.
+`pushlab report` lays run folders' replies side by side. Schedules, which
+say when each push is on and how strong it is at every reply token, can be
+built, written as YAML and checked without loading a model
+(`pushlab.schedules`, decision 0012), and `generate` follows one per
+prompt, each row of a batch with its own (decision 0013). An experiment
+file in `experiments/` describes a whole experiment, and `pushlab expand`
+lists every run it means without running anything (decision 0014).
+`pushlab run` runs them batch by batch, saving each batch before the next
+so that a crash loses at most one, and `pushlab status` says how far it
+has got (decision 0015). Every reply `pushlab run` makes is saved token by
+token, with the pushes behind each token; `pushlab verify` checks them
+against the experiment file, `pushlab report` shows an experiment's
+replies with a marker wherever a push switched on or off, and
+`pushlab.store.query` opens every experiment's runs and steps in DuckDB
+(decision 0016).
 
 ## Getting started
 

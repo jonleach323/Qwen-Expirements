@@ -10,8 +10,15 @@ of a dose, and saves it in calibration/ (pushlab.units.calibrate).
 `pushlab amount` prints what a dose adds to a neuron
 (pushlab.units.amount_command), `pushlab steer` saves pushed replies to a
 prompt set (pushlab.runs.steer), and `pushlab report` lays run folders'
-replies side by side (pushlab.analysis.report). The options of every
-subcommand are in pushlab.cli_parser.
+replies side by side (pushlab.analysis.report). `pushlab expand` lists the
+runs an experiment file means without running them
+(pushlab.runs.expand_command), `pushlab run` runs them batch by batch
+(pushlab.runs.runner), `pushlab status` says how far a run has got
+(pushlab.runs.status_command), and `pushlab verify` checks its saved runs
+and steps (pushlab.runs.verify). `pushlab report` also shows an
+experiment's replies with markers where its pushes switch
+(pushlab.analysis.experiment_report). The options of every subcommand are
+in pushlab.cli_parser.
 """
 
 import hashlib
@@ -21,6 +28,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -221,6 +229,47 @@ def run_baseline(
     return 0
 
 
+def _report(args: Any) -> int:
+    """pushlab report: on an experiment's runner folder, or on run folders."""
+    if args.spec is not None and args.runs:
+        print(
+            "pushlab report: give an experiment file or --runs, not both",
+            file=sys.stderr,
+        )
+        return 1
+    if args.spec is not None:
+        from pushlab.analysis.experiment_report import run_experiment_report
+
+        return run_experiment_report(
+            args.spec, args.conditions, args.out, args.runs_dir, args.overwrite
+        )
+    if not args.runs:
+        if args.conditions:  # --conditions takes every word after it
+            print(
+                "pushlab report: error: give the experiment file before "
+                "--conditions, such as: pushlab report SPEC --conditions none "
+                "--out FILE (or run folders with --runs DIR)",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "pushlab report: error: give an experiment file, or run folders "
+                "with --runs DIR",
+                file=sys.stderr,
+            )
+        raise SystemExit(2)
+    if args.conditions or args.runs_dir is not None:
+        print(
+            "pushlab report: --conditions and --runs-dir go with an experiment "
+            "file, not with --runs",
+            file=sys.stderr,
+        )
+        return 1
+    from pushlab.analysis.report import run_report
+
+    return run_report(args.runs, args.out, args.overwrite)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the pushlab command with argv; return the exit status.
 
@@ -257,9 +306,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             overwrite=args.overwrite,
         )
     if args.command == "report":
-        from pushlab.analysis.report import run_report
+        return _report(args)
+    if args.command == "verify":
+        from pushlab.runs.verify import run_verify
 
-        return run_report(args.runs, args.out, args.overwrite)
+        return run_verify(args.spec, args.runs_dir)
+    if args.command == "expand":
+        from pushlab.runs.expand_command import run_expand
+
+        return run_expand(args.spec, args.summary)
+    if args.command == "run":
+        from pushlab.runs.runner import run_experiment
+
+        return run_experiment(
+            args.spec,
+            runs_dir=args.runs_dir,
+            dry_run=args.dry_run,
+            limit=args.limit,
+            retry_failed=args.retry_failed,
+            overwrite_version=args.overwrite_version,
+        )
+    if args.command == "status":
+        from pushlab.runs.status_command import run_status
+
+        return run_status(args.spec, args.runs_dir)
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite
     )
