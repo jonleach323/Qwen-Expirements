@@ -111,7 +111,8 @@ def read_records(folder: Path, shards: dict[str, str]) -> dict[str, RunRecord]:
     """The records of the given runs, each from the shard named for it.
 
     A run a shard holds twice (which only a hand edit makes, and verify
-    reports) is read as its first copy, as the DuckDB views read it.
+    reports) is read as its first copy; the DuckDB views take the same one
+    unless the copies' statuses differ, when they take the index's.
 
     Example:
         >>> read_records(folder, {"x-000001": "v1-b000001-1.parquet"})  # doctest: +SKIP

@@ -15,9 +15,11 @@ next session rewrites it whole.
 
 from collections import Counter
 from dataclasses import dataclass, fields
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pushlab.models.registry import REGISTRY
 from pushlab.runs import folder, plan
 from pushlab.store.manifest import check_experiment_manifest
 from pushlab.store.records import MANIFEST_FILE, write_manifest
@@ -30,7 +32,10 @@ CODE_KEYS = ("code_commit", "lockfile_sha256", "torch", "transformers")
 # What an earlier session's entry must give, as text, to be kept.
 SESSION_KEYS = ("id", "started_at", "finished_at")
 # What restamp_manifest says of a manifest it cannot bring up to date.
-LEFT_ALONE = "it is left as it is, and the next session of pushlab run rewrites it"
+LEFT_ALONE = (
+    "it is left as it is: a session of pushlab run, while runs are left, "
+    "rewrites it; with none left, delete it, and verify no longer checks it"
+)
 
 
 @dataclass(frozen=True)
@@ -97,9 +102,10 @@ def _read(path: Path) -> dict[str, Any] | None:
 def earlier_sessions(path: Path, session_id: str) -> list[dict[str, Any]]:
     """The sessions the folder's manifest lists, other than session_id.
 
-    An entry without an id, a start and an end, each as text, is left out,
-    and a manifest that is not valid JSON or not a JSON object lists none:
-    the session then rewrites it whole.
+    An entry without an id, a start and an end, each as text, the times as
+    ISO 8601 with a time zone (as check_manifest asks), is left out, and a
+    manifest that is not valid JSON or not a JSON object lists none: the
+    session then rewrites it whole.
 
     Example:
         >>> earlier_sessions(Path("/no/such/folder"), "a")
@@ -115,8 +121,17 @@ def earlier_sessions(path: Path, session_id: str) -> list[dict[str, Any]]:
         for session in (sessions if isinstance(sessions, list) else [])
         if isinstance(session, dict)
         and all(isinstance(session.get(key), str) for key in SESSION_KEYS)
+        and all(_zoned(session[key]) for key in ("started_at", "finished_at"))
         and session["id"] != session_id
     ]
+
+
+def _zoned(text: str) -> bool:
+    """Whether text is an ISO 8601 time with a time zone."""
+    try:
+        return datetime.fromisoformat(text).tzinfo is not None
+    except ValueError:
+        return False
 
 
 def code_changes(
@@ -151,7 +166,7 @@ def _stamp(
     """What a manifest repeats from experiment.json (identity) and the index
     (states, of total runs): the experiment, its version and file, the
     hashes, the model's download and revision, the dtype and the runs by
-    status."""
+    status, and the model's ID from the registry."""
     counts = Counter(states.values())
     stamp = {key: identity.get(key) for key in plan.IDENTITY_KEYS} | {
         "experiment": identity["experiment"],
@@ -169,6 +184,9 @@ def _stamp(
     decoding = spec.get("decoding") if isinstance(spec, dict) else None
     if isinstance(decoding, dict) and "dtype" in decoding:
         stamp["dtype"] = decoding["dtype"]
+    registered = REGISTRY.get(str(identity["model"]).rpartition("@")[0])
+    if registered is not None:  # so that model and model_id name one model
+        stamp["model_id"] = registered.hf_id
     return stamp
 
 

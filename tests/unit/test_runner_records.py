@@ -11,6 +11,7 @@ import torch
 
 from pushlab.cli import main
 from pushlab.models import load
+from pushlab.prompts import PROMPTS_DIR
 from pushlab.runs.expand import expand
 from pushlab.runs.folder import read_identity, read_index
 from pushlab.runs.shards import read_results
@@ -210,3 +211,50 @@ def test_a_finished_experiments_manifest_that_is_not_an_object_only_warns(
     assert _run(spec, runs) == 0  # nothing to run, and no crash
     assert "manifest.json is not a JSON object" in capsys.readouterr().err
     assert path.read_text() == "5"  # left as it is: no session ran to rewrite it
+
+
+def test_an_earlier_session_with_a_time_of_no_zone_is_dropped_not_fatal(
+    tiny_spec: Callable[..., Path], tmp_path: Path
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "4") == 3
+    path = runs / NAME / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["sessions"][0]["started_at"] = "2026-11-08T10:00:00"  # no zone
+    path.write_text(json.dumps(manifest))
+    assert _run(spec, runs) == 0  # the rest runs, and the manifest is rewritten
+    sessions = json.loads(path.read_text())["sessions"]
+    assert len(sessions) == 1  # the entry it could not use is left out
+
+
+def test_only_the_sessions_that_made_a_versions_runs_count_for_the_warning(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real = environment.environment_info
+
+    def on_commit(commit: str) -> None:
+        monkeypatch.setattr(
+            environment, "environment_info", lambda d: real(d) | {"code_commit": commit}
+        )
+
+    prompts = tmp_path / "prompts.jsonl"
+    smoke = (PROMPTS_DIR / "smoke.jsonl").read_text()
+    prompts.write_text(smoke)
+    runs = tmp_path / "runs"
+    on_commit("a" * 40)
+    assert _run(tiny_spec(prompts=str(prompts)), runs, "--limit", "4") == 3
+    # A new prompt set keeps no run: version 2's runs are all its own.
+    prompts.write_text(smoke.replace("pancakes", "waffles"))
+    changed = tiny_spec(prompts=str(prompts))
+    on_commit("b" * 40)
+    capsys.readouterr()
+    assert _run(changed, runs, "--overwrite-version", "--limit", "4") == 3
+    assert "warning" not in capsys.readouterr().err  # version 1's code made none
+    on_commit("c" * 40)
+    assert _run(changed, runs) == 0
+    assert "version 2's runs so far ran with another code_commit" in (
+        capsys.readouterr().err
+    )

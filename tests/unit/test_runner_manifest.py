@@ -154,7 +154,9 @@ def test_restamp_leaves_a_broken_manifest_alone_and_says_why(
     path.write_text(text)
     with pytest.raises(ValueError, match=why) as error:
         restamp_manifest(tmp_path, _identity(2), {}, 10)
-    assert "the next session of pushlab run rewrites it" in str(error.value)
+    assert "a session of pushlab run, while runs are left, rewrites it" in str(
+        error.value
+    )
     assert path.read_text() == text
 
 
@@ -195,3 +197,17 @@ def test_restamp_leaves_alone_a_manifest_it_cannot_bring_up_to_date(
 def test_restamp_does_nothing_without_a_manifest(tmp_path: Path) -> None:
     assert restamp_manifest(tmp_path, _identity(), {}, 10) is False
     assert not (tmp_path / "manifest.json").exists()
+
+
+def test_restamp_names_the_model_id_of_the_model_experiment_json_names(
+    tmp_path: Path,
+) -> None:
+    from pushlab.models.registry import REGISTRY
+
+    _record(tmp_path, _session("one", 10))
+    # A new version on another registered model, before any session of it.
+    identity = _identity(2, "float32") | {"model": "tiny@" + "0" * 40}
+    assert restamp_manifest(tmp_path, identity, {}, 10) is True
+    after = _read(tmp_path)
+    assert after["model"] == identity["model"]
+    assert after["model_id"] == REGISTRY["tiny"].hf_id

@@ -51,9 +51,9 @@ SPEC_KEYS = (
     "max_gpu_hours",
     "conditions",
 )
-# Settings a file may leave out, and what they are then.
 # The longest reply a steps table holds: steps 0 to 32,767.
 MAX_REPLY_TOKENS = 2**15
+# Settings a file may leave out, and what they are then.
 OPTIONAL_KEYS = {"group_by_length": True}
 # What a file's decoding takes; a run's record holds DECODING_KEYS
 # (pushlab.store.records) and, when sampling, temperature and top_p.

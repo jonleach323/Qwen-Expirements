@@ -28,9 +28,9 @@ from typing import Any
 
 # The fewest turns a long alternation needs to become one marker.
 COLLAPSE = 4
-# The most steps a turn of such an alternation may last, the reply's last
-# turn aside (its end may cut it): longer turns keep a marker each, so a
-# report shows where each one starts.
+# The most steps a turn of such an alternation may last: longer turns, the
+# reply's last one too, keep a marker each, so a report shows where each one
+# starts, and where an alternation ends.
 LONGEST_TURN = 16
 
 # Every kind of line break str.splitlines knows, \r\n as one.
@@ -167,8 +167,8 @@ def marks(
     marker at step 0. The text names the units switched off, then those
     switched on: [A on], [A off, B on], [A+B on]. A stretch is a run of steps
     with one set; at least collapse stretches in a row that take turns
-    between two sets, each at most LONGEST_TURN steps long (the reply's last
-    one may be longer), make one marker, at the first, with their number:
+    between two sets, each at most LONGEST_TURN steps long, make one
+    marker, at the first, with their number:
     [A/B x8], or [A on/off x8] for a unit that repeats on and off. A longer
     stretch keeps its own marker. The marker after an alternation compares
     with its last stretch.
@@ -194,7 +194,8 @@ def marks(
     short = [
         later - start <= LONGEST_TURN for (start, _), (later, _) in pairwise(stretches)
     ]
-    short.append(True)  # the reply's last stretch, which its end may cut
+    if stretches:  # the reply's last stretch, to the reply's end
+        short.append(len(sets) - stretches[-1][0] <= LONGEST_TURN)
     found: list[tuple[int, str]] = []
     before: frozenset[str] = frozenset()
     i = 0

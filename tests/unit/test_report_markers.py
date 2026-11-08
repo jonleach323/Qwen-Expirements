@@ -160,9 +160,12 @@ def test_two_pulses_far_apart_and_two_slow_handoffs_keep_every_marker() -> None:
     ]
 
 
-def test_the_replys_last_turn_may_be_long() -> None:
-    # The reply's end may cut it, and no switch follows it.
+def test_a_long_last_turn_keeps_its_marker_so_the_alternations_end_shows() -> None:
+    # Three short pulses, then nothing pushed for the rest of the reply.
     sets = _sets(*[("A", 2), ("", 2)] * 2, ("A", 2), ("", 40))
+    assert marks(sets) == [(0, "[A on/off x5]"), (10, "[A off]")]
+    # A reply that ends in a short turn still collapses whole.
+    sets = _sets(*[("A", 2), ("", 2)] * 2, ("A", 2), ("", 1))
     assert marks(sets) == [(0, "[A on/off x6]")]
 
 

@@ -163,16 +163,24 @@ def _kind(type_: pa.DataType) -> str:
 
 def _differences(schema: pa.Schema) -> str:
     """How the columns of schema, which has STEPS_SCHEMA's names, differ
-    from STEPS_SCHEMA's in type, or in whether they may be null."""
+    from STEPS_SCHEMA's: in type, or in whether they may be null.
 
-    def shown(field: pa.Field) -> str:
-        return _kind(field.type) + (" or null" if field.nullable else "")
-
-    return "; ".join(
-        f"{want.name} is {shown(field)}, not {shown(want)}"
-        for field, want in zip(schema, STEPS_SCHEMA, strict=True)
-        if not field.equals(want)
-    )
+    Example:
+        >>> wide = STEPS_SCHEMA.set(1, pa.field("step", pa.int64(), nullable=False))
+        >>> _differences(wide)
+        'step is int64, not int16'
+    """
+    found = []
+    for field, want in zip(schema, STEPS_SCHEMA, strict=True):
+        if field.equals(want):
+            continue
+        if _kind(field.type) != _kind(want.type):
+            found.append(f"{want.name} is {_kind(field.type)}, not {_kind(want.type)}")
+        elif field.nullable != want.nullable:
+            found.append(f"{want.name} may be null, as no steps table's is")
+        else:  # only a list's items differ in whether they may be null
+            found.append(f"{want.name}'s items differ in whether they may be null")
+    return "; ".join(found)
 
 
 def read_steps_file(path: Path) -> list[StepRecord]:

@@ -84,7 +84,7 @@ refused.
 | `prompts` | A prompt set (`prompts/*.jsonl`), as a path from the repository's root. |
 | `decoding` | `strategy: greedy`, or `strategy: sample` with a `temperature` above 0 and, if you like, a `top_p` above 0 and at most 1 (default 1). `dtype` is `bfloat16` (the default) or `float32`. Greedy decoding takes no temperature or top_p. |
 | `seeds` | A list of different whole numbers. Every run is repeated with each. Greedy decoding draws no random numbers, so it takes exactly one. |
-| `max_new_tokens` | The most tokens a reply may have. |
+| `max_new_tokens` | The most tokens a reply may have, at most 32,768: the longest reply the steps table holds. |
 | `batch_size` | The most runs that share a batch. `expand` plans batches of one prompt and one seed, so they can be shorter (below); `pushlab run` joins planned batches that can share one, up to `batch_size`. |
 | `group_by_length` | Optional, `true` by default: `pushlab run` joins planned batches of different prompts only when the prompts are of one length in tokens, so that no row is padded. `false` lets prompts of different lengths share a padded batch. |
 | `max_gpu_hours` | The GPU time the experiment may take, a number above 0, for the runner to hold it to. |

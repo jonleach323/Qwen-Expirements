@@ -78,14 +78,19 @@ holds twice (only a hand edit makes one) is read as its first copy.
   give), every due run of the call is saved as failed with no steps, its
   steps file empty, and the run goes on to the next batch. The error
   starts "the batch's steps cannot be saved:", names the run and step,
-  and ends "; lower the dose, as 16-bit steps hold amounts up to 65,504".
-  Once the file is fixed, --retry-failed runs them again. A disk error
+  and ends with what to do: lower the dose in the experiment file, through
+  a pull request, then run it with --overwrite-version (the lower dose
+  makes the pushed runs new runs, which run) and with --retry-failed for
+  the runs that failed with them (an unpushed run that shared the call is
+  kept, failed, by the new version). A code fix instead, with the file as
+  it was, needs --retry-failed only. A disk error
   while saving still stops the run, as decision 0015 says. No step can be
   past 32,767: an experiment file's max_new_tokens is at most 32,768.
 - **Reading a steps file.** A file is read only if its columns match the
   steps table's in name, type and nullability: one of 64-bit numbers, as
   pandas or DuckDB would write it, is refused, naming each column that
-  differs ("step is int64 or null, not int16").
+  differs: "step is int64, not int16", or "run_id may be null, as no
+  steps table's is" for one of the right type.
 
 **The engine** records the log-probabilities next to the amounts it
 already kept (`Generation.logprobs`). They are left out of a reply's `==`:
@@ -102,23 +107,27 @@ ok, failed and pending, adding up to the run count, and the sessions.
 Its top-level code and machine fields (code commit, lockfile, GPU, CUDA,
 driver, torch, transformers, packages) are the last session's, and its
 start time is its first session's, of any version: each session's own
-entry says what that session ran, and verify's code-change warning says
-when a version's runs were made by more than one code.
+entry says what that session ran, and pushlab run's code-change warning
+says when a version's runs were made by more than one code.
 - **Restamping.** Before it decides what to run, the runner brings up to
   date what the manifest repeats from experiment.json and the index
   (`manifest.restamp_manifest`): experiment, version, spec_file, the
   hashes of the experiment file, prompt set, known units and calibration,
-  model and model_revision, dtype, run_count and runs_by_status, writing
-  only if something changed. So a new version that keeps every run, or a
-  session killed after its last batch, leaves a manifest verify accepts.
-  The rest stays as the sessions left it, until a session of the new
-  version runs: the last session's code, machine and model_id, the first
+  model, model_revision and model_id (from the model registry, so that
+  model and ID name one model), dtype, run_count and runs_by_status,
+  writing only if something changed. So a new version that keeps every
+  run, or a session killed after its last batch, leaves a manifest verify
+  accepts. The rest stays as the sessions left it, until a session of the
+  new version runs: the last session's code and machine, the first
   session's start and the last one's end.
 - **A broken manifest** (not valid JSON, or not a JSON object) never stops
   `pushlab run`: it lists no earlier sessions, a session rewrites it whole,
   and the restamp leaves it as it is with a warning ("...; it is left as it
-  is, and the next session of pushlab run rewrites it"). The entries it
-  held are lost; no copy is kept.
+  is: a session of pushlab run, while runs are left, rewrites it; with none
+  left, delete it, and verify no longer checks it"). An earlier session's
+  entry without an id, or with times that are not ISO 8601 with a time
+  zone, is dropped. The entries it cannot use are lost; no copy is kept.
+  verify takes a manifest of JSON null for a broken one too.
 - A session's entry is a `manifest.SessionEntry`, written by
   `manifest.record_session`.
 
@@ -169,8 +178,9 @@ file. It checks that:
    file, prompt set, known units and calibration, and the model download.
    Its model_revision is the revision experiment.json's model names. Its
    run_count is experiment.json's number of runs. Its runs_by_status is the
-   index's counts. Its model_id, dtype, times and code and machine fields
-   are not compared, because experiment.json does not hold them. This check
+   index's counts. Its dtype is the one experiment.json's spec decodes in.
+   Its model_id, times and code and machine fields are not compared,
+   because experiment.json does not hold them. This check
    is skipped, with a note, while a runner holds the folder's lock, because
    a session rewrites the manifest when it ends.
 
@@ -215,9 +225,9 @@ order. The S1 mode, `--runs DIR ...`, is as it was.
 - **Alternations.** A stretch is a run of steps with one set. Four or more
   stretches in a row that take turns between two sets collapse into one
   marker, before the first of them, with their count, but only while every
-  stretch in the run is at most 16 steps long (`markers.LONGEST_TURN`); the
-  reply's last stretch, which its end may cut, may be any length. A longer
-  stretch keeps its own marker, so the report shows where it starts, and
+  stretch in the run is at most 16 steps long (`markers.LONGEST_TURN`),
+  the reply's last one too. A longer stretch keeps its own marker, so the
+  report shows where it starts, or where an alternation ends, and
   short turns before or after it can still collapse on their own. Runs are
   found from the start of the reply, each as long as it can go; steps with
   nothing pushed before the first push are not a turn; the marker after an
@@ -246,7 +256,9 @@ order. The S1 mode, `--runs DIR ...`, is as it was.
   **[A on]** bold next to a letter, and markers usually sit next to one.
 - **Notes under a reply,** in this order: "the reply ended before any
   push", or one of "saved before steps were kept, so it has no markers",
-  "its steps cannot be read: <why>, so it has no markers" and "its steps do
+  "its steps in steps/<name> cannot be read, so it has no markers; pushlab
+  verify says why" (the why once, from verify, not under every reply) and
+  "its steps do
   not match its tokens, so it has no markers; pushlab verify says more";
   then "reached the N-token limit", and the status when it is not ok. A
   failed run shows "failed, so it has no reply; pushlab status shows why".

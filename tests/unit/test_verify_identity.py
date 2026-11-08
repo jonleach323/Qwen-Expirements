@@ -143,6 +143,13 @@ def test_the_manifests_model_revision_and_run_count_are_checked(
         f"manifest.json's model_revision is not the revision in {identity}'s model",
     ]
     path.write_text(original)
+    _plant(runs, dtype="bfloat16")  # the experiment file decodes in float32
+    assert _verify(spec, runs, capsys)[:-1] == [
+        "1",
+        "manifest.json's dtype is 'bfloat16', but experiment.json's experiment "
+        "file decodes in float32",
+    ]
+    path.write_text(original)
     _plant(runs, run_count=999)
     assert _verify(spec, runs, capsys)[:-1] == [
         "1",
@@ -190,3 +197,12 @@ def test_a_new_version_that_keeps_every_run_verifies_clean(
     lines = _verify(spec, runs, capsys)
     assert lines[0] == "0"
     assert lines[1].startswith(f"{NAME}, version 2: 10 runs and ")
+
+
+def test_a_manifest_of_json_null_is_a_problem_as_the_runner_takes_it(
+    finished: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec, runs = finished
+    (runs / NAME / "manifest.json").write_text("null")
+    lines = _verify(spec, runs, capsys)
+    assert "manifest.json is not a JSON object" in lines

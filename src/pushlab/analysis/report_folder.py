@@ -83,7 +83,8 @@ def saved_runs(
     path is the runner folder and identity its experiment.json. Each batch
     that holds one of the runs is read on its own: a missing steps file
     gives its runs the note NO_STEPS, and one that cannot be read the note
-    "its steps cannot be read: <why>, so it has no markers". ValueError
+    "its steps in steps/<name> cannot be read, so it has no markers;
+    pushlab verify says why". ValueError
     says, in words, when the index or a batch's runs shard cannot be read.
 
     Example:
@@ -115,10 +116,12 @@ def saved_runs(
             steps |= shards.read_steps(path, wanted)
         except FileNotFoundError:
             notes |= dict.fromkeys(wanted, NO_STEPS)
-        except UNREADABLE as error:
-            shown = f"{folder.STEPS}/{shard}"
-            why = f"its steps cannot be read: {_why(error, path / shown, shown)}"
-            notes |= dict.fromkeys(wanted, f"{why}, so it has no markers")
+        except UNREADABLE:  # pushlab verify says why, once for the batch
+            note = (
+                f"its steps in {folder.STEPS}/{shard} cannot be read, so it has no "
+                "markers; pushlab verify says why"
+            )
+            notes |= dict.fromkeys(wanted, note)
     return sorted(runs, key=lambda run: run.run_id), steps, notes
 
 

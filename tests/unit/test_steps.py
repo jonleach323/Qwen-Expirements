@@ -120,11 +120,13 @@ def test_a_file_with_the_columns_but_other_types_is_refused(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="is not a steps table") as error:
         read_steps_file(path)
     message = str(error.value)
-    # Every column of such a file may also be null, which no step's may be.
-    assert "step is int64 or null, not int16" in message
-    assert "logprob is float64 or null, not float16" in message
-    assert "active_amounts is list of float64 or null, not list of float16" in message
-    assert "run_id is string or null, not string" in message
+    # A column of another type says so; one of the right type that may be
+    # null, as every column pyarrow writes from a plain table may, says that.
+    assert "step is int64, not int16" in message
+    assert "logprob is float64, not float16" in message
+    assert "active_amounts is list of float64, not list of float16" in message
+    assert "run_id may be null, as no steps table's is" in message
+    assert "or null" not in message  # never 'X or null, not X'
     # The file itself is fine once its types are the steps table's.
     pq.write_table(table.cast(STEPS_SCHEMA), path)
     assert read_steps_file(path) == [_step()]

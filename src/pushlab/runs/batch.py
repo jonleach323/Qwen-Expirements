@@ -20,9 +20,13 @@ from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.records import RunRecord
 from pushlab.store.steps import MAX_FLOAT16, StepRecord, steps_table
 
-# What a call's error adds when its steps hold an amount no 16-bit float can.
+# What a call's error adds when its steps hold an amount no 16-bit float can:
+# a lower dose makes its pushed runs new runs, which --overwrite-version runs,
+# and the others that failed with them run again with --retry-failed.
 LOWER_THE_DOSE = (
-    f"lower the dose, as 16-bit steps hold amounts up to {MAX_FLOAT16:,.0f}"
+    "lower the dose in the experiment file, through a pull request, then run "
+    "it with --overwrite-version, and with --retry-failed for the runs that "
+    f"failed with it: 16-bit steps hold amounts up to {MAX_FLOAT16:,.0f}"
 )
 
 

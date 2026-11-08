@@ -355,8 +355,9 @@ def test_a_crash_in_the_first_identity_write_leaves_a_folder_it_can_use(
 def test_a_run_or_step_saved_twice_in_one_file_is_read_as_its_first_copy(
     tmp_path: Path,
 ) -> None:
-    """Only a hand edit makes these (verify reports them); the readers then
-    agree with the DuckDB views on which copy counts."""
+    """Only a hand edit makes these, and verify reports them; the readers
+    then take the first copy, as the DuckDB views do when the copies share a
+    status."""
     from pushlab.store.steps import StepRecord, steps_table
 
     first, second = _record(1), dataclasses.replace(_record(1), output_text="other")

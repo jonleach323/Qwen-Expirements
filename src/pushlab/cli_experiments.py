@@ -21,6 +21,14 @@ def positive_int(text: str) -> int:
 
 
 def add_verify(commands: argparse._SubParsersAction) -> None:
+    """Add `pushlab verify SPEC [--runs-dir DIR]` to commands.
+
+    Example:
+        >>> parser = argparse.ArgumentParser()
+        >>> add_verify(parser.add_subparsers(dest="command"))
+        >>> parser.parse_args(["verify", "e.yaml"]).spec
+        PosixPath('e.yaml')
+    """
     verify = commands.add_parser(
         "verify",
         help="check an experiment's saved runs and steps against its file",
@@ -47,6 +55,14 @@ def add_verify(commands: argparse._SubParsersAction) -> None:
 
 
 def add_expand(commands: argparse._SubParsersAction) -> None:
+    """Add `pushlab expand SPEC [--summary]` to commands.
+
+    Example:
+        >>> parser = argparse.ArgumentParser()
+        >>> add_expand(parser.add_subparsers(dest="command"))
+        >>> parser.parse_args(["expand", "e.yaml", "--summary"]).summary
+        True
+    """
     expand = commands.add_parser(
         "expand",
         help="list the runs an experiment file means, without running anything",
@@ -73,6 +89,14 @@ def add_expand(commands: argparse._SubParsersAction) -> None:
 
 
 def add_runs_dir(command: argparse.ArgumentParser) -> None:
+    """Add the --runs-dir option that run, status, verify and report share.
+
+    Example:
+        >>> parser = argparse.ArgumentParser()
+        >>> add_runs_dir(parser)
+        >>> parser.parse_args(["--runs-dir", "runs"]).runs_dir
+        PosixPath('runs')
+    """
     command.add_argument(
         "--runs-dir",
         type=Path,
@@ -83,6 +107,14 @@ def add_runs_dir(command: argparse.ArgumentParser) -> None:
 
 
 def add_run(commands: argparse._SubParsersAction) -> None:
+    """Add `pushlab run SPEC` and its options to commands.
+
+    Example:
+        >>> parser = argparse.ArgumentParser()
+        >>> add_run(parser.add_subparsers(dest="command"))
+        >>> parser.parse_args(["run", "e.yaml", "--limit", "4"]).limit
+        4
+    """
     run = commands.add_parser(
         "run",
         help="run an experiment file batch by batch, saving each batch as it goes",
@@ -135,6 +167,14 @@ def add_run(commands: argparse._SubParsersAction) -> None:
 
 
 def add_status(commands: argparse._SubParsersAction) -> None:
+    """Add `pushlab status SPEC [--runs-dir DIR]` to commands.
+
+    Example:
+        >>> parser = argparse.ArgumentParser()
+        >>> add_status(parser.add_subparsers(dest="command"))
+        >>> parser.parse_args(["status", "e.yaml"]).command
+        'status'
+    """
     status = commands.add_parser(
         "status",
         help="how far an experiment has got, and how long the rest will take",

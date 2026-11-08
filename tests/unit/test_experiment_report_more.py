@@ -150,17 +150,16 @@ def test_a_steps_file_that_cannot_be_read_gives_its_replies_a_note(
     body = _plain(markdown.split("\n## ", 1)[1])
     assert str(path.parent) not in body  # the folder's own path is not repeated
     for (prompt_id, label), reply in _replies(markdown).items():
-        note = re.search(r" \*\((its steps cannot be read: .+?)\)\*", reply)
+        note = re.search(r" \*\((its steps in .+? cannot be read.+?)\)\*", reply)
         assert (note is not None) == (prompt_id == "p-1")
         assert bool(MARKER.search(reply)) == (prompt_id == "p-2" and _pushed(label))
         if note is None:
             continue
-        assert f"steps/{FIRST}" in note[1]
-        assert note[1].endswith(", so it has no markers")
-        if broken == "other-columns":  # escaped for Markdown, the _ too
-            assert (
-                "is not a steps table: its columns are run\\_id, step\\_no" in note[1]
-            )
+        # The why is pushlab verify's to say, once, not under every reply.
+        assert note[1] == (
+            f"its steps in steps/{FIRST} cannot be read, so it has no markers; "
+            "pushlab verify says why"
+        ).replace("_", "\\_")
 
 
 def test_a_missing_or_broken_runs_shard_is_refused_in_words(

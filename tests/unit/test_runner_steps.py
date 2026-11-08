@@ -262,7 +262,7 @@ def test_steps_that_cannot_be_saved_fail_their_batch_and_the_run_goes_on(
     assert bad["runs"] == {f"{NAME}-000003": "failed", f"{NAME}-000004": "failed"}
     assert bad["error"].startswith("the batch's steps cannot be saved: ")
     assert message in bad["error"] and f"'{NAME}-000004'" in bad["error"]
-    advice = "; lower the dose, as 16-bit steps hold amounts up to 65,504"
+    advice = "16-bit steps hold amounts up to 65,504"
     assert bad["error"].endswith(advice) == hint
     assert "b000002: 0 ok, 2 failed" in capsys.readouterr().out
     assert read_steps_file(runs / NAME / "steps" / bad["shard"]) == []
@@ -338,3 +338,31 @@ def test_a_folder_saved_before_steps_were_kept_runs_and_shows_as_it_was(
     assert con.sql(counts).fetchall() == [(24, 6)]  # 6 runs of 4 tokens
     with pytest.raises(FileNotFoundError, match="v1-b000001-1.parquet"):
         read_result_steps(runs / NAME)
+
+
+HUGE = f"""\
+conditions:
+  - {{label: none, segments: []}}
+  - label: pulse
+    allow_over_ceiling: true
+    segments: [{{unit: {A}, alpha: ALPHA}}]
+"""
+
+
+def test_a_dose_too_large_for_16_bit_steps_is_fixed_by_lowering_it(
+    tiny_spec: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = tmp_path / "runs"
+    huge = tiny_spec(HUGE.replace("ALPHA", "100000.0"))
+    assert _run(huge, runs) == 2  # every batch saved, its runs failed
+    errors = [entry["error"] for entry in read_index(runs / NAME)]
+    assert len(errors) == 5  # each batch's names its own run
+    advice = "run it with --overwrite-version, and with --retry-failed"
+    assert all(advice in error for error in errors)
+    # As the advice says: a lower dose, then a new version and a retry.
+    fixed = tiny_spec(HUGE.replace("ALPHA", "1.0"))
+    assert _run(fixed, runs, "--overwrite-version") == 0  # the new pulses run
+    capsys.readouterr()
+    assert _run(fixed, runs, "--retry-failed") == 0  # the unpushed runs with them
+    assert {record.status for record in read_results(runs / NAME)} == {"ok"}
+    assert main(["verify", str(fixed), "--runs-dir", str(runs)]) == 0

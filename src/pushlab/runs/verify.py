@@ -261,9 +261,9 @@ class _Check:
         except ValueError as error:
             self.say(str(error))
             return
-        if manifest is None:
-            return
-        if not isinstance(manifest, dict):
+        if manifest is None and not (self.path / MANIFEST_FILE).exists():
+            return  # none: nothing to check
+        if not isinstance(manifest, dict):  # null too, as pushlab run takes it
             self.say(f"{MANIFEST_FILE} is not a JSON object")
             return
         try:
@@ -283,6 +283,15 @@ class _Check:
             self.say(
                 f"{MANIFEST_FILE}'s model_revision is not the revision in "
                 f"{source}'s model"
+            )
+        spec = self.identity.get("spec")
+        dtype = (
+            spec.get("decoding", {}).get("dtype") if isinstance(spec, dict) else None
+        )
+        if dtype is not None and manifest.get("dtype") != dtype:
+            self.say(
+                f"{MANIFEST_FILE}'s dtype is {manifest.get('dtype')!r}, but {source}'s "
+                f"experiment file decodes in {dtype}"
             )
         if (run_count := manifest.get("run_count")) != self.total:
             self.say(
