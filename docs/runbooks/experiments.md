@@ -57,12 +57,22 @@ and a second one to watch it.
    the batch that was running; a crash or a stopped pod is the same. Start
    the same command again and it skips every saved run.
 5. **Failed runs.** A batch that raises is saved with its runs failed, and
-   status lists them with their errors. Once the cause is fixed, run the
-   same command with `--retry-failed`.
+   status lists them with their errors. Fix the cause through a pull
+   request and `git pull` on the pod. If the fix was in the code, run the
+   same command with `--retry-failed`. If it was in the experiment file,
+   such as a lower `batch_size` after an out-of-memory error, run it with
+   `--overwrite-version --retry-failed`: the new version keeps the saved
+   runs and runs the failed ones again.
 6. **The cap.** At `max_gpu_hours` it stops and says so. To go on, raise
    `max_gpu_hours` in the experiment file through a pull request, `git
    pull` on the pod, and run with `--overwrite-version`, which keeps every
-   saved run.
+   saved run that is still the same, ok or failed. Its `--dry-run` says
+   how many it would keep.
+
+   When it ends, `echo $?` gives its exit status: 0 when it finished, 1
+   when it refused or could not save (it says why), 2 when a run failed,
+   3 when it stopped with runs left at `max_gpu_hours` or `--limit`, and
+   130 after Ctrl-C.
 7. **Copy the folder off the pod** as above, with the speed it measured,
    for example:
 

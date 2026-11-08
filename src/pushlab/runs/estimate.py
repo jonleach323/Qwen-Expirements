@@ -3,21 +3,28 @@
 configs/costs.yaml names the GPU, its price in dollars an hour (a range,
 from the cheapest tier to the dearest), and each model's speed in reply
 tokens a second over a whole batch. Once a run has measured a model's
-speed in some data type, <runs dir>/speeds.json has it, and estimates use
-that instead. Every reply is taken to run to max_new_tokens, so tokens,
-hours and cost are upper bounds.
+speed in some data type, <runs dir>/speeds.json has it, with the time the
+model took to load, and estimates use those instead. Every reply is taken
+to run to max_new_tokens, so the reply tokens are an upper bound; hours
+and cost are estimates at the speed given, which depends on how full the
+batches are, and the speed line says what it was measured on.
 """
 
+import fcntl
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pushlab import PROJECT_ROOT
-from pushlab.runs.folder import read_speeds
+from pushlab.runs.folder import read_json, write_json
 from pushlab.schedules.yaml_text import load_yaml
 from pushlab.store.folders import shown_path
 
 COSTS_FILE = PROJECT_ROOT / "configs" / "costs.yaml"
+# In the runs dir itself: the speed each model last ran at, for estimates.
+SPEEDS_FILE = "speeds.json"
 COSTS_KEYS = ("gpu", "dollars_per_hour", "reply_tokens_per_second")
 
 
@@ -37,6 +44,7 @@ class Speed:
 
     reply_tokens_per_second: float
     source: str
+    load_seconds: float = 0.0  # once per session, as measured
 
     def text(self) -> str:
         """The speed in words.
@@ -103,6 +111,34 @@ def read_costs(path: Path | None = None) -> Costs:
     )
 
 
+def read_speeds(runs_dir: Path) -> dict[str, dict[str, Any]]:
+    """The speeds runs have measured, by model and data type, such as
+    "qwen3.5-4b/bfloat16"; empty when none has.
+
+    Example:
+        >>> read_speeds(Path("/no/such/folder"))
+        {}
+    """
+    return read_json(runs_dir / SPEEDS_FILE) or {}
+
+
+def save_speed(runs_dir: Path, key: str, speed: dict[str, Any]) -> None:
+    """Record the speed a run measured, in place of the last one for key.
+
+    Runners of two experiments may finish at once, so the file is read and
+    rewritten holding a lock of its own.
+
+    Example:
+        >>> save_speed(runs_dir, "qwen3.5-4b/bfloat16", speed)  # doctest: +SKIP
+    """
+    handle = os.open(runs_dir / f".{SPEEDS_FILE}.lock", os.O_RDONLY | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        write_json(runs_dir / SPEEDS_FILE, read_speeds(runs_dir) | {key: speed})
+    finally:
+        os.close(handle)
+
+
 def speed_for(model: str, dtype: str, runs_dir: Path, costs: Costs) -> Speed | None:
     """The speed to estimate with: the last measured, else the costs file's.
 
@@ -112,13 +148,18 @@ def speed_for(model: str, dtype: str, runs_dir: Path, costs: Costs) -> Speed | N
         >>> speed_for("qwen3.5-4b", "bfloat16", Path("/no/such"), read_costs()).text()
         '44 reply tokens a second, from configs/costs.yaml'
     """
-    measured = read_speeds(runs_dir).get(f"{model}/{dtype}")
+    try:
+        measured = read_speeds(runs_dir).get(f"{model}/{dtype}")
+    except (OSError, ValueError):  # a broken speeds file: estimate without it
+        measured = None
     if measured:
         where = measured.get("gpu") or "the CPU"
+        rows = measured.get("rows_per_batch", measured["batch_size"])
         return Speed(
             float(measured["reply_tokens_per_second"]),
-            f"measured by {measured['experiment']} on {where} in batches of "
-            f"{measured['batch_size']}, {measured['measured_at'][:10]}",
+            f"measured by {measured['experiment']} on {where} with {rows:.3g} rows "
+            f"a batch, {measured['measured_at'][:10]}",
+            float(measured.get("load_seconds") or 0.0),
         )
     if model in costs.reply_tokens_per_second:
         rate = costs.reply_tokens_per_second[model]
@@ -165,12 +206,14 @@ def estimate_lines(
 ) -> list[tuple[str, str]]:
     """The reply tokens, speed, GPU-hours and cost of runs still to run.
 
-    used_hours are already spent on the experiment, against max_gpu_hours.
+    runs are the rows the calls will run. used_hours are already spent on
+    the experiment, against max_gpu_hours; the measured load time is added
+    once, for the session that runs them.
 
     Example:
         >>> lines = estimate_lines(50, 96, Speed(44.0, "from x"), read_costs(), 0.25)
         >>> dict(lines)["gpu-hours"]
-        'at most 0.03, within max_gpu_hours 0.25'
+        'about 0.03, within max_gpu_hours 0.25'
     """
     tokens = runs * max_new_tokens
     lines = [("reply tokens", f"at most {tokens:,}, {max_new_tokens:,} for each run")]
@@ -179,7 +222,7 @@ def estimate_lines(
             ("speed", f"unknown: add this model's to {shown_path(costs.path)}")
         )
         return lines
-    hours = tokens / speed.reply_tokens_per_second / 3600
+    hours = (speed.load_seconds + tokens / speed.reply_tokens_per_second) / 3600
     left = max_gpu_hours - used_hours
     cap = f"max_gpu_hours {exact(max_gpu_hours)}"
     if used_hours:
@@ -193,10 +236,10 @@ def estimate_lines(
     if high < 0.005:
         cost = "under $0.01"
     else:
-        cost = f"at most {_dollars(low)} to {_dollars(high)}"
+        cost = f"about {_dollars(low)} to {_dollars(high)}"
     prices = " to ".join(_dollars(price) for price in costs.dollars_per_hour)
     return lines + [
         ("speed", speed.text()),
-        ("gpu-hours", f"at most {hours:.2f}, {verdict}"),
+        ("gpu-hours", f"about {hours:.2f}, {verdict}"),
         ("cost", f"{cost}, on an {costs.gpu} at {prices} an hour"),
     ]

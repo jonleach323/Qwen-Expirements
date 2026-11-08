@@ -43,8 +43,6 @@ SHARDS = "shards"
 HEARTBEAT_FILE = "heartbeat.json"
 PROGRESS_FILE = "progress.json"
 LOCK_FILE = ".lock"
-# In the runs dir itself: the speed each model last ran at, for estimates.
-SPEEDS_FILE = "speeds.json"
 
 
 def default_runs_dir() -> Path:
@@ -137,7 +135,12 @@ def read_json(path: Path) -> Any:
 
 
 def read_identity(folder: Path) -> dict[str, Any] | None:
-    """The folder's experiment.json, or None for a folder without one."""
+    """The folder's experiment.json, or None for a folder without one.
+
+    Example:
+        >>> read_identity(Path("/no/such/folder")) is None
+        True
+    """
     identity = read_json(folder / IDENTITY_FILE)
     if identity is not None and not (
         isinstance(identity, dict) and {"experiment", "version"} <= set(identity)
@@ -147,7 +150,11 @@ def read_identity(folder: Path) -> dict[str, Any] | None:
 
 
 def write_identity(folder: Path, identity: dict[str, Any]) -> None:
-    """Replace the folder's experiment.json."""
+    """Replace the folder's experiment.json.
+
+    Example:
+        >>> write_identity(folder, {"experiment": "x", "version": 1})  # doctest: +SKIP
+    """
     write_json(folder / IDENTITY_FILE, identity)
 
 
@@ -184,6 +191,10 @@ def repair_index(folder: Path) -> bool:
     """Cut off a last line that a crash left unfinished; True if there was one.
 
     Call it holding the lock, so that no runner is writing the line.
+
+    Example:
+        >>> repair_index(Path("/no/such/folder"))
+        False
     """
     path = folder / INDEX_FILE
     try:
@@ -296,6 +307,10 @@ def remove_leftovers(folder: Path) -> int:
     """Delete the hidden temporary files of writes a crash stopped; how many.
 
     Call it holding the lock, so that no runner is writing them.
+
+    Example:
+        >>> remove_leftovers(Path("/no/such/folder"))
+        0
     """
     leftovers = [*folder.glob(".*.tmp"), *(folder / SHARDS).glob(".*.tmp")]
     for path in leftovers:
@@ -304,7 +319,12 @@ def remove_leftovers(folder: Path) -> int:
 
 
 def read_records(folder: Path, shards: dict[str, str]) -> dict[str, RunRecord]:
-    """The records of the given runs, each from the shard named for it."""
+    """The records of the given runs, each from the shard named for it.
+
+    Example:
+        >>> read_records(folder, {"x-000001": "v1-b000001-1.parquet"})  # doctest: +SKIP
+        {'x-000001': RunRecord(run_id='x-000001', ...)}
+    """
     wanted: dict[str, set[str]] = {}
     for run_id, shard in shards.items():
         wanted.setdefault(shard, set()).add(run_id)
@@ -343,33 +363,24 @@ def read_results(folder: Path) -> list[RunRecord]:
     return [records[run_id] for run_id in sorted(records)]
 
 
-def read_speeds(runs_dir: Path) -> dict[str, dict[str, Any]]:
-    """The speeds runs have measured, by model and data type, such as
-    "qwen3.5-4b/bfloat16"; empty when none has.
+def lock_held(folder: Path) -> bool:
+    """Whether some process holds the folder's lock, as a runner does.
+
+    It tries a shared lock for an instant and lets it go, and never makes
+    the lock file.
 
     Example:
-        >>> read_speeds(Path("/no/such/folder"))
-        {}
-    """
-    return read_json(runs_dir / SPEEDS_FILE) or {}
-
-
-def save_speed(runs_dir: Path, key: str, speed: dict[str, Any]) -> None:
-    """Record the speed a run measured, in place of the last one for key."""
-    write_json(runs_dir / SPEEDS_FILE, read_speeds(runs_dir) | {key: speed})
-
-
-def pid_alive(pid: int) -> bool:
-    """Whether a process with this ID runs on this machine.
-
-    Example:
-        >>> pid_alive(os.getpid())
-        True
+        >>> lock_held(Path("/no/such/folder"))
+        False
     """
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        handle = os.open(folder / LOCK_FILE, os.O_RDONLY)
+    except FileNotFoundError:
         return False
-    except PermissionError:  # someone else's, but it is there
+    try:
+        fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
         return True
-    return True
+    finally:
+        os.close(handle)  # which lets go of the shared lock, if it was taken
+    return False

@@ -1,0 +1,106 @@
+"""`pushlab run`'s records of itself: the manifest's sessions, warnings, the
+speed file and a stop while the model loads. tiny_spec's experiment has 10
+runs in 5 batches."""
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+import torch
+
+from pushlab.cli import main
+from pushlab.models import load
+from pushlab.runs.folder import read_index, read_results
+from pushlab.store import environment
+
+NAME = "tiny-pulses"
+
+
+@pytest.fixture(autouse=True)
+def cpu_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run on the CPU even on a machine with a GPU."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+
+def _run(spec: Path, runs: Path, *options: str) -> int:
+    return main(["run", str(spec), "--runs-dir", str(runs), *options])
+
+
+def test_the_manifest_records_every_session_with_its_code_and_libraries(
+    tiny_spec: Callable[..., Path], tmp_path: Path
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "4") == 3
+    assert _run(spec, runs) == 0
+    manifest = json.loads((runs / NAME / "manifest.json").read_text())
+    sessions = manifest["sessions"]
+    assert [s["runs"] for s in sessions] == [4, 6]
+    assert len({s["id"] for s in sessions}) == 2
+    for session in sessions:
+        for key in ("code_commit", "lockfile_sha256", "torch", "transformers"):
+            assert key in session
+    assert manifest["runs_by_status"] == {"ok": 10, "failed": 0, "pending": 0}
+    marks = [entry["session"] for entry in read_index(runs / NAME)]
+    assert marks == [sessions[0]["id"]] * 2 + [sessions[1]["id"]] * 3
+
+
+def test_a_session_on_other_code_says_so(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "4") == 3
+    real = environment.environment_info
+
+    def pulled(device: object) -> dict:  # as after a git pull on the pod
+        return real(device) | {"code_commit": "0" * 40}
+
+    monkeypatch.setattr(environment, "environment_info", pulled)
+    capsys.readouterr()
+    assert _run(spec, runs) == 0
+    err = capsys.readouterr().err
+    assert "warning: version 1's runs so far ran with another code_commit" in err
+    assert len(read_results(runs / NAME)) == 10
+
+
+def test_a_broken_speed_file_is_warned_about_and_left_out_of_estimates(
+    tiny_spec: Callable[..., Path],
+    costs: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "speeds.json").write_text("{not json")
+    assert _run(tiny_spec(), runs) == 0
+    captured = capsys.readouterr()
+    assert (
+        "warning: " in captured.err and "speeds.json is not valid JSON" in captured.err
+    )
+    assert len(read_results(runs / NAME)) == 10  # the runs are saved all the same
+    beat = json.loads((runs / NAME / "heartbeat.json").read_text())
+    assert beat["state"] == "finished"
+    assert _run(tiny_spec(name="tiny-other"), runs, "--dry-run") == 0
+    assert f"0.01 reply tokens a second, from {costs}" in capsys.readouterr().out
+
+
+def test_ctrl_c_while_the_model_loads_stops_cleanly(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(load, "load_model", interrupted)
+    runs = tmp_path / "runs"
+    assert _run(tiny_spec(), runs) == 130
+    assert "Stopped by Ctrl-C" in capsys.readouterr().out
+    beat = json.loads((runs / NAME / "heartbeat.json").read_text())
+    assert beat["state"] == "stopped by Ctrl-C"
+    assert read_index(runs / NAME) == []
+    assert not (runs / NAME / "manifest.json").exists()  # nothing ran to record

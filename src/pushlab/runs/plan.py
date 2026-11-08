@@ -5,12 +5,13 @@
 - What its runs were made from: the hashes of the experiment file, the
   prompt set, units/known.csv, the model download and the calibration. A
   folder made from other ones is refused, unless a new version is asked
-  for; a new version keeps every saved run that would be made the same way
-  again, and plans the rest afresh.
-- What is left: the planned batches with runs still to run, or with runs
-  that failed, in plan order.
+  for (pushlab.runs.versions).
+- How the runs run: in calls, each one generate() call of planned batches
+  that can share a batch; and what is left: the calls with runs still to
+  run, or with runs that failed, in plan order.
 """
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from pushlab.runs import folder
 from pushlab.runs.expand import Expansion, PlannedRun
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.folders import shown_path
-from pushlab.store.records import RunRecord
+from pushlab.store.records import MANIFEST_FILE, RUNS_FILE
 
 # Each input a folder's runs are made from, and its name in messages.
 IDENTITY_KEYS = {
@@ -30,10 +31,6 @@ IDENTITY_KEYS = {
     "model": "model download",
     "calibration_sha256": "calibration",
 }
-# What a run is made of: a saved run with all of these equal is the same run.
-# Its batch_key says where it ran, so a run saved in another layout is too.
-SAME_RUN = ("run_id", "experiment", "model", "prompt_id", "schedule", "decoding")
-SAME_RUN += ("seed", "control_of")
 
 
 def differences(recorded: dict[str, Any], current: dict[str, Any]) -> list[str]:
@@ -70,10 +67,40 @@ def folder_problem(path: Path, name: str) -> str | None:
                 f"not {name!r}; {never}"
             )
         return None
-    names = sorted(p.name for p in path.iterdir() if p.name != folder.LOCK_FILE)
+    names = sorted(
+        p.name
+        for p in path.iterdir()
+        if p.name != folder.LOCK_FILE  # the runner's own, as are hidden .tmp files
+        and not (p.name.startswith(".") and p.name.endswith(".tmp"))
+    )
     if names:
         held = ", ".join(names[:3]) + (", ..." if len(names) > 3 else "")
         return f"{path} is not a runner folder: it holds {held}; {never}"
+    return None
+
+
+def runs_dir_problem(runs_dir: Path) -> str | None:
+    """Why runs_dir cannot hold experiments' folders, or None.
+
+    It must be a folder, or not exist yet, and neither it nor a folder
+    above it may be a run folder: one with experiment.json, runs.parquet
+    or manifest.json.
+
+    Example:
+        >>> runs_dir_problem(Path("/no/such/folder")) is None
+        True
+    """
+    for place in (runs_dir, *runs_dir.parents):
+        if place.exists() and not place.is_dir():
+            return f"--runs-dir must be a folder, but {place} is a file"
+        names = (folder.IDENTITY_FILE, RUNS_FILE, MANIFEST_FILE)
+        if held := [name for name in names if (place / name).exists()]:
+            return (
+                f"{place} is a run folder (it holds {', '.join(held)}), and "
+                "--runs-dir must be the folder above experiments' folders, such as "
+                "/workspace/runs; the runner never writes into another "
+                "experiment's folder"
+            )
     return None
 
 
@@ -83,6 +110,10 @@ def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]
     It reads the model's download record and, when anything is pushed, its
     calibration, but loads no model. FileNotFoundError or ValueError says
     what is missing and how to make it.
+
+    Example:
+        >>> current_inputs(spec, expand(spec))["model"]  # doctest: +SKIP
+        'qwen3.5-4b@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a'
     """
     from pushlab.models import load
     from pushlab.store.environment import file_sha256
@@ -105,7 +136,15 @@ def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]
 
 
 def changed_message(path: Path, identity: dict[str, Any], changed: list[str]) -> str:
-    """Why a folder made from other inputs is refused, and what to do."""
+    """Why a folder made from other inputs is refused, and what to do.
+
+    Example:
+        >>> identity = {"experiment": "x", "version": 1}
+        >>> changed_message(
+        ...     Path("runs/x"), identity, ["prompt set"]
+        ... )  # doctest: +ELLIPSIS
+        'runs/x holds version 1 of x, made from another prompt set. Run with ...'
+    """
     version = identity["version"]
     return (
         f"{path} holds version {version} of {identity['experiment']}, made from "
@@ -122,7 +161,14 @@ def new_identity(
     inputs: dict[str, Any],
     version: int,
 ) -> dict[str, Any]:
-    """What experiment.json says about a new version of the folder."""
+    """What experiment.json says about a new version of the folder.
+
+    Example:
+        >>> new_identity(spec, path, expand(spec), inputs, 1)[
+        ...     "version"
+        ... ]  # doctest: +SKIP
+        1
+    """
     return inputs | {
         "experiment": spec.name,
         "version": version,
@@ -136,116 +182,124 @@ def new_identity(
 
 
 @dataclass(frozen=True)
-class Batch:
-    """A planned batch's runs that are to run: all of it, or the part left."""
+class Call:
+    """One generate() call: runs that can share a batch, in their rows' order.
+
+    due names the runs a session saves from it: all of them, unless some
+    are saved already (then the call still runs whole, so that every row is
+    where the plan puts it, and only the due ones are saved).
+    """
 
     key: str
     runs: tuple[PlannedRun, ...]
+    due: frozenset[str] = frozenset()
+
+
+def prompt_lengths(
+    tokenizer: Any, prompt_ids: list[str], prompts: list[str]
+) -> dict[str, int]:
+    """Each prompt's length in tokens, as generate() renders it.
+
+    Example:
+        >>> prompt_lengths(tokenizer, ["p-1"], ["Say hi."])  # doctest: +SKIP
+        {'p-1': 12}
+    """
+    from pushlab.models.chat import chat_prompt_ids
+
+    return {
+        prompt_id: len(chat_prompt_ids(tokenizer, prompt, thinking=False))
+        for prompt_id, prompt in zip(prompt_ids, prompts, strict=True)
+    }
+
+
+def calls(
+    expansion: Expansion, batch_size: int, lengths: dict[str, int] | None
+) -> list[Call]:
+    """The generate() calls that run every planned batch, in plan order.
+
+    expand plans each batch from one prompt and seed. Planned batches share
+    a call when their runs have the same model and decoding settings, seed
+    included, and, given lengths (each prompt's length in tokens, when
+    grouping by length is on), prompts of one length; a call holds at most
+    batch_size runs, and a planned batch stays whole, so a run stays with
+    its controls. Calls are numbered in the plan order of their first run,
+    and the same plan always gives the same calls.
+
+    Example:
+        >>> [len(call.runs) for call in calls(expansion, 8, None)]  # doctest: +SKIP
+        [8, 2]
+    """
+    planned: dict[str, list[PlannedRun]] = {}
+    for run in expansion.runs:
+        planned.setdefault(run.record.batch_key.split(":")[0], []).append(run)
+    filling: dict[tuple[Any, ...], list[PlannedRun]] = {}
+    opened: list[list[PlannedRun]] = []
+    for runs in planned.values():
+        first = runs[0].record
+        length = None if lengths is None else lengths[first.prompt_id]
+        group = (
+            first.model,
+            json.dumps(first.decoding, sort_keys=True),
+            first.seed,
+            length,
+        )
+        call = filling.get(group)
+        if call is None or len(call) + len(runs) > batch_size:
+            call = filling[group] = []
+            opened.append(call)
+        call.extend(runs)
+    return [Call(f"b{n:06d}", tuple(runs)) for n, runs in enumerate(opened, start=1)]
+
+
+def is_due(state: dict[str, Any] | None, retry_failed: bool) -> bool:
+    """Whether a run is to run: not saved yet, or with retry_failed failed.
+
+    Example:
+        >>> is_due(None, False), is_due({"status": "failed"}, True)
+        (True, True)
+    """
+    if retry_failed:
+        return state is not None and state["status"] == "failed"
+    return state is None
 
 
 def work(
-    expansion: Expansion, states: dict[str, dict[str, Any]], retry_failed: bool
-) -> list[Batch]:
-    """The planned batches with runs to run, in plan order.
-
-    Those are the runs not saved yet, or with retry_failed the runs whose
-    latest mark is failed, and nothing else.
-    """
-    batches: dict[str, list[PlannedRun]] = {}
-    for run in expansion.runs:
-        state = states.get(run.record.run_id)
-        if retry_failed:
-            due = state is not None and state["status"] == "failed"
-        else:
-            due = state is None
-        if due:
-            batches.setdefault(run.record.batch_key.split(":")[0], []).append(run)
-    return [Batch(key, tuple(runs)) for key, runs in batches.items()]
-
-
-def within_limit(batches: list[Batch], limit: int | None) -> list[Batch]:
-    """The first batches whose runs add up to at most limit, if one is given.
+    planned: list[Call], states: dict[str, dict[str, Any]], retry_failed: bool
+) -> list[Call]:
+    """The calls with runs to run, each with its due runs, in plan order.
 
     Example:
-        >>> batches = [Batch("b1", (1, 2)), Batch("b2", (3, 4))]  # runs, as numbers
-        >>> within_limit(batches, 3)  # type: ignore[arg-type]
-        [Batch(key='b1', runs=(1, 2))]
+        >>> [
+        ...     call.key for call in work(calls(expansion, 8, None), {}, False)
+        ... ]  # doctest: +SKIP
+        ['b000001', 'b000002']
+    """
+    todo = []
+    for call in planned:
+        due = {
+            run.record.run_id
+            for run in call.runs
+            if is_due(states.get(run.record.run_id), retry_failed)
+        }
+        if due:
+            todo.append(replace(call, due=frozenset(due)))
+    return todo
+
+
+def within_limit(planned: list[Call], limit: int | None) -> list[Call]:
+    """The first calls whose due runs add up to at most limit, if one is given.
+
+    Example:
+        >>> todo = [Call("b1", (), frozenset("ab")), Call("b2", (), frozenset("cd"))]
+        >>> [call.key for call in within_limit(todo, 3)]
+        ['b1']
     """
     if limit is None:
-        return batches
+        return planned
     chosen, count = [], 0
-    for batch in batches:
-        if count + len(batch.runs) > limit:
+    for call in planned:
+        if count + len(call.due) > limit:
             break
-        chosen.append(batch)
-        count += len(batch.runs)
+        chosen.append(call)
+        count += len(call.due)
     return chosen
-
-
-def same_run(saved: RunRecord, planned: RunRecord) -> bool:
-    """Whether a saved run is the planned one: made of the same, wherever it ran."""
-    return all(getattr(saved, name) == getattr(planned, name) for name in SAME_RUN)
-
-
-def start_version(
-    path: Path,
-    identity: dict[str, Any],
-    spec: ExperimentSpec,
-    spec_path: Path,
-    expansion: Expansion,
-    inputs: dict[str, Any],
-) -> tuple[dict[str, Any], int]:
-    """Make the folder's next version; return its identity and how many saved
-    runs it keeps.
-
-    A saved run is kept when the new plan has a run of the same ID made of
-    the same (same_run), from the same prompt set and calibration: the index
-    marks it again for the new version, in the shard that holds it, with its
-    share of that batch's time. The marks go first, then experiment.json,
-    so a crash in between leaves the old version as it was.
-    """
-    old = identity["version"]
-    entries = folder.read_index(path)
-    states = folder.latest(entries, old)
-    kept: dict[str, list[str]] = {}
-    same_inputs = all(
-        identity.get(key) == inputs[key]
-        for key in ("prompts_sha256", "calibration_sha256")
-    )
-    if same_inputs:
-        planned = {run.record.run_id: run.record for run in expansion.runs}
-        ok = {k: v["shard"] for k, v in states.items() if v["status"] == "ok"}
-        for run_id, saved in folder.read_records(path, ok).items():
-            plan = planned.get(run_id)
-            if plan is not None and same_run(
-                saved, replace(plan, model=inputs["model"])
-            ):
-                kept.setdefault(ok[run_id], []).append(run_id)
-    seconds = {
-        e["shard"]: (e.get("seconds", 0.0), len(e["runs"]))
-        for e in entries
-        if e.get("version") == old
-    }
-    for shard, run_ids in kept.items():
-        taken, count = seconds[shard]
-        folder.append_index(
-            path,
-            {
-                "version": old + 1,
-                "shard": shard,
-                "batch": states[run_ids[0]]["batch"],
-                "runs": dict.fromkeys(run_ids, "ok"),
-                "kept_from": old,
-                "seconds": taken * len(run_ids) / count,
-                "reply_tokens": 0,
-            },
-        )
-    fresh = new_identity(spec, spec_path, expansion, inputs, old + 1)
-    fresh["previous"] = [*identity.get("previous", []), _summary(identity)]
-    folder.write_identity(path, fresh)
-    return fresh, sum(len(run_ids) for run_ids in kept.values())
-
-
-def _summary(identity: dict[str, Any]) -> dict[str, Any]:
-    keys = ("version", "created_at", *IDENTITY_KEYS)
-    return {key: identity.get(key) for key in keys}

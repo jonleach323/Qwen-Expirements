@@ -1,8 +1,8 @@
 # Sprint 2's example experiment: the hostile neuron of the evil-Qwen pair
 # pushed for 4, 16 or 64 reply tokens, against no push and against random
-# neurons of its layer. `uv run pushlab expand
-# experiments/p0/s2_pulse_lengths.yaml --summary` counts its runs; nothing
-# runs it yet.
+# neurons of its layer. `uv run pushlab run
+# experiments/p0/s2_pulse_lengths.yaml --dry-run` counts its runs and their
+# cost; docs/runbooks/experiments.md says how to run it on the pod.
 name: s2-pulse-lengths
 model: qwen3.5-4b
 prompts: prompts/smoke.jsonl

@@ -115,3 +115,23 @@ def costs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     monkeypatch.setattr(estimate, "COSTS_FILE", path)
     return path
+
+
+@pytest.fixture
+def failing_generate(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """A function that makes generate() raise error in every call holding a
+    pushed run of prompt; calls without one run as usual."""
+    from pushlab.engine import generate as generate_module
+
+    real = generate_module.generate
+
+    def fail(prompt: str, error: Exception) -> None:
+        def failing(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
+            rows = zip(prompts, schedules or [], strict=True)
+            if any(text == prompt and schedule.segments for text, schedule in rows):
+                raise error
+            return real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
+
+        monkeypatch.setattr(generate_module, "generate", failing)
+
+    return fail

@@ -51,6 +51,8 @@ SPEC_KEYS = (
     "max_gpu_hours",
     "conditions",
 )
+# Settings a file may leave out, and what they are then.
+OPTIONAL_KEYS = {"group_by_length": True}
 # What a file's decoding takes; a run's record holds DECODING_KEYS
 # (pushlab.store.records) and, when sampling, temperature and top_p.
 SPEC_DECODING_KEYS = ("strategy", "temperature", "top_p", "dtype")
@@ -78,9 +80,12 @@ class ExperimentSpec:
     prompts is the prompt set's path as the file gives it, relative to the
     repository unless it is absolute (prompts_path resolves it). decoding
     has strategy, temperature (None for greedy decoding), top_p and dtype.
-    seeds are the sampling seeds in order; greedy decoding takes one. Make
-    a spec with read_spec, spec_from_yaml or spec_from_mapping, which check
-    every setting: the class itself checks none.
+    seeds are the sampling seeds in order; greedy decoding takes one.
+    group_by_length, true unless the file says otherwise, lets pushlab run
+    put runs of different prompts in one batch only when their prompts have
+    the same length in tokens, so that no row is padded. Make a spec with
+    read_spec, spec_from_yaml or spec_from_mapping, which check every
+    setting: the class itself checks none.
 
     Example:
         >>> spec = read_spec(PROJECT_ROOT / "experiments/p0/s2_pulse_lengths.yaml")
@@ -97,6 +102,7 @@ class ExperimentSpec:
     batch_size: int
     max_gpu_hours: float
     conditions: tuple[Condition, ...]
+    group_by_length: bool = True
 
     @property
     def prompts_path(self) -> Path:
@@ -120,6 +126,7 @@ class ExperimentSpec:
             "max_new_tokens": self.max_new_tokens,
             "batch_size": self.batch_size,
             "max_gpu_hours": self.max_gpu_hours,
+            "group_by_length": self.group_by_length,
             "conditions": [
                 {
                     "label": condition.label,
@@ -231,7 +238,7 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
             "an experiment must be a mapping of its settings, such as name: and "
             f"model:, not {data!r}"
         )
-    refuse_unknown_keys(data, SPEC_KEYS, "")
+    refuse_unknown_keys(data, (*SPEC_KEYS, *OPTIONAL_KEYS), "")
     if missing := [key for key in SPEC_KEYS if key not in data]:
         raise ValueError(f"the experiment needs {', '.join(missing)}")
     name, model, prompts = data["name"], data["model"], data["prompts"]
@@ -268,6 +275,11 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
         raise ValueError(
             f"max_gpu_hours must be a number above 0, such as 0.5, not {hours!r}"
         )
+    group_by_length = data.get("group_by_length", OPTIONAL_KEYS["group_by_length"])
+    if not isinstance(group_by_length, bool):
+        raise ValueError(
+            f"group_by_length must be true or false, not {group_by_length!r}"
+        )
     listed = data["conditions"]
     if not isinstance(listed, list) or not listed:
         raise ValueError(f"conditions must list at least one condition, not {listed!r}")
@@ -290,6 +302,7 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
         batch_size,
         float(hours),
         tuple(conditions),
+        group_by_length,
     )
 
 

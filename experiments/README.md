@@ -17,9 +17,9 @@ that only `pushlab baseline` reads.
 ```yaml
 # Sprint 2's example experiment: the hostile neuron of the evil-Qwen pair
 # pushed for 4, 16 or 64 reply tokens, against no push and against random
-# neurons of its layer. `uv run pushlab expand
-# experiments/p0/s2_pulse_lengths.yaml --summary` counts its runs; nothing
-# runs it yet.
+# neurons of its layer. `uv run pushlab run
+# experiments/p0/s2_pulse_lengths.yaml --dry-run` counts its runs and their
+# cost; docs/runbooks/experiments.md says how to run it on the pod.
 name: s2-pulse-lengths
 model: qwen3.5-4b
 prompts: prompts/smoke.jsonl
@@ -74,7 +74,8 @@ does.
 
 ## The settings
 
-Every setting is required, and any other key is refused.
+Every setting is required but `group_by_length`, and any other key is
+refused.
 
 | Key | What it is |
 | --- | --- |
@@ -84,7 +85,8 @@ Every setting is required, and any other key is refused.
 | `decoding` | `strategy: greedy`, or `strategy: sample` with a `temperature` above 0 and, if you like, a `top_p` above 0 and at most 1 (default 1). `dtype` is `bfloat16` (the default) or `float32`. Greedy decoding takes no temperature or top_p. |
 | `seeds` | A list of different whole numbers. Every run is repeated with each. Greedy decoding draws no random numbers, so it takes exactly one. |
 | `max_new_tokens` | The most tokens a reply may have. |
-| `batch_size` | The most runs that share a batch. A batch holds runs of one prompt and one seed, so it can be shorter (below). |
+| `batch_size` | The most runs that share a batch. `expand` plans batches of one prompt and one seed, so they can be shorter (below); `pushlab run` joins planned batches that can share one, up to `batch_size`. |
+| `group_by_length` | Optional, `true` by default: `pushlab run` joins planned batches of different prompts only when the prompts are of one length in tokens, so that no row is padded. `false` lets prompts of different lengths share a padded batch. |
 | `max_gpu_hours` | The GPU time the experiment may take, a number above 0, for the runner to hold it to. |
 | `conditions` | The conditions, at least one (below). |
 
@@ -161,7 +163,11 @@ A condition may also have:
    they are split, with a warning. Each run's `batch_key` is
    `b<batch>:<row>`, such as `b000002:0`. A prompt and seed with fewer
    runs than `batch_size` make a short batch: with one schedule and no
-   controls, every batch holds one run.
+   controls, every batch holds one run. These are planned batches:
+   `pushlab run` joins those with the same model, decoding settings and
+   seed (and, with `group_by_length`, prompts of one length) into
+   batches of up to `batch_size`, each planned batch whole, and saves
+   each run's `batch_key` as where it ran (decision 0015).
 
 Each run is a run record (`src/pushlab/store/records.py`) with no reply
 yet and the status `planned`. Its schedule lists the segments it pushes,

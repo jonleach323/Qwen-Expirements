@@ -15,6 +15,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.spec import ExperimentSpec, read_spec
 
@@ -73,12 +74,6 @@ def _count(number: int, one: str, many: str | None = None) -> str:
     return f"{number:,} {one if number == 1 else many or one + 's'}"
 
 
-def _exact(value: float) -> str:
-    """A number, short when that is exact, every digit when not."""
-    short = format(value, "g")
-    return short if float(short) == value else repr(value)
-
-
 def _table(counts: dict[str, tuple[int, int]]) -> list[str]:
     rows = [(label, own, drawn, own + drawn) for label, (own, drawn) in counts.items()]
     rows.append((ALL, *(sum(row[i] for row in rows) for i in (1, 2, 3))))
@@ -129,7 +124,7 @@ def summary(spec: ExperimentSpec, expansion: Expansion) -> str:
         ("seeds", ", ".join(str(seed) for seed in spec.seeds)),
         ("max_new_tokens", f"{spec.max_new_tokens}"),
         ("batches", f"{len(sizes):,}, of {each} each"),
-        ("max_gpu_hours", _exact(spec.max_gpu_hours)),
+        ("max_gpu_hours", exact(spec.max_gpu_hours)),
     ]
     width = max(len(name) for name, _ in settings)
     lines = [f"{name:<{width}}  {value}" for name, value in settings]

@@ -60,6 +60,14 @@ def test_a_spec_reads_every_setting() -> None:
     assert spec.prompts_path == PROJECT_ROOT / "prompts" / "smoke.jsonl"
 
 
+def test_group_by_length_is_on_unless_the_file_says_otherwise() -> None:
+    assert spec_from_yaml(SPEC).group_by_length is True
+    text = _with("max_gpu_hours: 0.5", "max_gpu_hours: 0.5\ngroup_by_length: false")
+    assert spec_from_yaml(text).group_by_length is False
+    on = _with("max_gpu_hours: 0.5", "max_gpu_hours: 0.5\ngroup_by_length: true")
+    assert spec_from_yaml(on).sha256 == spec_from_yaml(SPEC).sha256
+
+
 def test_greedy_decoding_takes_one_seed_and_defaults() -> None:
     spec = spec_from_yaml(
         _with(
@@ -228,6 +236,10 @@ CHANGES = {
     "controls": ("controls: 2", "controls: 3"),
     "control_seed": ("control_seed: 7", "control_seed: 8"),
     "ceiling": ("    controls: 2", "    allow_over_ceiling: true\n    controls: 2"),
+    "group_by_length": (
+        "max_gpu_hours: 0.5",
+        "max_gpu_hours: 0.5\ngroup_by_length: false",
+    ),
 }
 
 
@@ -246,7 +258,7 @@ def test_the_example_file_s_hash_is_pinned() -> None:
     # the hash itself did, and no longer matches the hashes manifests record.
     spec = read_spec(PROJECT_ROOT / "experiments" / "p0" / "s2_pulse_lengths.yaml")
     assert spec.sha256 == (
-        "d43270fb4626f4eeaccad773df717aa611f69361f66a0ae9944ac6a6ec6edefa"
+        "17c9040afdbfa86858cb035905575fa17f545edcbb20b31165cac3af5e70165d"
     )
 
 

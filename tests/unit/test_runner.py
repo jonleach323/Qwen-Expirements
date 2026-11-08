@@ -76,11 +76,12 @@ def test_a_run_saves_every_planned_run_once_in_order(
     assert [run.run_id for run in results] == IDS
     assert {run.status for run in results} == {"ok"}
     assert all(run.output_tokens for run in results)
+    # Where each ran: its shard, and its row there.
     assert [run.batch_key for run in results[:4]] == [
-        "b000001:0",
-        "b000001:1",
-        "b000002:0",
-        "b000002:1",
+        "v1-b000001-1:0",
+        "v1-b000001-1:1",
+        "v1-b000002-1:0",
+        "v1-b000002-1:1",
     ]
     commit = load.downloaded_revision("tiny-vl")
     assert {run.model for run in results} == {f"tiny-vl@{commit}"}
@@ -104,6 +105,9 @@ def test_an_interrupted_run_resumes_and_saves_every_run_exactly_once(
     assert sizes == [2, 2, 2]  # only the three batches left
     results = read_results(folder)
     assert [run.run_id for run in results] == IDS
+    # Each run is marked once in the index, not only read back once.
+    marks = [run_id for entry in read_index(folder) for run_id in entry["runs"]]
+    assert sorted(marks) == IDS
     # The batches saved before the stop are untouched.
     assert {name: _files(folder / "shards")[name] for name in saved} == saved
     # And the replies are those of a run that was never stopped.
@@ -164,17 +168,17 @@ def test_limit_runs_at_most_that_many_runs_in_whole_batches(
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
     sizes = _calls(monkeypatch)
-    assert _run(spec, runs, "--limit", "4") == 0
+    assert _run(spec, runs, "--limit", "4") == 3
     assert sizes == [2, 2]
     assert (
         "Stopped at --limit 4: 4 runs this time; 6 runs left."
         in capsys.readouterr().out
     )
-    assert _run(spec, runs, "--limit", "3") == 0  # a second batch would make 4
+    assert _run(spec, runs, "--limit", "3") == 3  # a second batch would make 4
     assert sizes == [2, 2, 2]
     # The next batch alone is more than the limit: nothing runs.
     monkeypatch.setattr(load, "load_model", _no_loading)
-    assert _run(spec, runs, "--limit", "1") == 0
+    assert _run(spec, runs, "--limit", "1") == 3
     out = capsys.readouterr().out
     assert "the next batch holds 2 runs, more than --limit 1" in out
     assert len(read_results(runs / NAME)) == 6
@@ -187,22 +191,34 @@ def test_the_gpu_hour_cap_stops_after_the_batch_that_crosses_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    # A stand-in clock: the session starts at 0 s and each batch takes 1,500.
-    ticks = iter(range(0, 100_000, 1500))
-    monkeypatch.setattr(runner, "_clock", lambda: float(next(ticks)))
-    sizes = _calls(monkeypatch)
-    assert _run(spec, runs) == 0
-    # 1,500 and 3,000 s are under the hour; the third batch reaches 4,500.
-    assert sizes == [2, 2, 2]
+    # A stand-in clock: loading the model takes 1,200 s, and each batch 800.
+    now = [0.0]
+    monkeypatch.setattr(runner, "_clock", lambda: now[0])
+    real_load, real_generate = load.load_model, generate_module.generate
+
+    def slow_load(*args, **kwargs):  # type: ignore[no-untyped-def]
+        now[0] += 1200
+        return real_load(*args, **kwargs)
+
+    def slow_generate(*args, **kwargs):  # type: ignore[no-untyped-def]
+        now[0] += 800
+        return real_generate(*args, **kwargs)
+
+    monkeypatch.setattr(load, "load_model", slow_load)
+    monkeypatch.setattr(generate_module, "generate", slow_generate)
+    assert _run(spec, runs) == 3  # stopped, with runs left
+    # Loading counts: 2,000 s, then 2,800, then 3,600, which is the cap.
+    assert [entry["seconds"] for entry in read_index(runs / NAME)] == [2000, 800, 800]
     out = capsys.readouterr().out
-    assert "Stopped at max_gpu_hours 1: 1.25 GPU-hours are used; 4 runs left." in out
+    assert "Stopped at max_gpu_hours 1: 1.00 GPU-hours are used; 4 runs left." in out
     assert len(read_results(runs / NAME)) == 6
     progress = json.loads((runs / NAME / "progress.json").read_text())
     assert (progress["state"], progress["pending"]) == ("stopped at max_gpu_hours", 4)
+    assert progress["gpu_hours"] == 1.0
     # Run again: the hours are used up, so nothing loads.
     monkeypatch.setattr(load, "load_model", _no_loading)
-    assert _run(spec, runs) == 0
-    assert "max_gpu_hours 1 is used up: 1.25 GPU-hours" in capsys.readouterr().out
+    assert _run(spec, runs) == 3
+    assert "max_gpu_hours 1 is used up: 1.00 GPU-hours" in capsys.readouterr().out
 
 
 def test_a_heartbeat_and_progress_file_follow_every_batch(
@@ -228,6 +244,13 @@ def test_a_heartbeat_and_progress_file_follow_every_batch(
     assert _run(spec, runs) == 0
     # Written as the session starts, then after every batch.
     assert [progress["ok"] for _, progress in seen] == [0, 2, 4, 6, 8]
+    assert [beat["batch"] for beat, _ in seen] == [
+        None,
+        "b000001",
+        "b000002",
+        "b000003",
+        "b000004",
+    ]
     assert all(beat["state"] == "running" for beat, _ in seen)
     beat = json.loads((folder / "heartbeat.json").read_text())
     progress = json.loads((folder / "progress.json").read_text())
@@ -268,7 +291,7 @@ def test_the_runs_dir_comes_from_pushlab_runs_dir_without_the_option(
 ) -> None:
     monkeypatch.setenv("PUSHLAB_RUNS_DIR", str(tmp_path / "elsewhere"))
     assert folder_module.default_runs_dir() == tmp_path / "elsewhere"
-    assert main(["run", str(tiny_spec()), "--limit", "2"]) == 0
+    assert main(["run", str(tiny_spec()), "--limit", "2"]) == 3
     assert len(read_results(tmp_path / "elsewhere" / NAME)) == 2
     monkeypatch.delenv("PUSHLAB_RUNS_DIR")
     assert folder_module.default_runs_dir() == Path("/workspace/runs")
@@ -300,3 +323,16 @@ def test_refusals_come_before_the_model_loads(
     assert _run(tiny_spec(conditions, **settings), tmp_path / "runs") == 1
     assert problem in capsys.readouterr().err
     assert not (tmp_path / "runs").exists()
+
+
+def test_expand_s_warnings_are_shown_and_the_run_goes_on(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    late = "conditions:\n  - label: late\n    segments:\n"
+    late += "      - {unit: tiny-vl:L2:N100, alpha: 1.0, start: 50}\n"
+    assert _run(tiny_spec(late), tmp_path / "runs") == 0
+    err = capsys.readouterr().err
+    assert "pushlab run: warning: condition 'late': segments[0]" in err
+    assert "never pushes" in err

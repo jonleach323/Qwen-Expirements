@@ -15,6 +15,8 @@ import torch
 from pushlab.cli import main
 from pushlab.engine import generate as generate_module
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
+from pushlab.runs.estimate import duration
+from pushlab.runs.folder import locked, read_index
 
 NAME = "tiny-pulses"
 
@@ -50,6 +52,7 @@ def test_help_lists_the_options(
     if command == "run":
         for option in ("--dry-run", "--limit", "--retry-failed", "--overwrite-version"):
             assert option in help_text
+        assert "Exit status: 0 when it finished" in help_text
 
 
 @pytest.mark.parametrize("command", ["run", "status"])
@@ -85,35 +88,36 @@ def test_status_part_way(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "4") == 0
+    assert _run(spec, runs, "--limit", "4") == 3
     status = _status(spec, runs, capsys)
     assert status["experiment"] == f"{NAME}, version 1, in {runs / NAME}"
     assert status["runner"].startswith("not running; its last session ended at ")
     assert status["runs"] == "10: 4 ok, 0 failed, 6 pending"
     assert status["batches"] == "2 saved"
-    assert status["speed"].endswith("reply tokens a second, measured over 2 batches")
-    assert status["gpu-hours"].endswith("used of max_gpu_hours 1")
-    assert status["time left"].startswith("about ")
-    assert status["time left"].endswith("for 6 runs at that speed")
+    entries = read_index(runs / NAME)
+    tokens = sum(e["reply_tokens"] for e in entries)
+    seconds = sum(e["generate_seconds"] for e in entries)
+    rate = tokens / seconds
+    assert (
+        status["speed"] == f"{rate:.3g} reply tokens a second, measured over 2 batches"
+    )
+    used = sum(e["seconds"] for e in entries) / 3600
+    assert status["gpu-hours"] == f"{used:.2f} used of max_gpu_hours 1"
+    # Each of the 6 runs left takes a row's share of the time so far.
+    left = duration(6 * seconds / 4)
+    assert status["time left"] == f"about {left} for 6 runs at that speed"
 
 
 def test_status_names_failed_runs_and_a_changed_file(
     tiny_spec: Callable[..., Path],
     costs: Path,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    failing_generate: Callable[..., None],
 ) -> None:
     spec, runs = tiny_spec(batch_size="1"), tmp_path / "runs"
     third = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[2]
-    real = generate_module.generate
-
-    def failing(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
-        if prompts == [third] and schedules and schedules[0].segments:
-            raise RuntimeError("boom")
-        return real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
-
-    monkeypatch.setattr(generate_module, "generate", failing)
+    failing_generate(third, RuntimeError("boom"))
     assert _run(spec, runs) == 2
     status = _status(spec, runs, capsys)
     assert status["runs"] == "10: 9 ok, 1 failed, 0 pending"
@@ -133,11 +137,16 @@ def test_status_tells_a_live_runner_from_one_that_died(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "2") == 0
+    assert _run(spec, runs, "--limit", "2") == 3
     beat = runs / NAME / "heartbeat.json"
     record = json.loads(beat.read_text())
     beat.write_text(json.dumps(record | {"state": "running", "pid": 1}))  # init lives
-    assert _status(spec, runs, capsys)["runner"].startswith("running, pid 1;")
+    with locked(runs / NAME):  # as the runner holds it
+        assert _status(spec, runs, capsys)["runner"].startswith("running, pid 1;")
+    # pid 1 lives, but no runner holds the lock: that pid is another program.
+    assert _status(spec, runs, capsys)["runner"].startswith(
+        "stopped without finishing: no process holds the folder's lock, so pid 1"
+    )
     dead = subprocess.run(
         [sys.executable, "-c", "import os; print(os.getpid())"],
         capture_output=True,
@@ -157,7 +166,7 @@ def test_status_of_a_folder_where_no_session_ran_yet(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "1") == 0  # its first batch is larger
+    assert _run(spec, runs, "--limit", "1") == 3  # its first batch is larger
     status = _status(spec, runs, capsys)
     assert status["runner"] == "not running: no session has started"
     assert status["runs"] == "10: 0 ok, 0 failed, 10 pending"
@@ -171,7 +180,7 @@ def test_status_of_a_runner_on_another_machine(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "2") == 0
+    assert _run(spec, runs, "--limit", "2") == 3
     beat = runs / NAME / "heartbeat.json"
     record = json.loads(beat.read_text()) | {"state": "running", "host": "pod-2"}
     beat.write_text(json.dumps(record))
@@ -212,3 +221,17 @@ def test_status_refuses_what_it_cannot_read(
     assert "is not a runner folder: it holds notes.txt" in capsys.readouterr().err
     assert main(["status", str(tmp_path / "missing.yaml")]) == 1
     assert "pushlab status: " in capsys.readouterr().err
+
+
+def test_status_still_reports_when_the_file_no_longer_expands(
+    tiny_spec: Callable[..., Path],
+    costs: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "2") == 3
+    broken = tiny_spec(prompts=str(tmp_path / "gone.jsonl"))  # its prompts went
+    status = _status(broken, runs, capsys)
+    assert status["runs"] == "10: 2 ok, 0 failed, 8 pending"
+    assert status["note"].startswith("the experiment file changed since version 1")

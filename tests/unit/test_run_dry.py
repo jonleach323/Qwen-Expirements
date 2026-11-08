@@ -65,12 +65,12 @@ def test_a_dry_run_prints_the_counts_and_estimates_and_runs_nothing(
     assert settings["speed"] == f"0.01 reply tokens a second, from {costs}"
     # 40 tokens at 0.01 a second: 4,000 s, more than the cap of an hour.
     assert settings["gpu-hours"] == (
-        "at most 1.11, more than max_gpu_hours 1: it would stop after about 90% "
+        "about 1.11, more than max_gpu_hours 1: it would stop after about 90% "
         "of the runs"
     )
     assert (
         settings["cost"]
-        == "at most $0.38 to $0.82, on an RTX 4090 at $0.34 to $0.74 an hour"
+        == "about $0.38 to $0.82, on an RTX 4090 at $0.34 to $0.74 an hour"
     )
     assert "This was a dry run: nothing was loaded, run or written." in out
     assert not runs.exists()
@@ -84,7 +84,7 @@ def test_a_dry_run_counts_only_what_is_left(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "4") == 0
+    assert _run(spec, runs, "--limit", "4") == 3
     before = {p: p.read_bytes() for p in runs.rglob("*") if p.is_file()}
     capsys.readouterr()
     _nothing_runs(monkeypatch)
@@ -203,3 +203,42 @@ def test_a_broken_costs_file_stops_a_dry_run(
     monkeypatch.setattr(estimate, "COSTS_FILE", broken)
     assert _run(tiny_spec(), tmp_path / "runs", "--dry-run") == 1
     assert f"pushlab run: {broken} needs dollars_per_hour" in capsys.readouterr().err
+
+
+def test_a_dry_run_without_the_model_downloaded_says_what_it_could_not_check(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _nothing_runs(monkeypatch)
+    spec = tiny_spec(
+        "conditions:\n  - {label: none, segments: []}\n", model="qwen3.5-4b"
+    )
+    assert _run(spec, tmp_path / "runs", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "note: the model is not downloaded here: its download and" in out
+    assert "note: without the model's tokenizer, batches are counted one prompt" in out
+    assert (
+        _settings(out)["speed"] == "44 reply tokens a second, from configs/costs.yaml"
+    )
+
+
+def test_a_dry_run_says_when_max_gpu_hours_is_used_up(
+    tiny_spec: Callable[..., Path],
+    costs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from pushlab.runs import runner
+
+    ticks = iter(range(0, 100_000, 4000))  # each batch takes more than the hour
+    monkeypatch.setattr(runner, "_clock", lambda: float(next(ticks)))
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs) == 3
+    capsys.readouterr()
+    assert _run(spec, runs, "--dry-run") == 0
+    assert "note: max_gpu_hours is used up: the run would stop at once." in (
+        capsys.readouterr().out
+    )

@@ -1,16 +1,20 @@
-"""One session of `pushlab run`: the model loaded once, then batch after batch.
+"""One session of `pushlab run`: the model loaded once, then call after call.
 
-After each batch the session saves its shard and marks it in the index
+After each call the session saves its shard and marks it in the index
 (pushlab.runs.folder), then rewrites the heartbeat and progress files, so
-pushlab status always has a fresh account. It stops after the batch that
-brings the version's GPU time to max_gpu_hours, after the batches --limit
-allows, or at Ctrl-C, which loses only the batch that was running; then it
+pushlab status always has a fresh account. It stops after the call that
+brings the version's GPU time to max_gpu_hours, after the calls --limit
+allows, or at Ctrl-C, which loses only the call that was running; then it
 saves the speed it measured and the manifest, with this session in it.
+Each session has an ID, which its index lines and its manifest entry
+carry, with the code and library versions it ran.
 """
 
 import os
 import socket
 import sys
+import time
+import uuid
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,22 +22,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pushlab.runs import folder, plan
-from pushlab.runs.batch import run_batch, session_inputs
+from pushlab.runs import estimate, folder, plan
+from pushlab.runs.batch import Inputs, Outcome, run_call, session_inputs
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion
-from pushlab.runs.plan import Batch
+from pushlab.runs.plan import Call
 from pushlab.runs.spec import ExperimentSpec
-from pushlab.store.records import MANIFEST_FILE, RunRecord
+from pushlab.store.records import MANIFEST_FILE, check_manifest, write_manifest
 
-EXIT_FAILED, EXIT_INTERRUPTED = 2, 130
+EXIT_FAILED, EXIT_STOPPED, EXIT_INTERRUPTED = 2, 3, 130
 GO_ON = (
-    "To go on, raise max_gpu_hours in the experiment file and run it with "
-    "--overwrite-version, which keeps the saved runs."
+    "To go on, raise max_gpu_hours in the experiment file through a pull "
+    "request, then run it with --overwrite-version, which keeps the saved runs."
 )
+# What a manifest's session records about the code and libraries it ran.
+SESSION_ENVIRONMENT = ("code_commit", "code_dirty", "lockfile_sha256", "gpu")
+SESSION_ENVIRONMENT += ("cuda", "driver", "torch", "transformers", "packages")
 
 
-def _refuse(message: str) -> int:
+def refuse(message: str) -> int:
+    """Print why `pushlab run` refuses, and return its exit status, 1."""
     print(f"pushlab run: {message}", file=sys.stderr)
     return 1
 
@@ -59,14 +67,16 @@ class Tally:
     runs: int = 0
     ok: int = 0
     failed: int = 0
-    batches: int = 0
+    calls: int = 0
     seconds: float = 0.0
-    generate_seconds: float = 0.0  # of batches that ran ok, for the speed
+    rows: int = 0  # rows of calls that ran ok, for the speed
+    generate_seconds: float = 0.0
     reply_tokens: int = 0
+    load_seconds: float | None = None
 
 
 class Session:
-    """One `pushlab run` that runs batches: the model, the files, the counts."""
+    """One `pushlab run` that runs calls: the model, the files, the counts."""
 
     def __init__(
         self,
@@ -85,29 +95,39 @@ class Session:
         self.states = {run_id: state["status"] for run_id, state in states.items()}
         self.used, self.left = used, left
         self.tally = Tally()
+        self.id = uuid.uuid4().hex
         self.started_at = _now()
         self.state = "running"
-        self.batch: str | None = None
+        self.call: str | None = None
+        self.environment: dict[str, Any] | None = None
+        self.loaded: Any = None
+        self.device = "cpu"
+
+    def _rate(self) -> float | None:
+        tally = self.tally
+        return (
+            tally.reply_tokens / tally.generate_seconds
+            if tally.generate_seconds
+            else None
+        )
 
     def _beat(self) -> None:
         """Rewrite the heartbeat and the progress file."""
         counts = Counter(self.states.values())
         total = len(self.expansion.runs)
-        rate = None
-        if self.tally.generate_seconds:
-            rate = self.tally.reply_tokens / self.tally.generate_seconds
-        hours_left = None
-        if rate and self.tally.ok:
-            tokens_per_run = self.tally.reply_tokens / self.tally.ok
-            hours_left = self.left * tokens_per_run / rate / 3600
+        rate, hours_left = self._rate(), None
+        if rate and self.tally.rows:
+            per_row = self.tally.reply_tokens / self.tally.rows
+            hours_left = self.left * per_row / rate / 3600
         now = _now()
         folder.write_json(
             self.path / folder.HEARTBEAT_FILE,
             {
                 "pid": os.getpid(),
                 "host": socket.gethostname(),
+                "session": self.id,
                 "state": self.state,
-                "batch": self.batch,
+                "batch": self.call,
                 "session_started_at": self.started_at,
                 "updated_at": now,
             },
@@ -123,7 +143,7 @@ class Session:
                 "failed": counts["failed"],
                 "pending": total - len(self.states),
                 "session_runs": self.tally.runs,
-                "session_batches": self.tally.batches,
+                "session_batches": self.tally.calls,
                 "gpu_hours": (self.used + self.tally.seconds) / 3600,
                 "max_gpu_hours": self.spec.max_gpu_hours,
                 "reply_tokens_per_second": rate,
@@ -132,8 +152,8 @@ class Session:
             },
         )
 
-    def run(self, chosen: list[Batch], limit: int | None) -> int:
-        """Load the model, run the chosen batches, and say how it ended."""
+    def run(self, chosen: list[Call], limit: int | None) -> int:
+        """Load the model, run the chosen calls, and say how it ended."""
         import torch
 
         from pushlab.engine import generate as generate_module  # looked up per call
@@ -143,132 +163,143 @@ class Session:
         spec = self.spec
         last = self.clock()
         self._beat()
-        saved = len(self.states)
         print(
             f"{spec.name}, version {self.version}: {runs_text(self.left)} to run, "
-            f"{saved} of {len(self.expansion.runs)} saved."
+            f"{len(self.states)} of {len(self.expansion.runs)} saved."
         )
-        device = load.default_device()
-        dtype_name = spec.decoding["dtype"]
-        where = "GPU" if device == "cuda" else "CPU"
-        print(f"Loading {spec.model} in {dtype_name} on the {where}...")
-        loaded = load.load_model(spec.model, getattr(torch, dtype_name), device=device)
-        problem = session_inputs(spec, loaded.revision, self.identity, chosen)
-        if isinstance(problem, str):
-            self.state = "stopped: the inputs changed"
-            self._beat()
-            return _refuse(problem)
-        norms, texts = problem
-        environment = environment_info(device)
-        self._manifest(loaded, device, environment)
-        ending = "finished"
+        ending, current = "finished", chosen[0].key
         try:
-            current = chosen[0].key
-            for number, batch in enumerate(chosen):
-                current = batch.key
-                records, error, generated, tokens = run_batch(
-                    batch, spec, loaded, norms, texts, generate_module.generate
-                )
-                name = folder.next_shard_name(self.path, self.version, batch.key)
-                folder.write_shard(self.path, name, records)
+            device = self.device = load.default_device()
+            dtype = spec.decoding["dtype"]
+            where = "GPU" if device == "cuda" else "CPU"
+            print(f"Loading {spec.model} in {dtype} on the {where}...")
+            loading = time.perf_counter()
+            self.loaded = load.load_model(
+                spec.model, getattr(torch, dtype), device=device
+            )
+            self.tally.load_seconds = time.perf_counter() - loading
+            inputs = session_inputs(spec, self.loaded.revision, self.identity, chosen)
+            self.environment = environment_info(device)
+            self._warn_if_code_changed()
+            self._manifest()
+            for number, call in enumerate(chosen):
+                current = call.key
+                name = folder.next_shard_name(self.path, self.version, call.key)
+                outcome = self._run_call(call, name, inputs, generate_module.generate)
+                folder.write_shard(self.path, name, outcome.records)
                 now = self.clock()
                 seconds, last = now - last, now
                 folder.append_index(
-                    self.path,
-                    self._entry(
-                        name, batch, records, error, seconds, generated, tokens
-                    ),
+                    self.path, self._entry(name, call, outcome, seconds)
                 )
-                self._count(batch, records, error, seconds, generated, tokens)
-                if (self.used + self.tally.seconds) >= spec.max_gpu_hours * 3600:
-                    if self.left:
-                        ending = "stopped at max_gpu_hours"
-                        break
+                self._count(call, outcome, seconds)
+                if (
+                    self.left
+                    and self.used + self.tally.seconds >= spec.max_gpu_hours * 3600
+                ):
+                    ending = "stopped at max_gpu_hours"
+                    break
                 if number == len(chosen) - 1 and self.left:
                     ending = "stopped at --limit"
         except KeyboardInterrupt:
             ending = "stopped by Ctrl-C"
+        except ValueError as error:  # the inputs changed while the model loaded
+            ending = f"stopped: {error}"
         except OSError as error:  # the disk, not a run: stop, and keep what is saved
             ending = f"stopped: cannot save {current}: {error}"
-        return self._finish(ending, limit, loaded, device, environment)
+        return self._finish(ending, limit)
 
-    def _entry(
-        self,
-        name: str,
-        batch: Batch,
-        records: list[RunRecord],
-        error: str | None,
-        seconds: float,
-        generated: float,
-        tokens: int,
-    ) -> dict[str, Any]:
+    def _run_call(
+        self, call: Call, name: str, inputs: Inputs, generate: Any
+    ) -> Outcome:
+        stem = name.removesuffix(".parquet")
+        return run_call(call, stem, self.spec, self.loaded, inputs, generate)
+
+    def _entry(self, name: str, call: Call, outcome: Outcome, seconds: float) -> dict:
         return {
             "version": self.version,
+            "session": self.id,
             "shard": name,
-            "batch": batch.key,
-            "runs": {record.run_id: record.status for record in records},
-            "error": error,
+            "batch": call.key,
+            "runs": {record.run_id: record.status for record in outcome.records},
+            "rows": len(call.runs),
+            "error": outcome.error,
             "seconds": seconds,
-            "generate_seconds": generated,
-            "reply_tokens": tokens,
+            "generate_seconds": outcome.seconds,
+            "reply_tokens": outcome.reply_tokens,
             "saved_at": _now(),
         }
 
-    def _count(
-        self,
-        batch: Batch,
-        records: list[RunRecord],
-        error: str | None,
-        seconds: float,
-        generated: float,
-        tokens: int,
-    ) -> None:
-        """Count a saved batch, print its line and rewrite the progress files."""
-        tally = self.tally
+    def _count(self, call: Call, outcome: Outcome, seconds: float) -> None:
+        """Count a saved call, print its line and rewrite the progress files."""
+        tally, records = self.tally, outcome.records
         ok = sum(record.status == "ok" for record in records)
         tally.runs += len(records)
         tally.ok += ok
         tally.failed += len(records) - ok
-        tally.batches += 1
+        tally.calls += 1
         tally.seconds += seconds
-        if error is None:
-            tally.generate_seconds += generated
-            tally.reply_tokens += tokens
+        if outcome.error is None:
+            tally.rows += len(call.runs)
+            tally.generate_seconds += outcome.seconds
+            tally.reply_tokens += outcome.reply_tokens
         self.states |= {record.run_id: record.status for record in records}
         self.left -= len(records)
-        self.batch = batch.key
-        saved = len(self.states)
-        total = len(self.expansion.runs)
+        self.call = call.key
         line = (
-            f"{batch.key}: {ok} ok, {len(records) - ok} failed, {tokens:,} reply "
-            f"tokens in {generated:.1f} s; {saved:,} of {total:,} runs saved"
+            f"{call.key}: {ok} ok, {len(records) - ok} failed, "
+            f"{outcome.reply_tokens:,} reply tokens in {outcome.seconds:.1f} s; "
+            f"{len(self.states):,} of {len(self.expansion.runs):,} runs saved"
         )
-        print(line + (f" ({error})" if error else ""), flush=True)
+        print(line + (f" ({outcome.error})" if outcome.error else ""), flush=True)
         self._beat()
 
-    def _manifest(self, loaded: Any, device: str, environment: dict[str, Any]) -> None:
-        """Rewrite manifest.json, with this session last in its sessions."""
-        from pushlab.store.records import check_manifest, write_manifest
-
+    def _earlier_sessions(self) -> list[dict[str, Any]]:
         earlier = folder.read_json(self.path / MANIFEST_FILE) or {}
-        sessions = [
-            s for s in earlier.get("sessions", []) if s["started_at"] != self.started_at
-        ]
-        counts = Counter(self.states.values())
+        return [s for s in earlier.get("sessions", []) if s.get("id") != self.id]
+
+    def _warn_if_code_changed(self) -> None:
+        """Say when this version's runs so far ran other code or libraries."""
+        assert self.environment is not None
+        mine = self.version
+        for session in self._earlier_sessions():
+            if session.get("version") != mine or not session.get("runs"):
+                continue
+            changed = [
+                key
+                for key in ("code_commit", "lockfile_sha256", "torch", "transformers")
+                if session.get(key) != self.environment.get(key)
+            ]
+            if changed:
+                print(
+                    f"pushlab run: warning: version {mine}'s runs so far ran with "
+                    f"another {', '.join(changed)}; this session's runs are made "
+                    "with the code and libraries as they are now",
+                    file=sys.stderr,
+                )
+                return
+
+    def _manifest(self) -> None:
+        """Rewrite manifest.json, with this session last in its sessions."""
+        environment, loaded = self.environment, self.loaded
+        if environment is None or loaded is None:
+            return  # stopped before the model loaded: nothing ran to record
+        sessions = self._earlier_sessions()
         sessions.append(
-            {
+            {key: environment.get(key) for key in SESSION_ENVIRONMENT}
+            | {
+                "id": self.id,
                 "started_at": self.started_at,
                 "finished_at": _now(),
                 "state": self.state,
                 "version": self.version,
-                "code_commit": environment["code_commit"],
-                "code_dirty": environment["code_dirty"],
-                "gpu": environment["gpu"],
-                "batches": self.tally.batches,
+                "batches": self.tally.calls,
                 "runs": self.tally.runs,
                 "gpu_hours": self.tally.seconds / 3600,
             }
         )
+        counts = Counter(self.states.values())
+        total = len(self.expansion.runs)
         info = environment | {
             k: self.identity.get(k) for k in ("spec_file", *plan.IDENTITY_KEYS)
         }
@@ -277,51 +308,62 @@ class Session:
             "version": self.version,
             "model_id": loaded.spec.hf_id,
             "model_revision": loaded.revision,
-            "device": device,
+            "device": self.device,
             "dtype": self.spec.decoding["dtype"],
-            "started_at": sessions[0]["started_at"],
+            "started_at": min(s["started_at"] for s in sessions),
             "finished_at": sessions[-1]["finished_at"],
-            "run_count": len(self.expansion.runs),
+            "run_count": total,
             "runs_by_status": {
                 "ok": counts["ok"],
                 "failed": counts["failed"],
-                "pending": len(self.expansion.runs) - len(self.states),
+                "pending": total - len(self.states),
             },
             "sessions": sessions,
         }
         check_manifest(info)
         write_manifest(self.path, info, overwrite=True)
 
-    def _finish(
-        self,
-        ending: str,
-        limit: int | None,
-        loaded: Any,
-        device: str,
-        environment: dict[str, Any],
-    ) -> int:
+    def _save_speed(self) -> None:
+        tally, spec = self.tally, self.spec
+        rate = self._rate()
+        if not rate or self.environment is None:
+            return
+        estimate.save_speed(
+            self.path.parent,
+            f"{spec.model}/{spec.decoding['dtype']}",
+            {
+                "reply_tokens_per_second": rate,
+                "reply_tokens": tally.reply_tokens,
+                "seconds": tally.generate_seconds,
+                "load_seconds": tally.load_seconds,
+                "rows_per_batch": tally.rows / tally.calls,
+                "batch_size": spec.batch_size,
+                "gpu": self.environment["gpu"],
+                "experiment": spec.name,
+                "measured_at": _now(),
+            },
+        )
+
+    def _finish(self, ending: str, limit: int | None) -> int:
         """Save the speed and the files, and say how the session ended."""
         spec, tally = self.spec, self.tally
         self.state = ending
-        if tally.generate_seconds and tally.reply_tokens:
-            folder.save_speed(
-                self.path.parent,
-                f"{spec.model}/{spec.decoding['dtype']}",
-                {
-                    "reply_tokens_per_second": tally.reply_tokens
-                    / tally.generate_seconds,
-                    "reply_tokens": tally.reply_tokens,
-                    "seconds": tally.generate_seconds,
-                    "batch_size": spec.batch_size,
-                    "gpu": environment["gpu"],
-                    "experiment": spec.name,
-                    "measured_at": _now(),
-                },
-            )
-        self._beat()
-        self._manifest(loaded, device, environment)
+        for step in (self._save_speed, self._beat, self._manifest):
+            try:
+                step()
+            except (OSError, ValueError) as error:  # say so, and keep what is saved
+                print(f"pushlab run: warning: {error}", file=sys.stderr)
         counts = Counter(self.states.values())
         total = len(self.expansion.runs)
+        failed = counts["failed"]
+        if ending == "stopped by Ctrl-C":
+            print(
+                "Stopped by Ctrl-C: the batch that was running is not saved. Run "
+                "the same command to go on."
+            )
+            return EXIT_INTERRUPTED
+        if ending.startswith("stopped:"):
+            return refuse(ending.removeprefix("stopped: "))
         if ending == "stopped at max_gpu_hours":
             hours = (self.used + tally.seconds) / 3600
             print(
@@ -333,27 +375,23 @@ class Session:
                 f"Stopped at --limit {limit}: {runs_text(tally.runs)} this time; "
                 f"{runs_text(self.left)} left."
             )
-        elif ending == "stopped by Ctrl-C":
-            print(
-                "Stopped by Ctrl-C: the batch that was running is not saved. Run "
-                "the same command to go on."
-            )
-            return EXIT_INTERRUPTED
-        elif ending.startswith("stopped:"):
-            return _refuse(ending.removeprefix("stopped: "))
         elif len(self.states) == total:
             print(
                 f"Done: all {total} runs are saved, {counts['ok']} ok and "
-                f"{counts['failed']} failed, in {self.path}."
+                f"{failed} failed, in {self.path}."
             )
         else:
-            print(f"Done: {runs_text(total - len(self.states))} are still to run.")
-        if counts["failed"]:
-            them = "it" if counts["failed"] == 1 else "them"
-            failed = (
-                "1 run failed"
-                if counts["failed"] == 1
-                else f"{counts['failed']} runs failed"
+            rest = total - len(self.states)
+            print(
+                f"Done: {runs_text(rest)} {'is' if rest == 1 else 'are'} still to run."
             )
-            print(f"{failed}; rerun {them} with --retry-failed.")
-        return EXIT_FAILED if tally.failed else 0
+        if failed and ending != "stopped at max_gpu_hours":
+            what = (
+                "1 run failed; rerun it"
+                if failed == 1
+                else f"{failed} runs failed; rerun them"
+            )
+            print(f"{what} with --retry-failed.")
+        if tally.failed:
+            return EXIT_FAILED
+        return EXIT_STOPPED if ending.startswith("stopped at") else 0

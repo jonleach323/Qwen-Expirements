@@ -8,6 +8,7 @@ them, the GPU-hours used of max_gpu_hours and the time left at that speed
 takes no lock and writes nothing, so it works while a run is going.
 """
 
+import os
 import socket
 import sys
 from collections import Counter
@@ -16,7 +17,7 @@ from typing import Any
 
 from pushlab.runs import folder
 from pushlab.runs.estimate import duration, exact, read_costs, speed_for
-from pushlab.runs.spec import read_spec
+from pushlab.runs.spec import ExperimentSpec, read_spec
 
 # The most failed runs it names; the count says how many there are.
 FAILED_SHOWN = 5
@@ -27,8 +28,25 @@ def _refuse(message: str) -> int:
     return 1
 
 
+def pid_alive(pid: int) -> bool:
+    """Whether a process with this ID runs on this machine.
+
+    Example:
+        >>> pid_alive(os.getpid())
+        True
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # someone else's, but it is there
+        return True
+    return True
+
+
 def _runner(path: Path, beat: dict[str, Any] | None) -> str:
-    """Whether a runner works on the folder, from its heartbeat."""
+    """Whether a runner works on the folder: its heartbeat, its process and
+    the folder's lock must all say so."""
     if beat is None:
         return "not running: no session has started"
     if beat.get("state") != "running":
@@ -37,11 +55,33 @@ def _runner(path: Path, beat: dict[str, Any] | None) -> str:
     pid, host = beat["pid"], beat.get("host")
     if host != socket.gethostname():
         return f"running on {host}, pid {pid}, as of {beat['updated_at']}"
-    if folder.pid_alive(pid):
-        return f"running, pid {pid}; the last batch was saved at {beat['updated_at']}"
-    return (
-        f"stopped without finishing: pid {pid} is gone; run the same command to go on"
-    )
+    go_on = "run the same command to go on"
+    if not pid_alive(pid):
+        return f"stopped without finishing: pid {pid} is gone; {go_on}"
+    if not folder.lock_held(path):
+        return (
+            f"stopped without finishing: no process holds the folder's lock, so "
+            f"pid {pid} is another program's now; {go_on}"
+        )
+    return f"running, pid {pid}; the last batch was saved at {beat['updated_at']}"
+
+
+def _changed(spec: ExperimentSpec, identity: dict[str, Any]) -> list[str]:
+    """The inputs that differ from those the folder's version was made from,
+    of the ones status can check without the model's download."""
+    from pushlab.runs.expand import expand
+    from pushlab.runs.plan import differences
+
+    current = {"spec_sha256": spec.sha256}
+    try:
+        expansion = expand(spec)
+    except ValueError:  # pushlab run would say what is wrong with it
+        return differences(identity, current)
+    current |= {
+        "prompts_sha256": expansion.prompts_sha256,
+        "known_sha256": expansion.known_sha256,
+    }
+    return differences(identity, current)
 
 
 def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
@@ -53,11 +93,11 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
         ... )  # doctest: +SKIP
         [('experiment', 's2-pulse-lengths, version 1, in /workspace/runs/...'), ...]
     """
-    from pushlab.runs.plan import folder_problem
+    from pushlab.runs.plan import folder_problem, runs_dir_problem
 
     spec = read_spec(spec_path)
     path = runs_dir / spec.name
-    if problem := folder_problem(path, spec.name):
+    if problem := runs_dir_problem(runs_dir) or folder_problem(path, spec.name):
         raise ValueError(problem)
     identity = folder.read_identity(path)
     costs = read_costs()
@@ -103,19 +143,17 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
     used = folder.used_seconds(entries, version) / 3600
     if tokens and seconds:
         rate = tokens / seconds
+        over = "1 batch" if len(good) == 1 else f"{len(good)} batches"
         lines.append(
-            (
-                "speed",
-                f"{rate:.3g} reply tokens a second, measured over {len(good)} batches",
-            )
+            ("speed", f"{rate:.3g} reply tokens a second, measured over {over}")
         )
     cap = exact(identity.get("max_gpu_hours", spec.max_gpu_hours))
     lines.append(("gpu-hours", f"{used:.2f} used of max_gpu_hours {cap}"))
     if not pending:
         lines.append(("time left", "none: every run is saved"))
     elif tokens and seconds:
-        runs_done = sum(len(e["runs"]) for e in good)
-        left = pending * tokens / runs_done / (tokens / seconds)
+        rows = sum(e.get("rows", len(e["runs"])) for e in good)
+        left = pending * seconds / rows  # each run takes a row's share
         lines.append(
             ("time left", f"about {duration(left)} for {pending} runs at that speed")
         )
@@ -127,12 +165,12 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
         lines.append(("failed", f"{run_id}: {states[run_id]['error']}"))
     if len(failed) > FAILED_SHOWN:
         lines.append(("failed", f"and {len(failed) - FAILED_SHOWN} more"))
-    if identity["spec_sha256"] != spec.sha256:
+    for name in _changed(spec, identity):
         lines.append(
             (
                 "note",
-                f"the experiment file changed since version {version}: pushlab run "
-                "will refuse it without --overwrite-version",
+                f"the {name} changed since version {version}: pushlab run will "
+                "refuse it without --overwrite-version",
             )
         )
     return lines

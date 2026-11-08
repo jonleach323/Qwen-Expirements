@@ -96,7 +96,7 @@ def test_another_experiment_s_folder_is_refused_and_left_alone(
     tiny_spec: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     runs = tmp_path / "runs"
-    assert _run(tiny_spec(name="other"), runs, "--limit", "2") == 0
+    assert _run(tiny_spec(name="other"), runs, "--limit", "2") == 3
     # Its folder renamed to the name of this experiment's.
     (runs / "other").rename(runs / NAME)
     before = {p: p.read_bytes() for p in (runs / NAME).rglob("*") if p.is_file()}
@@ -123,7 +123,7 @@ def test_a_torn_last_line_of_the_index_is_ignored_then_cut(
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
     folder = runs / NAME
-    assert _run(spec, runs, "--limit", "4") == 0
+    assert _run(spec, runs, "--limit", "4") == 3
     index = folder / "index.jsonl"
     whole = index.read_bytes()
     index.write_bytes(whole + b'{"version": 1, "shard": "v1-b0')  # killed mid-line
@@ -145,7 +145,7 @@ def test_hidden_leftovers_of_a_killed_write_are_removed(
 ) -> None:
     spec, runs = tiny_spec(), tmp_path / "runs"
     folder = runs / NAME
-    assert _run(spec, runs, "--limit", "2") == 0
+    assert _run(spec, runs, "--limit", "2") == 3
     leftover = folder / "shards" / ".v1-b000002-1.parquet.0123.tmp"
     leftover.write_bytes(b"half a shard")
     assert _run(spec, runs) == 0
@@ -212,7 +212,9 @@ def test_a_file_where_the_folder_should_be_is_refused(
     assert f"{tmp_path / 'runs' / NAME} is not a folder" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("name", ["folder", "plan", "estimate", "session"])
+@pytest.mark.parametrize(
+    "name", ["folder", "plan", "versions", "estimate", "session", "status_command"]
+)
 def test_doctests(name: str) -> None:
     import doctest
     import importlib
@@ -220,3 +222,53 @@ def test_doctests(name: str) -> None:
     result = doctest.testmod(importlib.import_module(f"pushlab.runs.{name}"))
     assert result.attempted > 0
     assert result.failed == 0
+
+
+@pytest.mark.parametrize("command", [["run"], ["run", "--dry-run"], ["status"]])
+def test_a_runs_dir_that_is_a_run_folder_or_a_file_is_refused(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    s1 = tmp_path / "s0-baseline"
+    write_runs([_record(1)], s1)  # S0's reference run, say
+    spec = str(tiny_spec())
+    assert main([command[0], spec, *command[1:], "--runs-dir", str(s1)]) == 1
+    err = capsys.readouterr().err
+    assert f"{s1} is a run folder (it holds runs.parquet)" in err
+    assert sorted(p.name for p in s1.iterdir()) == ["runs.parquet"]
+    file = tmp_path / "a-file"
+    file.write_text("x")
+    assert main([command[0], spec, *command[1:], "--runs-dir", str(file)]) == 1
+    assert (
+        f"--runs-dir must be a folder, but {file} is a file" in capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize("dry", [False, True])
+def test_broken_folder_files_are_refused_with_a_message_not_a_traceback(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    dry: bool,
+) -> None:
+    runs = tmp_path / "runs"
+    spec = tiny_spec()
+    assert _run(spec, runs, "--limit", "2") == 3
+    (runs / NAME / "experiment.json").write_text("{not json")
+    options = ["--dry-run"] if dry else []
+    assert _run(spec, runs, *options) == 1
+    assert "experiment.json is not valid JSON" in capsys.readouterr().err
+
+
+def test_a_crash_in_the_first_identity_write_leaves_a_folder_it_can_use(
+    tiny_spec: Callable[..., Path], tmp_path: Path
+) -> None:
+    folder = tmp_path / "runs" / NAME
+    folder.mkdir(parents=True)
+    leftover = folder / ".experiment.json.0123.tmp"  # killed while writing it
+    leftover.write_text('{"experi')
+    assert _run(tiny_spec(), tmp_path / "runs", "--limit", "2") == 3
+    assert not leftover.exists()
+    assert len(read_results(folder)) == 2

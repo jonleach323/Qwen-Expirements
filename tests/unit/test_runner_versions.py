@@ -47,23 +47,17 @@ def _no_loading(*args: object, **kwargs: object) -> None:
     raise AssertionError("the model must not load")
 
 
-def test_a_run_that_raises_is_saved_as_failed_and_retry_reruns_only_it(
+def test_a_run_that_raises_is_saved_as_failed_with_its_error(
     tiny_spec: Callable[..., Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    failing_generate: Callable[..., None],
 ) -> None:
     spec, runs = tiny_spec(batch_size="1"), tmp_path / "runs"
     folder = runs / NAME
     third = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[2]
-    real = generate_module.generate
-
-    def failing(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
-        if prompts == [third] and schedules and schedules[0].segments:
-            raise RuntimeError("boom")  # smoke-03's pulse
-        return real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
-
-    monkeypatch.setattr(generate_module, "generate", failing)
+    failing_generate(third, RuntimeError("boom"))  # smoke-03's pulse
     assert _run(spec, runs) == 2  # finished, with a failure
     out = capsys.readouterr().out
     assert "1 run failed; rerun it with --retry-failed" in out
@@ -76,7 +70,7 @@ def test_a_run_that_raises_is_saved_as_failed_and_retry_reruns_only_it(
     # A plain rerun leaves the failure alone.
     monkeypatch.setattr(load, "load_model", _no_loading)
     assert _run(spec, runs) == 0
-    assert "1 failed; rerun them with --retry-failed" in capsys.readouterr().out
+    assert "1 failed; rerun it with --retry-failed" in capsys.readouterr().out
 
 
 def test_retry_failed_reruns_only_the_failed_runs(
@@ -84,18 +78,13 @@ def test_retry_failed_reruns_only_the_failed_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    failing_generate: Callable[..., None],
 ) -> None:
     spec, runs = tiny_spec(batch_size="1"), tmp_path / "runs"
     folder = runs / NAME
     third = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[2]
     real = generate_module.generate
-
-    def failing(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
-        if prompts == [third] and schedules and schedules[0].segments:
-            raise RuntimeError("boom")
-        return real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
-
-    monkeypatch.setattr(generate_module, "generate", failing)
+    failing_generate(third, RuntimeError("boom"))
     assert _run(spec, runs) == 2
     before = {run.run_id: run for run in read_results(folder)}
     monkeypatch.setattr(generate_module, "generate", real)
@@ -104,7 +93,9 @@ def test_retry_failed_reruns_only_the_failed_runs(
     assert sizes == [1]  # that run alone, in its planned batch
     after = {run.run_id: run for run in read_results(folder)}
     assert {run.status for run in after.values()} == {"ok"}
-    assert after[f"{NAME}-000006"].batch_key == before[f"{NAME}-000006"].batch_key
+    # Its planned batch again, as a second attempt: the same row.
+    assert before[f"{NAME}-000006"].batch_key == "v1-b000006-1:0"
+    assert after[f"{NAME}-000006"].batch_key == "v1-b000006-2:0"
     assert {k: v for k, v in after.items() if k != f"{NAME}-000006"} == {
         k: v for k, v in before.items() if k != f"{NAME}-000006"
     }
@@ -121,7 +112,7 @@ def test_a_changed_experiment_file_is_refused_unless_a_new_version_is_asked_for(
 ) -> None:
     runs = tmp_path / "runs"
     folder = runs / NAME
-    assert _run(tiny_spec(), runs, "--limit", "4") == 0
+    assert _run(tiny_spec(), runs, "--limit", "4") == 3
     saved = {run.run_id: run for run in read_results(folder)}
     changed = tiny_spec(max_gpu_hours="2")  # the same file, edited
     real_load = load.load_model
@@ -146,7 +137,7 @@ def test_a_new_version_redoes_runs_whose_record_changed(
     tiny_spec: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runs = tmp_path / "runs"
-    assert _run(tiny_spec(), runs, "--limit", "4") == 0
+    assert _run(tiny_spec(), runs, "--limit", "4") == 3
     sizes = _sizes(monkeypatch)
     longer = tiny_spec(max_new_tokens="5")  # every run's decoding changes
     assert _run(longer, runs, "--overwrite-version") == 0
@@ -164,7 +155,7 @@ def test_a_changed_prompt_set_or_calibration_is_refused(
     prompts = tmp_path / "prompts.jsonl"
     prompts.write_bytes((PROMPTS_DIR / "smoke.jsonl").read_bytes())
     spec, runs = tiny_spec(prompts=str(prompts)), tmp_path / "runs"
-    assert _run(spec, runs, "--limit", "2") == 0
+    assert _run(spec, runs, "--limit", "2") == 3
     text = prompts.read_text().replace("pancakes", "waffles")
     prompts.write_text(text)
     assert _run(spec, runs) == 1
@@ -198,28 +189,17 @@ def test_differences_name_each_input_that_changed() -> None:
     ]
 
 
-def _failing_on(monkeypatch: pytest.MonkeyPatch, prompt: str, error: Exception) -> None:
-    """Make generate() raise error for the pushed runs of one prompt."""
-    real = generate_module.generate
-
-    def failing(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
-        if prompts == [prompt] and schedules and schedules[0].segments:
-            raise error
-        return real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
-
-    monkeypatch.setattr(generate_module, "generate", failing)
-
-
 def test_retry_failed_leaves_runs_not_yet_run_alone(
     tiny_spec: Callable[..., Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    failing_generate: Callable[..., None],
 ) -> None:
     spec, runs = tiny_spec(batch_size="1"), tmp_path / "runs"
     real = generate_module.generate
     first = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[0]
-    _failing_on(monkeypatch, first, RuntimeError("boom"))
+    failing_generate(first, RuntimeError("boom"))
     assert _run(spec, runs, "--limit", "2") == 2  # smoke-01's pulse failed
     monkeypatch.setattr(generate_module, "generate", real)
     sizes = _sizes(monkeypatch)
@@ -231,16 +211,18 @@ def test_retry_failed_leaves_runs_not_yet_run_alone(
 
 
 def test_an_out_of_memory_error_says_to_lower_the_batch_size(
-    tiny_spec: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    failing_generate: Callable[..., None],
 ) -> None:
     spec, runs = tiny_spec(batch_size="1"), tmp_path / "runs"
     first = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[0]
-    _failing_on(monkeypatch, first, torch.cuda.OutOfMemoryError("CUDA out of memory"))
+    failing_generate(first, torch.cuda.OutOfMemoryError("CUDA out of memory"))
     assert _run(spec, runs, "--limit", "2") == 2
     (_, entry) = read_index(runs / NAME)
     assert entry["error"] == (
-        "OutOfMemoryError: CUDA out of memory; lower batch_size in the experiment "
-        "file (1)"
+        "OutOfMemoryError: CUDA out of memory; lower batch_size (1) in the "
+        "experiment file, through a pull request"
     )
 
 
@@ -253,9 +235,14 @@ def test_inputs_that_change_while_the_model_loads_are_refused(
     import pushlab.prompts
 
     real = pushlab.prompts.read_prompt_set
+    reads: list[Path] = []
 
-    def edited(path: Path) -> object:  # the file, as read after the model loaded
-        return dataclasses.replace(real(path), sha256="0" * 64)
+    def edited(path: Path) -> object:  # read before loading, then edited
+        reads.append(path)
+        prompt_set = real(path)
+        if len(reads) == 1:
+            return prompt_set
+        return dataclasses.replace(prompt_set, sha256="0" * 64)
 
     monkeypatch.setattr(pushlab.prompts, "read_prompt_set", edited)
     assert _run(tiny_spec(), tmp_path / "runs") == 1
@@ -266,13 +253,15 @@ def test_inputs_that_change_while_the_model_loads_are_refused(
 def test_runs_that_cannot_share_a_batch_are_refused(
     tiny_spec: Callable[..., Path],
 ) -> None:
-    from pushlab.runs.batch import run_batch
+    from pushlab.runs.batch import run_call
     from pushlab.runs.expand import expand
-    from pushlab.runs.plan import Batch
+    from pushlab.runs.plan import Call
     from pushlab.runs.spec import read_spec
 
-    spec = read_spec(tiny_spec())
+    sampled = "{strategy: sample, temperature: 0.7, dtype: float32}"
+    spec = read_spec(tiny_spec(decoding=sampled, seeds="[0, 1]"))
     runs = expand(spec).runs
-    mixed = Batch("b000001", (runs[0], runs[2]))  # smoke-01 and smoke-02
+    mixed = Call("b000001", (runs[0], runs[2]))  # seed 0 and seed 1
+    assert (runs[0].record.seed, runs[2].record.seed) == (0, 1)
     with pytest.raises(ValueError, match="b000001 mixes runs that cannot share"):
-        run_batch(mixed, spec, None, None, {}, None)
+        run_call(mixed, "v1-b000001-1", spec, None, None, None)

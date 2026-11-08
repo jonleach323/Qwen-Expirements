@@ -268,6 +268,9 @@ def _add_run(commands: argparse._SubParsersAction) -> None:
         "from another experiment file, prompt set, known units, model download "
         "or calibration, and one that another experiment or another runner "
         "uses. It needs the model downloaded and, to push, its calibration.",
+        epilog="Exit status: 0 when it finished or had nothing to do; 1 when it "
+        "refused or could not save; 2 when a run failed; 3 when it stopped with "
+        "runs left, at max_gpu_hours or --limit; 130 after Ctrl-C.",
     )
     run.add_argument(
         "spec",

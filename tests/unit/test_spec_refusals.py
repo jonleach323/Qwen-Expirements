@@ -92,6 +92,10 @@ REFUSALS = {
         _with("max_gpu_hours: 0.5", "max_gpu_hours: " + "9" * 400),
         "max_gpu_hours must be a number above 0",
     ),
+    "group-by-length": (
+        _with("max_gpu_hours: 0.5", "max_gpu_hours: 0.5\ngroup_by_length: yes"),
+        "group_by_length must be true or false, not 'yes'",
+    ),
     "conditions": (
         _with("conditions:", "conditions: []\nx:").split("\nx:")[0],
         "at least one condition",
