@@ -69,7 +69,23 @@ batch counts with both files or neither. A batch whose runs all failed has
 an empty steps file, and a failed run has no steps. A name taken by either
 file is never used again. A run a new version keeps keeps its steps, in
 the old batch's steps file. `read_result_steps(folder)` reads the steps
-of the folder's current version, by run ID.
+of the folder's current version, by run ID; a run or a step that one file
+holds twice (only a hand edit makes one) is read as its first copy.
+- **Steps that cannot be saved.** Before a call's runs are returned as ok,
+  the runner makes their steps and checks them as saving will. If they
+  cannot be saved, as when an amount is beyond what a 16-bit float holds
+  (65,504 either way, which a huge dose under allow_over_ceiling could
+  give), every due run of the call is saved as failed with no steps, its
+  steps file empty, and the run goes on to the next batch. The error
+  starts "the batch's steps cannot be saved:", names the run and step,
+  and ends "; lower the dose, as 16-bit steps hold amounts up to 65,504".
+  Once the file is fixed, --retry-failed runs them again. A disk error
+  while saving still stops the run, as decision 0015 says. No step can be
+  past 32,767: an experiment file's max_new_tokens is at most 32,768.
+- **Reading a steps file.** A file is read only if its columns match the
+  steps table's in name, type and nullability: one of 64-bit numbers, as
+  pandas or DuckDB would write it, is refused, naming each column that
+  differs ("step is int64 or null, not int16").
 
 **The engine** records the log-probabilities next to the amounts it
 already kept (`Generation.logprobs`). They are left out of a reply's `==`:
@@ -87,54 +103,100 @@ Its top-level code and machine fields (code commit, lockfile, GPU, CUDA,
 driver, torch, transformers, packages) are the last session's, and its
 start time is its first session's, of any version: each session's own
 entry says what that session ran, and verify's code-change warning says
-when a version's runs were made by more than one code. When the runner
-runs no session, as when a new version keeps every run or
-a session was killed after its last batch, it restamps the manifest's
-version, hashes and counts from experiment.json and the index, writing
-only if something changed (`manifest.restamp_manifest`); a broken
-manifest only gives a warning.
+when a version's runs were made by more than one code.
+- **Restamping.** Before it decides what to run, the runner brings up to
+  date what the manifest repeats from experiment.json and the index
+  (`manifest.restamp_manifest`): experiment, version, spec_file, the
+  hashes of the experiment file, prompt set, known units and calibration,
+  model and model_revision, dtype, run_count and runs_by_status, writing
+  only if something changed. So a new version that keeps every run, or a
+  session killed after its last batch, leaves a manifest verify accepts.
+  The rest stays as the sessions left it, until a session of the new
+  version runs: the last session's code, machine and model_id, the first
+  session's start and the last one's end.
+- **A broken manifest** (not valid JSON, or not a JSON object) never stops
+  `pushlab run`: it lists no earlier sessions, a session rewrites it whole,
+  and the restamp leaves it as it is with a warning ("...; it is left as it
+  is, and the next session of pushlab run rewrites it"). The entries it
+  held are lost; no copy is kept.
+- A session's entry is a `manifest.SessionEntry`, written by
+  `manifest.record_session`.
 
 **verify** (`pushlab verify SPEC`, `pushlab.runs.verify` and
 `verify_steps`). It expands the experiment file and reads the folder's
-current version by its latest marks, loading no model and writing
-nothing. It reads each counted shard's rows itself, so that a duplicate
-shows, then its steps file, and checks that:
+current version: every mark the index has of it, and the runs its latest
+marks count. It loads no model and writes nothing. It reads each counted
+shard's rows itself, so that a duplicate shows, then that shard's steps
+file. It checks that:
 1. the version was made from this experiment file, prompt set and known
-   units; if not, that is one problem, and nothing else is compared with
-   the file's plan;
-2. every planned run is saved, ok or failed, and nothing unplanned is;
-3. no shard holds a run twice, and no steps file a step of a run twice;
+   units. If not, that is one problem, and nothing else is compared with the
+   file's plan.
+2. every planned run is saved, ok or failed, and nothing unplanned is.
+   Planned runs not saved yet are one problem that names them and says
+   "pushlab status says how far the run has got". While a runner holds the
+   folder's lock, it says instead that a runner is still working on the
+   folder. Either way verify exits 1, since it is meant for a finished
+   experiment.
+3. the index marks each run once in the version, or again only after earlier
+   marks that said it failed. That is a retry, as --retry-failed makes. The
+   marks a new version writes for the runs it keeps count as marks too. Runs
+   whose marks match, shard by shard, are one problem: "the index marks A
+   and B twice: ok in shards/X, then ok in shards/Y; only a failed run is
+   marked again". A counted shard may also hold runs that the index counts
+   in another shard. A batch where only some runs were retried does this,
+   for example after a new version splits its calls differently. That is no
+   problem, and only the runs the shard counts are read from it. No shard
+   holds a run twice, and no steps file holds a step of a run twice.
 4. each saved record is the run the plan means (`versions.same_run`, with
-   the record's own model download), naming the fields that differ;
-5. a run with a reply has steps 0 to n − 1, one per token, with its
-   reply's token IDs and a known region; a failed run has none; a counted
-   shard's missing or unreadable file is a problem, not a crash;
+   the record's own model download), naming the fields that differ. Its
+   status is the one its latest mark gives it. Its model is
+   experiment.json's model, since every run of a version is made from one
+   download.
+5. a run with a reply has steps 0 to n − 1, one per token, with its reply's
+   token IDs and a known region. A failed run has none. A counted shard's
+   missing or unreadable file is a problem, not a crash.
 6. each step's units are those its run's schedule pushes on the pass that
    chose that token (`Schedule.doses_at`, in `Schedule.units()` order, as
-   compile sums them), and its amounts follow the doses without the
-   calibration: each amount has its dose's sign and is 0 at dose 0, and
-   amount ÷ dose is one number per unit, its dose-1 amount, on every step
-   of a run and across all runs, up to twice the 16-bit rounding (an
-   interval check, so a run made with a calibration more than about 0.2%
-   off shows; one closer than that passes);
-7. manifest.json, if there is one, has experiment.json's version and
-   hashes and the index's counts; this is skipped, with a note, while a
-   runner holds the folder's lock, as a session rewrites the manifest when
-   it ends.
-Problems are grouped, one per run and kind with "N more steps disagree",
-and at most 50 are printed, then a count of the rest and the summary line.
-It exits 0 with no problem, 1 with problems or when it refuses (an
-unreadable or unexpandable file, a runs dir or folder that is not this
-experiment's, nothing saved yet, a broken experiment.json or index).
-About 4 seconds per 1,000 runs of 600 tokens.
+   compile sums them), with one amount per unit. Its amounts follow the
+   doses without the calibration: each amount has its dose's sign and is 0
+   at dose 0. Amount ÷ dose is one number per unit, its dose-1 amount, on
+   every step of a run and across all runs, up to twice the 16-bit rounding.
+   This is an interval check, so a run made with a calibration more than
+   about 0.2% off shows, and one closer than that passes.
+7. manifest.json, if there is one, is a valid experiment manifest
+   (`check_experiment_manifest`). It has experiment.json's experiment,
+   version, spec_file and identity values: the hashes of the experiment
+   file, prompt set, known units and calibration, and the model download.
+   Its model_revision is the revision experiment.json's model names. Its
+   run_count is experiment.json's number of runs. Its runs_by_status is the
+   index's counts. Its model_id, dtype, times and code and machine fields
+   are not compared, because experiment.json does not hold them. This check
+   is skipped, with a note, while a runner holds the folder's lock, because
+   a session rewrites the manifest when it ends.
+
+Problems are grouped, one per run and kind, with "1 more step disagrees" or
+"N more steps disagree". At most 50 are printed, then a count of the rest,
+then the summary line. It exits 0 with no problem. It exits 1 with problems
+(planned runs not saved yet among them) or when it refuses. It refuses:
+- an unreadable or unexpandable file;
+- a runs dir that does not exist ("DIR does not exist; --runs-dir must be
+  the folder that holds the experiments' folders"), is a file, or sits
+  inside a run folder;
+- a folder that is not this experiment's;
+- a folder with nothing saved yet;
+- a broken experiment.json or index.
+
+About 4 seconds per 1,000 runs of 600 tokens. The index walk costs next to
+nothing.
 
 **The report** (`pushlab report SPEC [--conditions LABEL ...] --out FILE`,
-`pushlab.analysis.experiment_report` and `markers`). It reads the
+`pushlab.analysis.experiment_report`, `report_folder` and `markers`). It reads the
 folder's version, its steps and experiment.json's condition labels, and
 writes one Markdown file with no tables, so that it reads on a phone: a
 title, where it came from, the legend, a line on what a marker means, any
-notes (runs not saved yet, a prompt set changed since, a tokenizer of
-another download), then a section per prompt with each chosen condition's
+notes (runs not saved yet; an experiment file, known units or prompt set
+changed since the version was made; a tokenizer of another download),
+then a section per prompt with each chosen condition's
 runs, the condition's own run first and then its controls, each a bold
 label and its reply. Without --conditions it shows every label, in run
 order. The S1 mode, `--runs DIR ...`, is as it was.
@@ -150,13 +212,30 @@ order. The S1 mode, `--runs DIR ...`, is as it was.
   sits before the first token chosen with that change: a pulse on reply
   tokens s to e − 1 shows [A on] before token s + 1 and [A off] before
   token e + 1, and a handoff at k shows [A off, B on] before token k + 1.
-- **Alternations.** A stretch is a run of steps with one set. At least
-  four stretches in a row that take turns between two sets collapse into
-  one marker at the first, with their count: [A/B x8], or [A on/off x8]
-  when one set holds the other (a unit that repeats). Units on in both
-  are named first ("C on, A/B x8"). Steps with nothing pushed before the
-  first push are not a turn. The next marker compares with the last
-  stretch.
+- **Alternations.** A stretch is a run of steps with one set. Four or more
+  stretches in a row that take turns between two sets collapse into one
+  marker, before the first of them, with their count, but only while every
+  stretch in the run is at most 16 steps long (`markers.LONGEST_TURN`); the
+  reply's last stretch, which its end may cut, may be any length. A longer
+  stretch keeps its own marker, so the report shows where it starts, and
+  short turns before or after it can still collapse on their own. Runs are
+  found from the start of the reply, each as long as it can go; steps with
+  nothing pushed before the first push are not a turn; the marker after an
+  alternation compares with its last stretch. The count is the number of
+  stretches, the first and last included.
+- **Every marker form.** A letter group is one letter, or several joined
+  with + in letter order. One change: [X on], [X off] or [X off, Y on]
+  (X switched off, Y on), such as [A on], [A off, B on], [A+B on]. An
+  alternation from first set F and second set S ends with one of: P/Q xN
+  when each set has a unit the other lacks (P = F − S, Q = S − F); P on/off
+  xN when F holds S; Q off/on xN when S holds F. Before that, in this
+  order, come "R off" (units on before it that are in neither set) and
+  "T on" (units in both sets that were not on before): [C on, A/B x8],
+  [D off, A/B x8], [A on, B off/on x6]. N is at least 4. The meaning line
+  under the legend says: "A marker sits before the first token chosen with
+  that change: a push on reply token k first changes token k + 1. x8 is 8
+  turns: [A/B x8] is A, then B, 4 times; [A on/off x8] is A on, then off,
+  4 times; [A off/on x8] is A off, then on, 4 times."
 - **Places.** A marker before step j goes where the reply's text and the
   tokenizer's decoding of its first j tokens stop agreeing, so it never
   splits a character. This needs the model's tokenizer, as on the pod;
@@ -165,9 +244,21 @@ order. The S1 mode, `--runs DIR ...`, is as it was.
   get a backslash, and line breaks become <br>. A marker is written
   [**A on**], bold inside the brackets: CommonMark does not make
   **[A on]** bold next to a letter, and markers usually sit next to one.
+- **Notes under a reply,** in this order: "the reply ended before any
+  push", or one of "saved before steps were kept, so it has no markers",
+  "its steps cannot be read: <why>, so it has no markers" and "its steps do
+  not match its tokens, so it has no markers; pushlab verify says more";
+  then "reached the N-token limit", and the status when it is not ok. A
+  failed run shows "failed, so it has no reply; pushlab status shows why".
+- **Batches it cannot read.** It reads the index, then only the batches
+  that hold the chosen conditions' runs, one at a time, so a broken batch
+  of a condition not asked for never stops it. A batch whose steps file is
+  missing or unreadable shows its replies without markers, each with its
+  note; the rest keep their markers.
 - It refuses an unknown label (listing the labels it has), an --out inside
-  the runner folder or one that exists without --overwrite, and a folder
-  that is missing or not this experiment's.
+  the runner folder or one that exists without --overwrite, a folder that
+  is missing or not this experiment's, and an index or runs shard it
+  cannot read, saying which file and why.
 
 **The DuckDB views** (`pushlab.store.query.connect(runs_dir=None)`). One
 in-memory connection has three views over every runner folder in the runs
@@ -181,8 +272,14 @@ The marks are read from each folder's experiment.json and index in Python
 and joined to read_parquet's rows by file and run ID, so an old version's
 runs, unmarked shards and earlier attempts never show, a run saved twice
 shows as its latest mark says, and a kept run is read from the older shard
-that holds it. Folders without experiment.json, such as S1's, are skipped;
-the views are a snapshot at connect time. Paths are SQL-quoted, DuckDB's
+that holds it. Folders without experiment.json, such as S1's, are skipped.
+A folder counts only when its name is the experiment its experiment.json
+names, as the runner keeps an experiment in `<runs dir>/<name>` only: any
+other, a backup, a folder moved aside or a link under another name, is a
+copy, left out with a warning (a UserWarning) that names it. Each run shows
+once in runs, and each (run, step) once in steps, even when a file holds
+one twice: the copy whose status is its mark's, and of those the first.
+The views are a snapshot at connect time. Paths are SQL-quoted, DuckDB's
 glob characters are escaped and hive partitioning is off, so a folder
 named like `step=3` is never read as a column. A runs dir that is missing,
 a file or itself a run folder is refused, as is a shard an index names but
@@ -220,7 +317,8 @@ that is gone.
   reply and no steps, and verify counts it in its last line.
 - `pushlab steer` (S1's folders) saves no steps; only the runner does.
 - Folders saved before this change have no steps files: verify says so,
-  and the views leave their steps out.
+  the report shows their replies without markers, each with a note, and
+  the views leave their steps out; `pushlab run` and status work as before.
 - **The checks.** On the CPU with tiny-vl: the steps of a handoff, a pulse
   and a ramp match the schedule and the dose table on every pass; a failed
   batch's empty steps file, kept runs' steps, a crash before the mark and a
@@ -229,6 +327,17 @@ that is gone.
   teacher-forced pass; the manifest's fields, refusals and restamping;
   verify clean, and catching a planted duplicate, a missing run, a record
   of another run, steps that disagree with the schedule or the doses, and
-  a stale manifest; the markers of a pulse, a handoff and an alternation,
-  in unit tests and placed in a tiny model's replies; and the views over
-  two experiments, retries, new versions and an empty runs dir.
+  a stale manifest; verify catching an ok run marked again (saved again,
+  an index line repeated, failed later, a kept run run again) while a
+  retry and a partial retry under a new version pass, a record whose
+  status or download disagrees with the index or experiment.json, each
+  field the manifest repeats, units out of order, an amount at dose 0,
+  nothing added at dose 1, an amount too few and one run 1% off; the
+  markers of a pulse, a handoff and an alternation, in unit tests and
+  placed in a tiny model's replies, alternations of turns longer than 16
+  steps, a batch without steps or with steps that cannot be read, the
+  notes on a changed file, known units and tokenizer, and the guards on
+  labels, letters and token IDs; steps refused at save time, a steps
+  file's types, broken manifests; and the views over two experiments,
+  retries, new versions, copies, links, duplicate rows and an empty runs
+  dir.

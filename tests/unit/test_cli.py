@@ -213,3 +213,10 @@ def test_docstring_examples_run() -> None:
     result = doctest.testmod(cli)
     assert result.attempted > 0
     assert result.failed == 0
+
+
+def test_the_experiment_commands_options_have_working_examples() -> None:
+    from pushlab import cli_experiments
+
+    result = doctest.testmod(cli_experiments)
+    assert result.attempted > 0 and result.failed == 0

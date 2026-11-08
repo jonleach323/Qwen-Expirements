@@ -16,7 +16,8 @@ So a push on reply token k, which first changes token k + 1, shows at step
 k + 1: a pulse on reply tokens 0 to 15 shows at steps 1 to 16. Steps are
 small integers (16 bits, so a reply can have up to 32,768 tokens), token
 IDs 32-bit, and unit IDs text that Parquet stores once per file: 1,000
-replies of 1,000 tokens take a few tens of megabytes.
+replies of 1,000 tokens take 5 to 15 MiB, by how they are batched into
+files (decision 0016).
 
 Example:
     >>> pushed = (("tiny:L2:N100",), (1.5,))
@@ -146,23 +147,56 @@ def steps_table(steps: Sequence[StepRecord]) -> pa.Table:
     )
 
 
+def _kind(type_: pa.DataType) -> str:
+    """A column type in plain words, such as float16 or list of float16.
+
+    Example:
+        >>> _kind(pa.list_(pa.float16())), _kind(pa.float64()), _kind(pa.int16())
+        ('list of float16', 'float64', 'int16')
+    """
+    if pa.types.is_floating(type_):
+        return f"float{type_.bit_width}"
+    if pa.types.is_list(type_):
+        return f"list of {_kind(type_.value_type)}"
+    return str(type_)
+
+
+def _differences(schema: pa.Schema) -> str:
+    """How the columns of schema, which has STEPS_SCHEMA's names, differ
+    from STEPS_SCHEMA's in type, or in whether they may be null."""
+
+    def shown(field: pa.Field) -> str:
+        return _kind(field.type) + (" or null" if field.nullable else "")
+
+    return "; ".join(
+        f"{want.name} is {shown(field)}, not {shown(want)}"
+        for field, want in zip(schema, STEPS_SCHEMA, strict=True)
+        if not field.equals(want)
+    )
+
+
 def read_steps_file(path: Path) -> list[StepRecord]:
     """The steps in a Parquet file that steps_table made, in its order.
 
     The 16-bit floats come back as Python floats, so a logprob of -0.1 reads
-    back as -0.0999755859375. ValueError says when the file has other
-    columns.
+    back as -0.0999755859375. ValueError says when the file's columns are
+    not STEPS_SCHEMA's: other names, other types, or columns that may be
+    null. So steps saved as 64-bit numbers, as pandas or DuckDB would save
+    them, are not a steps table, though they hold the same columns.
 
     Example:
         >>> read_steps_file(Path("runs/x/steps/v1-b000001-1.parquet"))  # doctest: +SKIP
         [StepRecord(run_id='x-000001', step=0, ...), ...]
     """
-    table = pq.read_table(path)
+    # Absolute, so pyarrow never reads a folder name such as run:1 as a URL.
+    table = pq.read_table(Path(path).absolute())
     if table.schema.names != STEPS_SCHEMA.names:
         raise ValueError(
             f"{path} is not a steps table: its columns are "
             f"{', '.join(table.schema.names)}"
         )
+    if not table.schema.equals(STEPS_SCHEMA):
+        raise ValueError(f"{path} is not a steps table: {_differences(table.schema)}")
     columns = table.to_pydict()
     return [
         StepRecord(

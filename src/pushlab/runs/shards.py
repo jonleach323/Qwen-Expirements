@@ -110,17 +110,19 @@ def _by_shard(shards: dict[str, str]) -> dict[str, set[str]]:
 def read_records(folder: Path, shards: dict[str, str]) -> dict[str, RunRecord]:
     """The records of the given runs, each from the shard named for it.
 
+    A run a shard holds twice (which only a hand edit makes, and verify
+    reports) is read as its first copy, as the DuckDB views read it.
+
     Example:
         >>> read_records(folder, {"x-000001": "v1-b000001-1.parquet"})  # doctest: +SKIP
         {'x-000001': RunRecord(run_id='x-000001', ...)}
     """
     records: dict[str, RunRecord] = {}
     for shard, run_ids in _by_shard(shards).items():
-        found = {
-            record.run_id: record
-            for record in read_runs_file(folder / SHARDS / shard)
-            if record.run_id in run_ids
-        }
+        found: dict[str, RunRecord] = {}
+        for record in read_runs_file(folder / SHARDS / shard):
+            if record.run_id in run_ids:
+                found.setdefault(record.run_id, record)
         if missing := sorted(run_ids - set(found)):
             raise ValueError(
                 f"{shard} lacks {', '.join(missing)}, which the index puts there"
@@ -132,7 +134,7 @@ def read_records(folder: Path, shards: dict[str, str]) -> dict[str, RunRecord]:
 def read_steps(folder: Path, shards: dict[str, str]) -> dict[str, list[StepRecord]]:
     """The steps of the given runs, each from the steps file of the shard
     named for it, in step order. A run with no steps, such as a failed one,
-    has an empty list.
+    has an empty list; a step a file holds twice is read as its first copy.
 
     FileNotFoundError says when a shard has no steps file, as one saved
     before steps were kept has not.
@@ -142,9 +144,11 @@ def read_steps(folder: Path, shards: dict[str, str]) -> dict[str, list[StepRecor
         {'x-000001': [StepRecord(run_id='x-000001', step=0, ...), ...]}
     """
     steps: dict[str, list[StepRecord]] = {run_id: [] for run_id in shards}
+    seen: set[tuple[str, int]] = set()
     for shard, run_ids in _by_shard(shards).items():
         for step in read_steps_file(folder / STEPS / shard):
-            if step.run_id in run_ids:
+            if step.run_id in run_ids and (step.run_id, step.step) not in seen:
+                seen.add((step.run_id, step.step))
                 steps[step.run_id].append(step)
     return {
         run_id: sorted(found, key=lambda step: step.step)
@@ -180,6 +184,10 @@ def read_results(folder: Path) -> list[RunRecord]:
 
 def read_result_steps(folder: Path) -> dict[str, list[StepRecord]]:
     """The steps of every saved run of the folder's version, by run ID.
+
+    FileNotFoundError names the first counted batch without a steps file, as
+    one saved before steps were kept has none; the report reads such a
+    folder batch by batch instead (pushlab.analysis.report_folder).
 
     Example:
         >>> read_result_steps(Path("/no/such/folder"))

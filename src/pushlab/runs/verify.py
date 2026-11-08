@@ -1,13 +1,17 @@
 """`pushlab verify`: an experiment's runner folder checked against its file.
 
 It expands the experiment file and reads the current version of its folder,
-<runs dir>/<name>, as its latest marks count it (pushlab.runs.shards), to
-check that:
+<runs dir>/<name>: every mark the index has of the version, and the runs
+and steps its latest marks count (pushlab.runs.shards). It checks that:
 1. the version was made from this file, its prompt set and units/known.csv
    (if not, nothing else is compared with the file's plan);
 2. every run the file plans is saved, ok or failed, and no other run;
-3. no shard holds a run twice, and no steps file a step of a run twice;
-4. each saved record is the run the plan means (versions.same_run);
+3. each run is marked once in the version, or again only after marks that
+   said it failed (a retry; a new version's marks of the runs it keeps count
+   too); no shard holds a run twice, and no steps file a step of a run twice;
+4. each saved record is the run the plan means (versions.same_run), has
+   the status its latest mark gives it, and was made with the model
+   download experiment.json names;
 5. a run with a reply has steps 0 to n - 1 in order, one per reply token,
    with its reply's tokens and a known region, and a failed run has none;
 6. each step pushes what its run's schedule pushes on the pass that chose
@@ -15,10 +19,14 @@ check that:
    j - 1 for step j; decision 0008), in the schedule's order, each amount
    of its dose's sign, 0 at dose 0, and the dose times one number per unit,
    its dose-1 amount, on every step of every run, up to 16-bit rounding;
-7. manifest.json, if any, has experiment.json's version and hashes and
-   counts the runs as the index does, unless a runner is working on the
-   folder: it rewrites the manifest when its session ends.
-It loads no model and writes nothing.
+7. manifest.json, if any, is a valid experiment manifest; it repeats
+   experiment.json's experiment, version, experiment file, hashes and model
+   download, and has the revision that download names, experiment.json's
+   number of runs and the index's counts by status. It is not checked while
+   a runner is working on the folder, as a session rewrites it when it ends.
+A counted shard may hold other runs, such as runs of a batch that a later
+attempt ran again; only the runs it counts are read from it. It loads no
+model and writes nothing.
 """
 
 import sys
@@ -35,11 +43,14 @@ from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.spec import read_spec
 from pushlab.runs.verify_steps import Bound, check_steps, count, listed
 from pushlab.runs.versions import SAME_RUN, same_run
+from pushlab.store.manifest import check_experiment_manifest
 from pushlab.store.records import MANIFEST_FILE, RunRecord, read_runs_file
 from pushlab.store.steps import StepRecord, read_steps_file
 
 MOST_SHOWN = 50  # problems printed; a last line counts the rest
 UNREADABLE = (OSError, ValueError, TypeError, pa.ArrowException)
+# What the manifest repeats from experiment.json, field by field.
+REPEATED = ("experiment", "version", "spec_file", *plan.IDENTITY_KEYS)
 
 
 def _refuse(message: str) -> int:
@@ -47,8 +58,8 @@ def _refuse(message: str) -> int:
     return 1
 
 
-def _times(count: int) -> str:
-    return "twice" if count == 2 else f"{count} times"
+def _times(n: int) -> str:
+    return "twice" if n == 2 else f"{n} times"
 
 
 def _are(runs: Sequence[str], what: str) -> str:
@@ -107,14 +118,19 @@ class _Check:
     def __init__(self, path: Path, identity: dict, expansion: Expansion, busy: bool):
         self.path, self.identity, self.version = path, identity, identity["version"]
         self.busy = busy  # a runner works on the folder
-        self.states = folder.latest(folder.read_index(path), self.version)
-        failed = sum(s["status"] == "failed" for s in self.states.values())
+        index = folder.read_index(path)
+        self.marks = [entry for entry in index if entry["version"] == self.version]
+        self.states = folder.latest(self.marks, self.version)
+        runs = identity.get("runs")  # the version's number of runs
+        self.total = runs if type(runs) is int else len(expansion.runs)
         self.verdict = Verdict(identity["experiment"], self.version, len(self.states))
-        self.verdict.failed, self.say = failed, self.verdict.problems.append
+        self.verdict.failed = sum(s["status"] == "failed" for s in self.states.values())
+        self.say = self.verdict.problems.append
         self.scales: dict[str, Bound] = {}  # each unit's, over every run
         self.planned = self._plan(expansion)
 
     def run(self) -> Verdict:
+        self._marked_again()
         by_shard: dict[str, list[str]] = {}  # in the order of their first runs
         for run_id in sorted(self.states):
             by_shard.setdefault(self.states[run_id]["shard"], []).append(run_id)
@@ -138,10 +154,38 @@ class _Check:
             return None
         planned = {run.record.run_id: run.record for run in expansion.runs}
         if missing := [run_id for run_id in planned if run_id not in self.states]:
-            self.say(f"{_are(missing, 'planned run')} not saved: {listed(missing)}")
+            if self.busy:
+                how = "a runner is still working on the folder, and pushlab status"
+                how += " says how far it has got"
+            else:
+                how = "pushlab status says how far the run has got"
+            unsaved = f"{_are(missing, 'planned run')} not saved yet"
+            self.say(f"{unsaved}: {listed(missing)}; {how}")
         if extra := sorted(set(self.states) - set(planned)):
             self.say(f"{_are(extra, 'saved run')} not planned: {listed(extra)}")
         return planned
+
+    def _marked_again(self) -> None:
+        """Check 3 on the index: a run is marked again only after it failed.
+
+        Each run's marks are its statuses in the version's index lines, a
+        kept run's mark in a new version among them. Runs whose marks are
+        the same, shard by shard, are one problem.
+        """
+        marks: dict[str, list[tuple[str, str]]] = {}  # oldest first
+        for entry in self.marks:
+            for run_id, status in entry["runs"].items():
+                marks.setdefault(run_id, []).append((str(status), entry["shard"]))
+        again: dict[tuple[tuple[str, str], ...], list[str]] = {}
+        for run_id in sorted(marks):
+            if any(status != "failed" for status, _ in marks[run_id][:-1]):
+                again.setdefault(tuple(marks[run_id]), []).append(run_id)
+        for found, run_ids in again.items():
+            where = ", then ".join(f"{status} in shards/{at}" for status, at in found)
+            self.say(
+                f"the index marks {listed(run_ids)} {_times(len(found))}: {where}; "
+                "only a failed run is marked again"
+            )
 
     def _read(self, place: str, shard: str, read: Callable) -> Any:
         """The rows of place/shard, or None once a problem says why not."""
@@ -184,11 +228,22 @@ class _Check:
         """Checks 4, 5 and 6 of one saved run; steps is None when unreadable."""
         run_id = record.run_id
         if planned := (self.planned or {}).get(run_id):
-            planned = replace(planned, model=record.model)  # the download it ran
+            planned = replace(planned, model=record.model)  # checked just below
         if planned and not same_run(record, planned):
             names = [k for k in SAME_RUN if getattr(record, k) != getattr(planned, k)]
             differ = "differs" if len(names) == 1 else "differ"
             self.say(f"{run_id} is not the planned run: its {listed(names)} {differ}")
+        if (marked := self.states[run_id]["status"]) != record.status:
+            self.say(
+                f"{run_id} is {record.status} in shards/{shard}, but the index "
+                f"marks it {marked}"
+            )
+        model = self.identity.get("model")  # the one download a version's runs use
+        if isinstance(model, str) and record.model != model:
+            self.say(
+                f"{run_id}'s model is {record.model}, but "
+                f"{folder.IDENTITY_FILE}'s is {model}"
+            )
         if steps is None:
             return
         self.verdict.steps += len(steps)
@@ -211,11 +266,31 @@ class _Check:
         if not isinstance(manifest, dict):
             self.say(f"{MANIFEST_FILE} is not a JSON object")
             return
-        for key in ("version", "spec_sha256", "calibration_sha256"):
+        try:
+            check_experiment_manifest(manifest)
+        except ValueError as error:
+            self.say(f"{MANIFEST_FILE} is not a valid experiment manifest: {error}")
+        source = folder.IDENTITY_FILE
+        for key in REPEATED:
             if manifest.get(key) != self.identity.get(key):
-                self.say(f"{MANIFEST_FILE}'s {key} is not {folder.IDENTITY_FILE}'s")
-        counts = Counter(state["status"] for state in self.states.values())
-        pending = self.identity.get("runs", len(self.states)) - len(self.states)
+                self.say(f"{MANIFEST_FILE}'s {key} is not {source}'s")
+        model = self.identity.get("model")  # such as qwen3.5-4b@851bf6e8...
+        if isinstance(model, str) and "@" in model:
+            revision = model.rpartition("@")[2]
+        else:
+            revision = None
+        if revision and manifest.get("model_revision") != revision:
+            self.say(
+                f"{MANIFEST_FILE}'s model_revision is not the revision in "
+                f"{source}'s model"
+            )
+        if (run_count := manifest.get("run_count")) != self.total:
+            self.say(
+                f"{MANIFEST_FILE}'s run_count is {run_count!r}, but {source}'s "
+                f"version has {count(self.total, 'run')}"
+            )
+        counts = Counter(str(state["status"]) for state in self.states.values())
+        pending = self.total - len(self.states)
         index = {"ok": counts["ok"], "failed": counts["failed"], "pending": pending}
         if (saved := manifest.get("runs_by_status")) != index:
             self.say(
@@ -228,8 +303,9 @@ def run_verify(spec_path: Path, runs_dir: Path | None = None) -> int:
     """Check the runner folder of the experiment file at spec_path in runs_dir
     (default: folder.default_runs_dir()), print each problem and a summary,
     and return 1 if there are any, else 0. It refuses with 1, the reason on
-    stderr, a file it cannot read or expand, a runs dir or folder the runner
-    would refuse, and a folder with nothing saved.
+    stderr, a file it cannot read or expand, a runs dir that does not exist,
+    a runs dir or folder the runner would refuse, and a folder with nothing
+    saved.
 
     Example:
         >>> run_verify(Path("experiments/p0/s2_pulse_lengths.yaml"))  # doctest: +SKIP
@@ -246,9 +322,14 @@ def run_verify(spec_path: Path, runs_dir: Path | None = None) -> int:
     runs_dir = folder.default_runs_dir() if runs_dir is None else runs_dir
     path = runs_dir / spec.name
     try:
-        if problem := plan.runs_dir_problem(runs_dir) or plan.folder_problem(
-            path, spec.name
-        ):
+        if problem := plan.runs_dir_problem(runs_dir):
+            return _refuse(problem)
+        if not runs_dir.exists():
+            return _refuse(
+                f"{runs_dir} does not exist; --runs-dir must be the folder that "
+                "holds the experiments' folders"
+            )
+        if problem := plan.folder_problem(path, spec.name):
             return _refuse(problem)
         if (identity := folder.read_identity(path)) is None:
             return _refuse(f"nothing is saved for {spec.name} in {path} yet")

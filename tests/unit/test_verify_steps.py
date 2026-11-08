@@ -178,6 +178,28 @@ def test_amounts_that_do_not_follow_the_doses_are_caught(
     ]
 
 
+def test_a_run_made_with_a_calibration_one_percent_off_is_caught(
+    finished: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Run 6's amounts 1% larger on every step, as a calibration whose sizes
+    # are 1% larger gives: its steps agree with each other, not with run 2's.
+    spec, runs = finished
+    path = _steps_file(runs, _id(6))
+    for step in read_result_steps(runs / NAME)[_id(6)]:
+        larger = [1.01 * amount for amount in step.active_amounts]
+        _edit(path, _id(6), step.step, active_amounts=larger)
+    steps = read_result_steps(runs / NAME)  # as saved, in 16 bits
+    (a,), (b,) = steps[_id(2)][0].active_amounts, steps[_id(2)][3].active_amounts
+    (a6,), (b6,) = steps[_id(6)][0].active_amounts, steps[_id(6)][3].active_amounts
+    assert a6 == pytest.approx(1.01 * a, rel=2**-10)
+    assert _problems(spec, runs, capsys) == [
+        f"{A}'s amount per dose is {a:.4g} in {_id(2)} but {a6:.4g} in {_id(6)}, "
+        "not one number",
+        f"{B}'s amount per dose is {-b:.4g} in {_id(2)} but {-b6:.4g} in {_id(6)}, "
+        "not one number",
+    ]
+
+
 def test_every_shape_verifies_clean_and_amounts_follow_ramps_and_sums(
     tiny_spec: Callable[..., Path],
     tmp_path: Path,

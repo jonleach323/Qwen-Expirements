@@ -6,11 +6,13 @@ token j - 1, so a push on reply token k shows at step k + 1 (decision 0008).
 Each unit gets a letter (letters), and each step the set of letters pushed
 on it (active_sets); a control's random neuron takes the letter of the unit
 it stands for. marks puts a marker before each step whose set differs from
-the step before: [A on], [A off, B on], [A+B on]. A long alternation is one
-marker with the number of its turns, [A/B x8] or [A on/off x8], so a report
-stays short enough for a phone. legend says what each letter is, places
-finds each marker's place in the reply's text, and with_markers writes the
-reply for a Markdown report, each marker in bold.
+the step before: [A on], [A off, B on], [A+B on]. A long alternation of
+short turns is one marker with the number of its turns, [A/B x8] or
+[A on/off x8], so a report stays short enough for a phone; turns longer
+than LONGEST_TURN steps keep a marker each, so every switch shows. legend
+says what each letter is, places finds each marker's place in the reply's
+text, and with_markers writes the reply for a Markdown report, each marker
+in bold.
 
 Nothing here loads a model: places takes the tokenizer's decode as a
 function.
@@ -21,10 +23,15 @@ import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from itertools import pairwise
 from typing import Any
 
 # The fewest turns a long alternation needs to become one marker.
 COLLAPSE = 4
+# The most steps a turn of such an alternation may last, the reply's last
+# turn aside (its end may cut it): longer turns keep a marker each, so a
+# report shows where each one starts.
+LONGEST_TURN = 16
 
 # Every kind of line break str.splitlines knows, \r\n as one.
 LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
@@ -160,9 +167,11 @@ def marks(
     marker at step 0. The text names the units switched off, then those
     switched on: [A on], [A off, B on], [A+B on]. A stretch is a run of steps
     with one set; at least collapse stretches in a row that take turns
-    between two sets make one marker, at the first, with their number:
-    [A/B x8], or [A on/off x8] for a unit that repeats on and off. The marker
-    after them compares with their last stretch.
+    between two sets, each at most LONGEST_TURN steps long (the reply's last
+    one may be longer), make one marker, at the first, with their number:
+    [A/B x8], or [A on/off x8] for a unit that repeats on and off. A longer
+    stretch keeps its own marker. The marker after an alternation compares
+    with its last stretch.
 
     Example:
         >>> on = frozenset("A")
@@ -170,6 +179,9 @@ def marks(
         [(1, '[A on]'), (3, '[A off]')]
         >>> marks([frozenset("A"), frozenset("B")] * 4)
         [(0, '[A/B x8]')]
+        >>> a, b = [frozenset("A")] * 20, [frozenset("B")] * 20
+        >>> [step for step, _ in marks(a + b + a + b)]  # turns of 20 steps
+        [0, 20, 40, 60]
     """
     if not isinstance(collapse, int) or collapse < 2:
         raise ValueError(f"collapse must be a whole number from 2, not {collapse!r}")
@@ -178,12 +190,21 @@ def marks(
         active = frozenset(active)
         if active != (stretches[-1][1] if stretches else frozenset()):
             stretches.append((step, active))
+    # Whether each stretch may be a turn of a collapsed alternation.
+    short = [
+        later - start <= LONGEST_TURN for (start, _), (later, _) in pairwise(stretches)
+    ]
+    short.append(True)  # the reply's last stretch, which its end may cut
     found: list[tuple[int, str]] = []
     before: frozenset[str] = frozenset()
     i = 0
     while i < len(stretches):
-        end = min(i + 2, len(stretches))  # any two stretches take turns
-        while end < len(stretches) and stretches[end][1] == stretches[end - 2][1]:
+        end = i  # stretches i to end - 1 take turns between two sets
+        while (
+            end < len(stretches)
+            and short[end]
+            and (end - i < 2 or stretches[end][1] == stretches[end - 2][1])
+        ):
             end += 1
         step, active = stretches[i]
         if end - i >= collapse:

@@ -218,7 +218,7 @@ class Session:
                     ending = "stopped at --limit"
         except KeyboardInterrupt:
             ending = "stopped by Ctrl-C"
-        except ValueError as error:  # the inputs changed while the model loaded
+        except ValueError as error:  # inputs that changed, or a file it writes refused
             ending = f"stopped: {error}"
         except OSError as error:  # the disk or the download, not a run
             ending = f"stopped: cannot {step}: {error}"
@@ -292,26 +292,25 @@ class Session:
         """Rewrite manifest.json, with this session last in its sessions."""
         if self.environment is None or self.loaded is None:
             return  # stopped before the model loaded: nothing ran to record
-        session = {
-            "environment": self.environment,
-            "id": self.id,
-            "started_at": self.started_at,
-            "finished_at": _now(),
-            "state": self.state,
-            "version": self.version,
-            "device": self.device,
-            "batches": self.tally.calls,
-            "runs": self.tally.runs,
-            "gpu_hours": self.tally.seconds / 3600,
-        }
-        manifest.write_experiment_manifest(
+        session = manifest.SessionEntry(
+            id=self.id,
+            environment=self.environment,
+            device=self.device,
+            version=self.version,
+            started_at=self.started_at,
+            finished_at=_now(),
+            state=self.state,
+            batches=self.tally.calls,
+            runs=self.tally.runs,
+            gpu_hours=self.tally.seconds / 3600,
+        )
+        manifest.record_session(
             self.path,
-            self.spec,
             self.identity,
-            self.loaded,
             session,
-            self.states,
-            len(self.expansion.runs),
+            model_id=self.loaded.spec.hf_id,
+            states=self.states,
+            total=len(self.expansion.runs),
         )
 
     def _save_speed(self) -> None:

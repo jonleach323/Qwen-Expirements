@@ -78,9 +78,10 @@ and a second one to watch it.
    `--limit`, and 130 after Ctrl-C. After 130, or 3 from `--limit`, the
    same command goes on. After 1, 2, or 3 at the cap, read what it said
    first: it needs a fix, a look at the failed runs, or a higher cap.
-7. **Check it, then read it.** Once it has finished, check that every run
-   and its steps are saved and agree with the experiment file. It loads no
-   model and writes nothing, and lists any problem it finds:
+7. **Check it, then read it.** Once `pushlab status` says every run is
+   saved, check that every run and its steps are saved and agree with the
+   experiment file. It loads no model and writes nothing, and lists any
+   problem it finds; before then it fails, naming the runs not saved yet:
 
    ```bash
    uv run pushlab verify experiments/p0/s2_pulse_lengths.yaml
@@ -93,7 +94,8 @@ and a second one to watch it.
    has a marker, such as [**A on**] or [**A off, B on**], before the first
    token chosen after each change of pushes, and a legend at the top says
    what A and B are. Save it outside the runner folder, as here: it refuses
-   an `--out` inside it.
+   an `--out` inside it. Replies of a batch saved before steps were kept
+   have no markers, and say so.
 
    ```bash
    uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
@@ -105,7 +107,9 @@ and a second one to watch it.
    all.
 
    To count or average anything over every experiment in `/workspace/runs`,
-   ask DuckDB (`pushlab.store.query`; S0's and S1's folders are left out):
+   ask DuckDB (`pushlab.store.query`). S0's and S1's folders are left out,
+   and so is a copy of a runner folder under another name, such as a
+   backup, with a warning that names it:
 
    ```bash
    uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"

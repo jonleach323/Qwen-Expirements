@@ -353,12 +353,12 @@ def test_a_reply_whose_steps_do_not_match_its_tokens_has_no_markers(
 ) -> None:
     runs, out = tmp_path / "runs", tmp_path / "report.md"
     assert _run(spec, runs, "--limit", "5") == 3
-    real = shards.read_result_steps
+    real = shards.read_steps
 
-    def cut(path: Path) -> dict:  # every run's last step lost
-        return {run_id: steps[:-1] for run_id, steps in real(path).items()}
+    def cut(path: Path, wanted: dict[str, str]) -> dict:  # each last step lost
+        return {run_id: steps[:-1] for run_id, steps in real(path, wanted).items()}
 
-    monkeypatch.setattr(shards, "read_result_steps", cut)
+    monkeypatch.setattr(shards, "read_steps", cut)
     assert _report(spec, runs, out) == 0
     replies = _replies(out.read_text(encoding="utf-8"))
     assert len(replies) == 5

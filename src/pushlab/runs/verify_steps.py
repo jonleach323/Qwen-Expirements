@@ -55,10 +55,13 @@ def first_of(problems: list[str]) -> str:
 
     Example:
         >>> first_of(["x: step 2 pushes B", "x: step 5 pushes B"])
-        'x: step 2 pushes B; 1 more step disagree'
+        'x: step 2 pushes B; 1 more step disagrees'
     """
     rest = len(problems) - 1
-    return problems[0] + (f"; {count(rest, 'more step')} disagree" if rest else "")
+    if not rest:
+        return problems[0]
+    verb = "disagrees" if rest == 1 else "disagree"
+    return f"{problems[0]}; {count(rest, 'more step')} {verb}"
 
 
 def scheduled_pushes(schedule: Schedule, step: int) -> dict[str, float]:
@@ -82,8 +85,24 @@ def scheduled_pushes(schedule: Schedule, step: int) -> dict[str, float]:
 
 @dataclass
 class Bound:
-    """The dose-1 amounts that fit a unit's amounts so far, with where each
-    end comes from and the amount per dose there."""
+    """The dose-1 amounts that fit a unit's amounts so far: those from low
+    to high, with where each end comes from and the amount per dose there.
+
+    An amount saved in 16 bits, divided by its dose, gives the unit's dose-1
+    amount only up to its rounding: a range of them. The bound is where the
+    ranges of all the amounts added overlap. Once low is above high, no one
+    dose-1 amount fits them all, and disagreement names two that clash.
+
+    Example:
+        >>> bound = Bound()
+        >>> bound.add_amount(1.5, 1.0, "step 0")
+        >>> bound.add_amount(-3.0, -2.0, "step 1")  # 1.5 per dose again
+        >>> bound.disagreement("at") is None
+        True
+        >>> bound.add_amount(3.1, 2.0, "step 2")  # 1.55 per dose
+        >>> bound.disagreement("at")
+        'is 1.5 at step 0 but 1.55 at step 2, not one number'
+    """
 
     low: float = -math.inf
     high: float = math.inf
@@ -91,18 +110,46 @@ class Bound:
     high_at: tuple[str, float] = ("", 0.0)
 
     def add(self, low: float, high: float, where: str, ratio: float) -> None:
+        """Narrow the bound to the dose-1 amounts from low to high, which
+        where allows; ratio is where's amount per dose, for the message.
+
+        Example:
+            >>> bound = Bound()
+            >>> bound.add(1.0, 2.0, "run 1", 1.5)
+            >>> bound.add(1.5, 3.0, "run 2", 2.0)
+            >>> bound.low, bound.high, bound.low_at
+            (1.5, 2.0, ('run 2', 2.0))
+        """
         if low > self.low:
             self.low, self.low_at = low, (where, ratio)
         if high < self.high:
             self.high, self.high_at = high, (where, ratio)
 
     def add_amount(self, amount: float, dose: float, where: str) -> None:
+        """Narrow the bound to the dose-1 amounts that give amount at dose,
+        a dose other than 0, up to twice the amount's 16-bit rounding.
+
+        Example:
+            >>> bound = Bound()
+            >>> bound.add_amount(-2.0, -1.0, "step 3")  # 2 per dose, give or take
+            >>> bound.low, bound.high
+            (1.998046875, 2.001953125)
+        """
         slack = max(abs(amount) * RELATIVE, ABSOLUTE)
         ends = sorted(((amount - slack) / dose, (amount + slack) / dose))
         self.add(*ends, where, amount / dose)
 
     def disagreement(self, at: str) -> str | None:
-        """Two amounts per dose that no one dose-1 amount fits, or None."""
+        """Two amounts per dose that no one dose-1 amount fits, in words,
+        each followed by at and where it comes from; None if one fits all.
+
+        Example:
+            >>> bound = Bound()
+            >>> bound.add_amount(1.0, 1.0, "step 0")
+            >>> bound.add_amount(2.0, 1.0, "step 1")
+            >>> bound.disagreement("at")
+            'is 1 at step 0 but 2 at step 1, not one number'
+        """
         if self.low <= self.high:
             return None
         (less, low), (more, high) = self.high_at, self.low_at
@@ -176,7 +223,8 @@ def check_steps(
         if tuple(want := scheduled_pushes(schedule, j)) != units:
             note("units", _mismatch(j, units, list(want)))
         elif len(amounts) != len(units):
-            note("amounts", f"step {j} has {len(amounts)} amounts for its units")
+            given = f"{count(len(amounts), 'amount')} for {count(len(units), 'unit')}"
+            note("amounts", f"step {j} has {given}")
         else:
             for unit, amount in zip(units, amounts, strict=True):
                 if not _agrees(amount, dose := want[unit]):

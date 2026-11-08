@@ -6,7 +6,9 @@ set again, as the session uses them, and refuses them if they changed in
 between. run_call then runs one call's runs together, every row where the
 plan puts it, and returns the records of its due runs: ok with their
 replies and their steps (pushlab.store.steps), or all failed with the
-error, so that one bad call never stops an unattended run.
+error, when generate raised or the steps cannot be saved (an amount no
+16-bit float holds, as a huge dose gives), so that one bad call never
+stops an unattended run.
 """
 
 import time
@@ -16,7 +18,12 @@ from typing import Any
 from pushlab.runs.plan import Call
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.records import RunRecord
-from pushlab.store.steps import StepRecord
+from pushlab.store.steps import MAX_FLOAT16, StepRecord, steps_table
+
+# What a call's error adds when its steps hold an amount no 16-bit float can.
+LOWER_THE_DOSE = (
+    f"lower the dose, as 16-bit steps hold amounts up to {MAX_FLOAT16:,.0f}"
+)
 
 
 @dataclass(frozen=True)
@@ -66,7 +73,8 @@ def session_inputs(
 @dataclass(frozen=True)
 class Outcome:
     """What one call gave: the due runs' records and their steps, the error if
-    it raised, and its generation seconds and reply tokens over all its rows."""
+    it raised or its steps cannot be saved, and its generation seconds and
+    reply tokens over all its rows."""
 
     records: list[RunRecord]
     error: str | None
@@ -100,6 +108,45 @@ def reply_steps(run_id: str, reply: Any) -> list[StepRecord]:
             zip(reply.token_ids, reply.logprobs, reply.amounts, strict=True)
         )
     ]
+
+
+def saveable_steps(
+    replies: list[tuple[str, Any]],
+) -> tuple[list[StepRecord], str | None]:
+    """The steps of replies, given as (run ID, reply) pairs, checked as
+    steps_table checks them before they are saved; or no steps and why they
+    cannot be saved, with how to fix it.
+
+    Example:
+        >>> from pushlab.engine.generate import Generation
+        >>> from pushlab.schedules.compile import UnitAmount
+        >>> from pushlab.units.neuron import NeuronUnit
+        >>> pushed = (UnitAmount(NeuronUnit("tiny", 1, 5), 70_000.0),)
+        >>> reply = replace(
+        ...     Generation("Hi", (7, 8), "max_new_tokens", (1,), ((), pushed)),
+        ...     logprobs=(-1.0, -2.0),
+        ... )
+        >>> steps, why = saveable_steps([("x-000001", reply)])
+        >>> steps, why.endswith(LOWER_THE_DOSE)
+        ([], True)
+    """
+    try:
+        steps = [
+            step for run_id, reply in replies for step in reply_steps(run_id, reply)
+        ]
+        steps_table(steps)  # as saving them will check them
+    except ValueError as error:
+        why = f"the batch's steps cannot be saved: {error}"
+        amounts = [
+            pushed.amount
+            for _, reply in replies
+            for pushes in reply.amounts
+            for pushed in pushes
+        ]
+        if not all(abs(amount) <= MAX_FLOAT16 for amount in amounts):  # or NaN
+            why += f"; {LOWER_THE_DOSE}"
+        return [], why
+    return steps, None
 
 
 def record_schedule(record: RunRecord) -> Any:
@@ -191,14 +238,11 @@ def run_call(
                 f"; lower batch_size ({spec.batch_size}) in the experiment file, "
                 "through a pull request"
             )
-        failed = [
-            replace(record, model=model, batch_key=f"{stem}:{row}", status="failed")
-            for row, record in enumerate(planned)
-            if record.run_id in call.due
-        ]
+        failed = _failed(call, planned, stem, model)
         return Outcome(failed, message, time.perf_counter() - start, 0)
     seconds = time.perf_counter() - start
-    done, steps = [], []
+    tokens = sum(len(reply.token_ids) for reply in replies)
+    done, due = [], []
     for row, (record, reply) in enumerate(zip(planned, replies, strict=True)):
         if record.run_id in call.due:
             done.append(
@@ -211,6 +255,20 @@ def run_call(
                     status="ok",
                 )
             )
-            steps += reply_steps(record.run_id, reply)
-    tokens = sum(len(reply.token_ids) for reply in replies)
+            due.append((record.run_id, reply))
+    # Checked now, so that steps no file can hold fail this call, not the run.
+    steps, why = saveable_steps(due)
+    if why is not None:
+        return Outcome(_failed(call, planned, stem, model), why, seconds, tokens)
     return Outcome(done, None, seconds, tokens, steps)
+
+
+def _failed(
+    call: Call, planned: list[RunRecord], stem: str, model: str
+) -> list[RunRecord]:
+    """The call's due runs, failed, each at its row."""
+    return [
+        replace(record, model=model, batch_key=f"{stem}:{row}", status="failed")
+        for row, record in enumerate(planned)
+        if record.run_id in call.due
+    ]

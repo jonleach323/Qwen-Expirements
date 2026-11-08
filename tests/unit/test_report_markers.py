@@ -131,6 +131,75 @@ def test_after_an_alternation_the_next_marker_compares_with_its_last_turn() -> N
     assert marks(sets) == [(0, "[A/B x6]"), (6, "[B off]"), (8, "[A on]")]
 
 
+def test_an_alternation_collapses_only_while_each_turn_is_16_steps_or_less() -> None:
+    assert marks(_sets(*[("A", 16), ("B", 16)] * 2)) == [(0, "[A/B x4]")]
+    assert marks(_sets(("", 1), *[("A", 16), ("", 16)] * 2)) == [(1, "[A on/off x4]")]
+    # Longer turns keep a marker each, so every switch shows.
+    assert marks(_sets(*[("A", 17), ("B", 17)] * 2)) == [
+        (0, "[A on]"),
+        (17, "[A off, B on]"),
+        (34, "[B off, A on]"),
+        (51, "[A off, B on]"),
+    ]
+
+
+def test_two_pulses_far_apart_and_two_slow_handoffs_keep_every_marker() -> None:
+    sets = _sets(("", 2), ("A", 3), ("", 35), ("A", 3), ("", 17))
+    assert marks(sets) == [
+        (2, "[A on]"),
+        (5, "[A off]"),
+        (40, "[A on]"),
+        (43, "[A off]"),
+    ]
+    sets = _sets(("A", 20), ("B", 20), ("A", 10), ("B", 10))
+    assert marks(sets) == [
+        (0, "[A on]"),
+        (20, "[A off, B on]"),
+        (40, "[B off, A on]"),
+        (50, "[A off, B on]"),
+    ]
+
+
+def test_the_replys_last_turn_may_be_long() -> None:
+    # The reply's end may cut it, and no switch follows it.
+    sets = _sets(*[("A", 2), ("", 2)] * 2, ("A", 2), ("", 40))
+    assert marks(sets) == [(0, "[A on/off x6]")]
+
+
+def test_a_long_turn_has_its_own_marker_and_short_turns_around_it_collapse() -> None:
+    # A for 32 steps, then B and A taking turns every 2 steps from step 33.
+    sets = _sets(("", 1), ("A", 32), *[("B", 2), ("A", 2)] * 3)
+    assert marks(sets) == [(1, "[A on]"), (33, "[B/A x6]")]
+    # Turns of 2 steps, then A for 40 steps, then C.
+    sets = _sets(*[("A", 2), ("B", 2)] * 2, ("A", 40), ("C", 5))
+    assert marks(sets) == [(0, "[A/B x4]"), (8, "[B off, A on]"), (48, "[A off, C on]")]
+    # A long turn in the middle: three short turns before it are too few.
+    sets = _sets(("A", 2), ("B", 2), ("A", 2), ("B", 30), *[("A", 2), ("B", 2)] * 2)
+    assert marks(sets) == [
+        (0, "[A on]"),
+        (2, "[A off, B on]"),
+        (4, "[B off, A on]"),
+        (6, "[A off, B on]"),
+        (36, "[A/B x4]"),
+    ]
+
+
+def test_a_unit_on_before_and_in_both_sets_is_not_said_on_again() -> None:
+    sets = _sets(("C", 1), *[("AC", 1), ("BC", 1)] * 2)
+    assert marks(sets) == [(0, "[C on]"), (1, "[A/B x4]")]
+
+
+def test_a_unit_in_the_next_alternation_is_not_said_off() -> None:
+    # B is in both alternations, so it stays on: nothing switches off at step 4.
+    sets = _sets(*[("X", 1), ("B", 1)] * 2, *[("A", 1), ("B", 1)] * 2)
+    assert marks(sets) == [(0, "[X/B x4]"), (4, "[A/B x4]")]
+
+
+def test_a_unit_that_goes_off_and_on_again_says_off_on() -> None:
+    sets = _sets(("A", 30), *[("", 2), ("A", 2)] * 2)
+    assert marks(sets) == [(0, "[A on]"), (30, "[A off/on x4]")]
+
+
 def test_several_units_that_switch_together_join_with_plus() -> None:
     sets = _sets(("", 1), ("AB", 1), ("C", 1), ("", 1))
     assert marks(sets) == [(1, "[A+B on]"), (2, "[A+B off, C on]"), (3, "[C off]")]
@@ -225,6 +294,10 @@ def test_with_markers_writes_each_marker_in_bold_at_its_place() -> None:
     placed = [(1, "[A on]"), (1, "[A off]"), (3, "[B on]")]
     assert with_markers("a*b(c)", placed) == (
         "a[**A on**][**A off**]\\*b[**B on**]\\(c\\)"
+    )
+    # Markers given out of order go in order of their places.
+    assert with_markers("Hi you", [(3, "[B on]"), (0, "[A on]")]) == (
+        "[**A on**]Hi [**B on**]you"
     )
     with pytest.raises(ValueError, match="7"):
         with_markers("Hi", [(7, "[A on]")])

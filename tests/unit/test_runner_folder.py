@@ -350,3 +350,34 @@ def test_a_crash_in_the_first_identity_write_leaves_a_folder_it_can_use(
     assert _run(tiny_spec(), tmp_path / "runs", "--limit", "2") == 3
     assert not leftover.exists()
     assert len(read_results(folder)) == 2
+
+
+def test_a_run_or_step_saved_twice_in_one_file_is_read_as_its_first_copy(
+    tmp_path: Path,
+) -> None:
+    """Only a hand edit makes these (verify reports them); the readers then
+    agree with the DuckDB views on which copy counts."""
+    from pushlab.store.steps import StepRecord, steps_table
+
+    first, second = _record(1), dataclasses.replace(_record(1), output_text="other")
+    (tmp_path / "shards").mkdir()
+    pq.write_table(_two(first, second), tmp_path / "shards" / "s.parquet")
+    records = shards_module.read_records(tmp_path, {first.run_id: "s.parquet"})
+    assert records[first.run_id].output_text == first.output_text
+    step = StepRecord(first.run_id, 0, "reply", 7, -1.0, (), ())
+    later = dataclasses.replace(step, token_id=8)
+    (tmp_path / "steps").mkdir()
+    pq.write_table(steps_table([step, later]), tmp_path / "steps" / "s.parquet")
+    (only,) = shards_module.read_steps(tmp_path, {first.run_id: "s.parquet"})[
+        first.run_id
+    ]
+    assert only.token_id == 7
+
+
+def _two(first: RunRecord, second: RunRecord):  # type: ignore[no-untyped-def]
+    """A runs table holding one run twice, which runs_table itself refuses."""
+    import pyarrow as pa
+
+    from pushlab.store.records import runs_table
+
+    return pa.concat_tables([runs_table([first]), runs_table([second])])

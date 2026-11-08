@@ -1,10 +1,10 @@
 """DuckDB views across every experiment's runs and steps.
 
 connect() opens an in-memory DuckDB connection with three views over every
-runner folder in a runs dir (a folder with experiment.json, as
-pushlab.runs.folder describes). Each holds a folder's current version only,
-and each run as its latest mark in the index says, as pushlab.runs.shards
-reads them:
+runner folder in a runs dir: a folder with experiment.json, as
+pushlab.runs.folder describes, whose name is its experiment's, as the
+runner names it. Each view holds a folder's current version only, and each
+run as its latest mark in the index says, as pushlab.runs.shards reads them:
 - runs: one row per saved run, ok or failed, with the runs table's columns
   (pushlab.store.records) and the version. schedule and decoding are JSON
   text, which DuckDB's JSON functions read, such as decoding->>'$.dtype'.
@@ -13,11 +13,24 @@ reads them:
 - conditions: each saved run's experiment, version, run ID and condition
   label from experiment.json, such as "pulse length=16", to group runs or
   steps by with a join; NULL in a folder saved before labels were kept.
+So each run of an experiment shows once, and each of its steps once, and
+(experiment, version, run_id) names one run.
 
 The marks are read in Python, from each folder's index, and DuckDB reads
 only the files they name, matching each row to its mark by file and run ID.
 So an older version's runs, a shard no mark names and an earlier attempt at
 a run never show; a run a new version kept shows from the shard holding it.
+A run written twice into one shard shows once, as the copy whose status is
+its mark's, the first such in the file; a step written twice, its first
+copy. pushlab verify reports both.
+
+A folder whose name is not the experiment its experiment.json names is a
+copy, such as a backup beside the folder or a link to it under another
+name: the runner keeps an experiment's runs in <runs dir>/<experiment> only.
+Copies are left out, with a warning that names them, so that no run counts
+twice; to query one, give connect a runs dir in which it has its
+experiment's name. A link under the experiment's own name counts as the
+folder, once, as no runs dir holds two entries of one name.
 
 Example:
     >>> con = connect(Path("/workspace/runs"))  # doctest: +SKIP
@@ -29,6 +42,7 @@ Example:
 """
 
 import re
+import warnings
 from pathlib import Path
 
 import duckdb
@@ -44,6 +58,7 @@ MARKS_SCHEMA = pa.schema(
         pa.field("experiment", pa.string(), nullable=False),
         pa.field("version", pa.int64(), nullable=False),
         pa.field("run_id", pa.string(), nullable=False),
+        pa.field("status", pa.string()),  # as its mark says
         pa.field("condition", pa.string()),  # None without a label
         pa.field("shard", pa.string(), nullable=False),  # its runs file's path
         pa.field("steps", pa.string()),  # its steps file's path; None without one
@@ -60,8 +75,10 @@ def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
 
     Other folders, such as S1's with one runs.parquet, and files are
     skipped; with no runner folder, or nothing saved, the views have their
-    columns and no rows. The views are a snapshot of what was saved when
-    connect was called: connect again to see later batches.
+    columns and no rows. A copy of a runner folder, whose name is not its
+    experiment's, is skipped with a UserWarning. The views are a snapshot
+    of what was saved when connect was called: connect again to see later
+    batches.
 
     FileNotFoundError says when runs_dir is not a folder or a shard that an
     index names is missing; ValueError when runs_dir is a run folder itself,
@@ -86,14 +103,19 @@ def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
     steps = _source(con, "_no_steps", STEPS_SCHEMA, marks["steps"].to_pylist())
     run_columns = ", ".join(f'r."{name}"' for name in RUNS_SCHEMA.names)
     step_columns = ", ".join(f's."{name}"' for name in STEPS_SCHEMA.names)
+    # Each run once, and each step once, should a file hold one twice.
     con.execute(
         f"CREATE VIEW runs AS SELECT {run_columns}, m.version FROM {runs} AS r "
-        "JOIN _marks AS m ON r.filename = m.shard AND r.run_id = m.run_id"
+        "JOIN _marks AS m ON r.filename = m.shard AND r.run_id = m.run_id "
+        "QUALIFY row_number() OVER (PARTITION BY m.experiment, r.run_id "
+        "ORDER BY r.status = m.status DESC, r.file_row_number) = 1"
     )
     con.execute(
         f"CREATE VIEW steps AS SELECT {step_columns}, m.experiment, m.version "
         f"FROM {steps} AS s "
-        "JOIN _marks AS m ON s.filename = m.steps AND s.run_id = m.run_id"
+        "JOIN _marks AS m ON s.filename = m.steps AND s.run_id = m.run_id "
+        "QUALIFY row_number() OVER (PARTITION BY m.experiment, s.run_id, s.step "
+        "ORDER BY s.file_row_number) = 1"
     )
     con.execute(
         "CREATE VIEW conditions AS "
@@ -103,7 +125,8 @@ def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
 
 
 def _marks(runs_dir: Path) -> pa.Table:
-    """Each saved run of every runner folder in runs_dir, as MARKS_SCHEMA."""
+    """Each saved run of every runner folder in runs_dir, as MARKS_SCHEMA; a
+    copy of one is left out, with a warning (see the module's docstring)."""
     if not runs_dir.is_dir():
         raise FileNotFoundError(
             f"there is no folder {runs_dir}; the runs dir is the folder that "
@@ -123,6 +146,9 @@ def _marks(runs_dir: Path) -> pa.Table:
         # The identity first: a new version's marks are all in the index
         # before its experiment.json is.
         experiment, version = identity["experiment"], identity["version"]
+        if path.name != experiment:
+            warnings.warn(_copy(path, experiment), stacklevel=3)
+            continue
         labels = identity.get("conditions") or {}
         states = folder.latest(folder.read_index(path), version)
         files: dict[str, tuple[str, str | None]] = {}
@@ -130,9 +156,24 @@ def _marks(runs_dir: Path) -> pa.Table:
             name = state["shard"]
             if name not in files:
                 files[name] = _files(path, name)
-            rows.append((experiment, version, run_id, labels.get(run_id), *files[name]))
+            mark = (experiment, version, run_id, state["status"], labels.get(run_id))
+            rows.append((*mark, *files[name]))
     named = [dict(zip(MARKS_SCHEMA.names, row, strict=True)) for row in rows]
     return pa.Table.from_pylist(named, schema=MARKS_SCHEMA)
+
+
+def _copy(path: Path, experiment: str) -> str:
+    """Why the views leave out path, a copy of experiment's runner folder.
+
+    Example:
+        >>> _copy(Path("/workspace/runs/x-old"), "x")  # doctest: +NORMALIZE_WHITESPACE
+        "/workspace/runs/x-old is left out of the views: its experiment.json is
+        x's, whose runner folder is /workspace/runs/x, so it is a copy"
+    """
+    return (
+        f"{path} is left out of the views: its experiment.json is {experiment}'s, "
+        f"whose runner folder is {path.with_name(experiment)}, so it is a copy"
+    )
 
 
 def _files(path: Path, name: str) -> tuple[str, str | None]:
@@ -153,16 +194,24 @@ def _source(
     schema: pa.Schema,
     paths: list[str | None],
 ) -> str:
-    """SQL for a table of schema's columns and filename, the file each row
-    is from: read_parquet over the paths, each once, or with no paths an
-    empty table registered as name, typed as read_parquet would type it."""
+    """SQL for a table of schema's columns, filename, the file each row is
+    from, and file_row_number, its place there: read_parquet over the paths,
+    each once, or with no paths an empty table registered as name, typed as
+    read_parquet would type it."""
     files = sorted({path for path in paths if path is not None})
     if files:
         listed = ", ".join(_literal(_pattern(file)) for file in files)
         # Without hive_partitioning off, a folder such as step=3 is a column.
-        return f"read_parquet([{listed}], filename = true, hive_partitioning = false)"
+        return (
+            f"read_parquet([{listed}], filename = true, file_row_number = true, "
+            "hive_partitioning = false)"
+        )
     fields = [field.with_type(_readable(field.type)) for field in schema]
-    empty = pa.schema([*fields, pa.field("filename", pa.string())]).empty_table()
+    fields += [
+        pa.field("filename", pa.string()),
+        pa.field("file_row_number", pa.int64()),
+    ]
+    empty = pa.schema(fields).empty_table()
     con.register(name, empty)
     return name
 

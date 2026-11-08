@@ -1,18 +1,21 @@
 """`pushlab report SPEC`: an experiment's replies, with markers where its
 pushes switch.
 
-It reads the experiment file and its runner folder (pushlab.runs.folder):
-the saved runs of the folder's version, their steps (pushlab.runs.shards)
-and each run's condition label, from experiment.json. Under a section per
-prompt come the replies of the conditions asked for, in their order, each
-condition's own run first and then its controls, with a short marker before
-the first token chosen with each change in the units pushed
-(pushlab.analysis.markers): [A on], [A off, B on], or [A/B x8] for a long
-alternation. One line says which unit each letter is; a control's random
-neuron takes the letter of the unit it stands for, and its label names it.
-The model's tokenizer finds each marker's place in the text. The report is
-one Markdown file with no tables, so it reads on a phone. It loads no model
-and writes nothing but the report.
+It reads the experiment file and its runner folder
+(pushlab.analysis.report_folder): each run's condition label, from
+experiment.json, and the saved runs of the conditions asked for in the
+folder's version, with their steps. Under a section per prompt come their
+replies, in the conditions' order, each condition's own run first and then
+its controls, with a short marker before the first token chosen with each
+change in the units pushed (pushlab.analysis.markers): [A on], [A off,
+B on], or [A/B x8] for a long alternation of short turns. One line says
+which unit each letter is; a control's random neuron takes the letter of
+the unit it stands for, and its label names it. The model's tokenizer finds
+each marker's place in the text. A batch whose steps file is missing, as
+one saved before steps were kept, or cannot be read shows its replies
+without markers, with a note. The report is one Markdown file with no
+tables, so it reads on a phone. It loads no model and writes nothing but
+the report.
 """
 
 import sys
@@ -30,8 +33,9 @@ from pushlab.analysis.markers import (
     stand_ins,
     with_markers,
 )
+from pushlab.analysis.report_folder import changed_notes, runner_folder, saved_runs
 from pushlab.prompts import read_prompt_set
-from pushlab.runs import folder, shards
+from pushlab.runs import folder
 from pushlab.runs.spec import ExperimentSpec, read_spec
 from pushlab.store.records import RunRecord
 from pushlab.store.steps import StepRecord
@@ -39,8 +43,9 @@ from pushlab.store.steps import StepRecord
 # What a marker means, the line under the legend.
 MEANING = (
     "A marker sits before the first token chosen with that change: a push on "
-    "reply token k first changes token k + 1 (decision 0008). [**A/B x8**] is "
-    "8 turns of A and B."
+    "reply token k first changes token k + 1. x8 is 8 turns: [**A/B x8**] is "
+    "A, then B, 4 times; [**A on/off x8**] is A on, then off, 4 times; "
+    "[**A off/on x8**] is A off, then on, 4 times."
 )
 FAILED = "*failed, so it has no reply; pushlab status shows why*"
 
@@ -60,47 +65,6 @@ def _and(items: Sequence[str]) -> str:
 def _quoted(labels: Sequence[str]) -> str:
     """Labels in quotes, as --conditions takes them."""
     return _and([f'"{label}"' for label in labels])
-
-
-def runner_folder(spec: ExperimentSpec, runs_dir: Path) -> tuple[Path, dict[str, Any]]:
-    """The experiment's runner folder, runs_dir/<name>, and its experiment.json.
-
-    ValueError says why there is none to report on: the folder is missing,
-    is not a runner folder, is another experiment's, or does not name its
-    runs' conditions.
-
-    Example:
-        >>> runner_folder(spec, Path("/workspace/runs"))[0]  # doctest: +SKIP
-        PosixPath('/workspace/runs/s2-pulse-lengths')
-    """
-    path = runs_dir / spec.name
-    if not path.exists():
-        raise ValueError(
-            f"{path} does not exist: no run of {spec.name} is saved there yet; "
-            "pushlab run makes it"
-        )
-    if not path.is_dir():
-        raise ValueError(f"{path} is not a folder")
-    identity = folder.read_identity(path)
-    if identity is None:
-        raise ValueError(
-            f"{path} is not a runner folder: it has no {folder.IDENTITY_FILE}"
-        )
-    if identity["experiment"] != spec.name:
-        raise ValueError(
-            f"{path} belongs to the experiment {identity['experiment']!r}, "
-            f"not {spec.name!r}"
-        )
-    labels = identity.get("conditions")
-    if (
-        not isinstance(labels, dict)
-        or not labels
-        or not all(isinstance(label, str) for label in labels.values())
-    ):
-        raise ValueError(
-            f"{path / folder.IDENTITY_FILE} does not name each run's condition"
-        )
-    return path, identity
 
 
 def chosen_conditions(
@@ -204,15 +168,16 @@ def _reply(
     run_steps: list[StepRecord],
     letter_of: dict[str, str],
     decode: Callable[[Sequence[int]], str],
+    steps_note: str | None = None,
 ) -> str:
-    """A run's reply as Markdown, with its markers and short notes."""
+    """A run's reply as Markdown, with its markers and short notes;
+    steps_note, when given, says why its steps cannot be used."""
     if run.status == "failed":
         return FAILED
     tokens, text = run.output_tokens, run.output_text
     notes = []
-    if [s.step for s in run_steps] == list(range(len(tokens))) and [
-        s.token_id for s in run_steps
-    ] == tokens:
+    whole = [s.step for s in run_steps] == list(range(len(tokens)))
+    if steps_note is None and whole and [s.token_id for s in run_steps] == tokens:
         units = [step.active_units for step in run_steps]
         sets = active_sets(units, letter_of, stand_ins(run.schedule))
         reply = with_markers(text, places(text, tokens, marks(sets), decode))
@@ -221,7 +186,8 @@ def _reply(
     else:
         reply = markdown_text(text)
         notes.append(
-            "its steps do not match its tokens, so it has no markers; "
+            steps_note
+            or "its steps do not match its tokens, so it has no markers; "
             "pushlab verify says more"
         )
     limit = run.decoding.get("max_new_tokens")
@@ -229,7 +195,8 @@ def _reply(
         notes.append(f"reached the {limit}-token limit")
     if run.status != "ok":
         notes.append(f"status {run.status}")
-    return (reply or "*(no text)*") + "".join(f" *({note})*" for note in notes)
+    notes_text = "".join(f" *({markdown_text(note)})*" for note in notes)
+    return (reply or "*(no text)*") + notes_text
 
 
 def experiment_markdown(
@@ -246,9 +213,12 @@ def experiment_markdown(
     decode is the tokenizer's, without special tokens, and tokenizer_model
     the download it is from (<model>@<revision>): a note says when the runs
     were made with another. Notes also say when runs of the conditions are
-    not saved yet, and when the prompt set changed since the version was
-    made. ValueError says when no run of the conditions is saved yet, or the
-    saved runs or the prompt set cannot be read.
+    not saved yet, and when the experiment file, the prompt set or the known
+    units changed since the version was made. Only the batches that hold
+    the chosen conditions' runs are read; one whose steps file is missing
+    or cannot be read shows its replies without markers, each with a note.
+    ValueError says when no run of the conditions is saved yet, or the
+    index, a runs shard or the prompt set cannot be read.
 
     Example:
         >>> experiment_markdown(
@@ -257,10 +227,7 @@ def experiment_markdown(
         5
     """
     labels, version = identity["conditions"], identity["version"]
-    try:
-        runs, steps = shards.read_results(path), shards.read_result_steps(path)
-    except (OSError, ValueError) as error:
-        raise ValueError(f"cannot read the runs saved in {path}: {error}") from None
+    runs, steps, steps_notes = saved_runs(path, identity, chosen)
     groups = _groups(runs, labels, chosen)
     if not groups:
         raise ValueError(
@@ -294,6 +261,7 @@ def experiment_markdown(
             f"Not saved yet: {count} of these conditions; pushlab status says how "
             "far the run has got."
         )
+    notes += changed_notes(spec, identity)
     if prompt_set.sha256 != identity.get("prompts_sha256"):
         notes.append(
             f"{spec.prompts} changed since version {version} was made, so the "
@@ -313,7 +281,8 @@ def experiment_markdown(
         lines.append(f"Prompt: {markdown_text(prompt)}")
         for run in group:
             label = _label(run, labels[run.run_id], letter_of, seeds)
-            reply = _reply(run, steps.get(run.run_id, []), letter_of, decode)
+            run_steps, note = steps.get(run.run_id, []), steps_notes.get(run.run_id)
+            reply = _reply(run, run_steps, letter_of, decode, note)
             lines += ["", f"**{markdown_text(label)}**: {reply}"]
     replies = sum(run.status != "failed" for run in shown)
     return "\n".join(lines) + "\n", replies
@@ -335,8 +304,8 @@ def run_experiment_report(
     an experiment file it cannot read, a runner folder that is missing or
     not this experiment's, an unknown condition (it lists the experiment's),
     an out that is a folder, exists unless overwrite, or lies inside the
-    runner folder, a tokenizer that is not downloaded, and saved runs it
-    cannot read.
+    runner folder, a tokenizer that is not downloaded, and an index or runs
+    shard it cannot read (a steps file it cannot read only gives notes).
 
     Example:
         >>> run_experiment_report(

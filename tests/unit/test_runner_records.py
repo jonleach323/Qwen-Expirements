@@ -16,6 +16,7 @@ from pushlab.runs.folder import read_identity, read_index
 from pushlab.runs.shards import read_results
 from pushlab.runs.spec import read_spec
 from pushlab.store import environment
+from pushlab.store.manifest import check_experiment_manifest
 
 NAME = "tiny-pulses"
 
@@ -170,3 +171,42 @@ def test_stale_counts_are_restamped_and_a_broken_manifest_only_warns(
     capsys.readouterr()
     assert _run(spec, runs) == 0  # nothing to run, and no refusal
     assert "warning: " in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["{not json", "[1]", '{"sessions": [1, {"id": "a"}]}'],
+    ids=["not-json", "not-an-object", "broken-sessions"],
+)
+def test_a_session_runs_with_a_broken_manifest_and_rewrites_it_whole(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    text: str,
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "4") == 3
+    path = runs / NAME / "manifest.json"
+    path.write_text(text)
+    capsys.readouterr()
+    assert _run(spec, runs) == 0  # the 6 runs left are run all the same
+    assert "pushlab run: warning: " in capsys.readouterr().err
+    manifest = json.loads(path.read_text())
+    check_experiment_manifest(manifest)
+    assert manifest["runs_by_status"] == {"ok": 10, "failed": 0, "pending": 0}
+    # The first session's entry was in the broken file; this session's is new.
+    assert [session["runs"] for session in manifest["sessions"]] == [6]
+    assert main(["verify", str(spec), "--runs-dir", str(runs)]) == 0
+
+
+def test_a_finished_experiments_manifest_that_is_not_an_object_only_warns(
+    tiny_spec: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec, runs = tiny_spec(), tmp_path / "runs"
+    assert _run(spec, runs) == 0
+    path = runs / NAME / "manifest.json"
+    path.write_text("5")
+    capsys.readouterr()
+    assert _run(spec, runs) == 0  # nothing to run, and no crash
+    assert "manifest.json is not a JSON object" in capsys.readouterr().err
+    assert path.read_text() == "5"  # left as it is: no session ran to rewrite it

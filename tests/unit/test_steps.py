@@ -105,6 +105,31 @@ def test_a_file_with_other_columns_is_refused(tmp_path: Path) -> None:
         read_steps_file(path)
 
 
+def test_a_file_with_the_columns_but_other_types_is_refused(tmp_path: Path) -> None:
+    """Steps saved as 64-bit numbers, as pandas or DuckDB would save them,
+    are not the compact steps table, though every column is there."""
+    path = tmp_path / "wide.parquet"
+    columns = steps_table([_step()]).to_pydict()
+    wide = {"step": pa.int64(), "token_id": pa.int64(), "logprob": pa.float64()}
+    wide |= {"active_amounts": pa.list_(pa.float64())}
+    table = pa.table(
+        {name: pa.array(values, wide.get(name)) for name, values in columns.items()}
+    )
+    assert table.schema.names == STEPS_SCHEMA.names
+    pq.write_table(table, path)
+    with pytest.raises(ValueError, match="is not a steps table") as error:
+        read_steps_file(path)
+    message = str(error.value)
+    # Every column of such a file may also be null, which no step's may be.
+    assert "step is int64 or null, not int16" in message
+    assert "logprob is float64 or null, not float16" in message
+    assert "active_amounts is list of float64 or null, not list of float16" in message
+    assert "run_id is string or null, not string" in message
+    # The file itself is fine once its types are the steps table's.
+    pq.write_table(table.cast(STEPS_SCHEMA), path)
+    assert read_steps_file(path) == [_step()]
+
+
 def test_1000_runs_of_1000_tokens_stay_well_under_100_mb(tmp_path: Path) -> None:
     """A thousand replies of a thousand tokens each, half of them pushed by
     one or two units, as a large experiment's steps would be."""
@@ -136,3 +161,13 @@ def test_1000_runs_of_1000_tokens_stay_well_under_100_mb(tmp_path: Path) -> None
     size = path.stat().st_size
     assert size < 20 * 2**20  # well under 100 MB: under 20 MiB
     assert pq.read_metadata(path).num_rows == runs * tokens
+
+
+def test_a_file_reads_through_a_relative_path_pyarrow_could_take_for_a_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    folder = Path("runs:1")  # as pushlab run --runs-dir runs:1 names it
+    folder.mkdir()
+    pq.write_table(steps_table([_step()]), (folder / "steps.parquet").absolute())
+    assert read_steps_file(folder / "steps.parquet") == [_step()]

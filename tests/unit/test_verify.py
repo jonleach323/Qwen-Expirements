@@ -161,11 +161,19 @@ def test_verify_catches_the_runs_left_unrun(
 ) -> None:
     spec, runs = tiny_spec(HANDOFF, max_new_tokens="8"), tmp_path / "runs"
     assert _run(spec, runs, "--limit", "4") == 3
+    unsaved = (
+        f"6 planned runs are not saved yet: {_id(5)}, {_id(6)}, {_id(7)} and 3 more"
+    )
     lines = _problems(spec, runs, capsys)
-    assert lines[:-1] == [
-        f"6 planned runs are not saved: {_id(5)}, {_id(6)}, {_id(7)} and 3 more"
-    ]
+    assert lines[:-1] == [f"{unsaved}; pushlab status says how far the run has got"]
     assert lines[-1].startswith(f"{NAME}, version 1: 4 runs and ")
+    with locked(runs / NAME):  # as a runner holds it while it works
+        lines = _problems(spec, runs, capsys)
+    assert lines[:-1] == [
+        f"{unsaved}; a runner is still working on the folder, and pushlab status "
+        "says how far it has got",
+        "note: a runner is working on the folder; manifest.json is not checked",
+    ]
     assert _run(spec, runs) == 0  # the rest, run
     capsys.readouterr()
     assert _verify(spec, runs) == 0
@@ -181,7 +189,8 @@ def test_verify_catches_a_run_taken_out_of_the_index(
     index.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
     lines = _problems(spec, runs, capsys)
     assert lines[:-1] == [
-        f"1 planned run is not saved: {_id(4)}",
+        f"1 planned run is not saved yet: {_id(4)}; pushlab status says how far "
+        "the run has got",
         # The manifest still counts it, as it was saved.
         "manifest.json counts 10 ok, 0 failed and 0 pending runs, but the index "
         "9 ok, 0 failed and 1 pending",
@@ -334,9 +343,14 @@ def test_verify_refuses_what_it_cannot_check(
     spec = tiny_spec(HANDOFF, max_new_tokens="8")
     path = runs / NAME
     assert refused(spec, runs) == (
+        f"pushlab verify: {runs} does not exist; --runs-dir must be the folder "
+        "that holds the experiments' folders\n"
+    )
+    runs.mkdir()
+    assert refused(spec, runs) == (
         f"pushlab verify: nothing is saved for {NAME} in {path} yet\n"
     )
-    path.mkdir(parents=True)
+    path.mkdir()
     assert "nothing is saved" in refused(spec, runs)
     (path / "notes.txt").write_text("mine")
     assert "is not a runner folder" in refused(spec, runs)
@@ -357,6 +371,16 @@ def test_verify_help_says_what_it_checks(capsys: pytest.CaptureFixture[str]) -> 
     out = capsys.readouterr().out
     assert out.startswith("usage: pushlab verify")
     assert "--runs-dir" in out
+    text = " ".join(out.split())
+    for checked in (
+        "made from this file, prompt set and units/known.csv",
+        "the index marks each run once, or again only after it failed",
+        "with its latest mark's status and experiment.json's model download",
+        "manifest.json is valid and agrees with experiment.json and the index",
+        "(not while a runner works on the folder)",
+        "as while planned runs are not saved yet",
+    ):
+        assert checked in text
 
 
 def test_at_most_fifty_problems_are_shown() -> None:

@@ -7,7 +7,9 @@ at step k + 1 (decision 0008).
 """
 
 import math
+import shutil
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +17,7 @@ import pytest
 import torch
 
 from pushlab.cli import main
+from pushlab.engine import generate as generate_module
 from pushlab.models import load
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
 from pushlab.runs import folder as folder_module
@@ -28,6 +31,7 @@ from pushlab.runs.shards import (
     remove_leftovers,
 )
 from pushlab.schedules.compile import compile as compile_schedules
+from pushlab.store.query import connect
 from pushlab.store.steps import read_steps_file
 from pushlab.units import calibrate
 
@@ -204,6 +208,76 @@ def test_a_steps_file_that_cannot_be_saved_stops_the_run_like_a_shard(
     assert len(read_result_steps(runs / NAME)) == 10
 
 
+def _huge(reply: generate_module.Generation) -> generate_module.Generation:
+    """reply with amounts 100,000 times larger, which no 16-bit float holds, as
+    a huge dose with allow_over_ceiling would give."""
+    amounts = tuple(
+        tuple(pushed._replace(amount=pushed.amount * 1e5) for pushed in pushes)
+        for pushes in reply.amounts
+    )
+    return replace(reply, amounts=amounts)
+
+
+def _above_0(reply: generate_module.Generation) -> generate_module.Generation:
+    """reply with a log-probability above 0 on its first token."""
+    return replace(reply, logprobs=(0.5, *reply.logprobs[1:]))
+
+
+@pytest.mark.parametrize(
+    ("change", "message", "hint"),
+    [
+        (_huge, "a 16-bit float can hold", True),
+        (_above_0, "logprob must be a log-probability", False),
+    ],
+    ids=["amounts", "logprob"],
+)
+def test_steps_that_cannot_be_saved_fail_their_batch_and_the_run_goes_on(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change: Callable[[generate_module.Generation], generate_module.Generation],
+    message: str,
+    hint: bool,
+) -> None:
+    runs, spec = tmp_path / "runs", tiny_spec()
+    real = generate_module.generate
+    second = read_prompt_set(PROMPTS_DIR / "smoke.jsonl").prompts[1]
+
+    def standin(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
+        """The real replies, the pushed one of smoke-02's batch changed."""
+        replies = real(model, tokenizer, prompts, *args, schedules=schedules, **kwargs)
+        rows = zip(prompts, schedules, replies, strict=True)
+        return [
+            change(reply) if text == second and schedule.segments else reply
+            for text, schedule, reply in rows
+        ]
+
+    monkeypatch.setattr(generate_module, "generate", standin)
+    assert _run(spec, runs) == 2  # a run failed; every batch is saved all the same
+    entries = read_index(runs / NAME)
+    assert [entry["batch"] for entry in entries] == [f"b00000{n}" for n in range(1, 6)]
+    (bad,) = [entry for entry in entries if entry["error"]]
+    # smoke-02's batch: its unpushed run and its pulse, which shares the call.
+    assert bad["runs"] == {f"{NAME}-000003": "failed", f"{NAME}-000004": "failed"}
+    assert bad["error"].startswith("the batch's steps cannot be saved: ")
+    assert message in bad["error"] and f"'{NAME}-000004'" in bad["error"]
+    advice = "; lower the dose, as 16-bit steps hold amounts up to 65,504"
+    assert bad["error"].endswith(advice) == hint
+    assert "b000002: 0 ok, 2 failed" in capsys.readouterr().out
+    assert read_steps_file(runs / NAME / "steps" / bad["shard"]) == []
+    statuses = {record.run_id: record.status for record in read_results(runs / NAME)}
+    assert list(statuses.values()).count("ok") == 8
+    # Fixed, the failed runs run again, and nothing else does.
+    monkeypatch.setattr(generate_module, "generate", real)
+    assert _run(spec, runs, "--retry-failed") == 0
+    assert len(read_index(runs / NAME)) == 6
+    steps = read_result_steps(runs / NAME)
+    for record in read_results(runs / NAME):
+        assert record.status == "ok"
+        assert len(steps[record.run_id]) == len(record.output_tokens)
+
+
 def test_a_name_taken_by_a_steps_file_alone_is_not_used_again(tmp_path: Path) -> None:
     (tmp_path / "steps").mkdir()
     (tmp_path / "steps" / "v1-b000001-1.parquet").write_bytes(b"")
@@ -240,3 +314,27 @@ def test_each_amount_is_the_dose_tables_on_the_pass_behind_its_token(
             assert step.active_amounts == tuple(
                 float(np.float16(u.amount)) for u in expected
             )
+
+
+def test_a_folder_saved_before_steps_were_kept_runs_and_shows_as_it_was(
+    tiny_spec: Callable[..., Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs, spec = tmp_path / "runs", tiny_spec()
+    assert _run(spec, runs, "--limit", "4") == 3
+    shutil.rmtree(runs / NAME / "steps")  # as S2 prompt 4's runner left it
+    capsys.readouterr()
+    assert main(["status", str(spec), "--runs-dir", str(runs)]) == 0
+    assert "10: 4 ok, 0 failed, 6 pending" in capsys.readouterr().out
+    assert _run(spec, runs) == 0  # the 6 runs left, each batch with its steps
+    assert _run(spec, runs) == 0  # and then nothing to run
+    assert "Nothing to run: all 10 runs" in capsys.readouterr().out
+    named = sorted(path.name for path in (runs / NAME / "steps").iterdir())
+    assert named == [f"v1-b00000{n}-1.parquet" for n in (3, 4, 5)]
+    con = connect(runs)
+    counts = "SELECT count(*), count(DISTINCT run_id) FROM steps"
+    assert con.sql("SELECT count(*) FROM runs").fetchall() == [(10,)]
+    assert con.sql(counts).fetchall() == [(24, 6)]  # 6 runs of 4 tokens
+    with pytest.raises(FileNotFoundError, match="v1-b000001-1.parquet"):
+        read_result_steps(runs / NAME)

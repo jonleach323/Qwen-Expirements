@@ -7,13 +7,15 @@ Kept apart from the commands themselves, which load torch, so that
 import argparse
 from pathlib import Path
 
+from pushlab.cli_experiments import (
+    add_expand,
+    add_run,
+    add_runs_dir,
+    add_status,
+    add_verify,
+    positive_int,
+)
 from pushlab.models.registry import REGISTRY
-
-
-def _positive_int(text: str) -> int:
-    if not text.isdigit() or int(text) < 1:
-        raise argparse.ArgumentTypeError(f"must be a whole number from 1, not {text!r}")
-    return int(text)
 
 
 def _whole_number(text: str) -> int:
@@ -48,7 +50,7 @@ def _add_baseline(commands: argparse._SubParsersAction, models: list[str]) -> No
     )
     baseline.add_argument(
         "--max-new-tokens",
-        type=_positive_int,
+        type=positive_int,
         default=200,
         help="most tokens the reply may have (default: %(default)s)",
     )
@@ -182,7 +184,7 @@ def _add_steer(commands: argparse._SubParsersAction, models: list[str]) -> None:
     )
     steer.add_argument(
         "--max-new-tokens",
-        type=_positive_int,
+        type=positive_int,
         default=200,
         help="most tokens each reply may have (default: %(default)s)",
     )
@@ -201,7 +203,8 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
         description="With an experiment file: write a Markdown file with each "
         "reply of the conditions asked for, prompt by prompt, and short markers "
         "where the pushes active on the reply change, such as [A on], [A off, B "
-        "on] or [A/B x8] for a long alternation, under a one-line legend saying "
+        "on] or [A/B x8] for a long alternation of short turns, under a one-line "
+        "legend saying "
         "what A and B are. It reads the experiment's runner folder and needs the "
         "model's tokenizer to place the markers. With --runs: write a Markdown "
         "table of S1's run folders' replies, one row per prompt and one column "
@@ -241,135 +244,7 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
     report.add_argument(
         "--overwrite", action="store_true", help="replace the file if it exists"
     )
-    _add_runs_dir(report)
-
-
-def _add_verify(commands: argparse._SubParsersAction) -> None:
-    verify = commands.add_parser(
-        "verify",
-        help="check an experiment's saved runs and steps against its file",
-        description="Check an experiment's runner folder: that no run ID is "
-        "saved twice and none the experiment file plans is missing, that every "
-        "reply has its steps, one per token, that the pushes each step "
-        "records are the ones its run's schedule gives that pass, and that "
-        "manifest.json agrees with the index and experiment.json. It prints "
-        "each problem and exits 1 when it finds any, 0 when it finds none. It "
-        "loads no model and writes nothing.",
-    )
-    verify.add_argument(
-        "spec",
-        type=Path,
-        metavar="SPEC",
-        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
-    )
-    _add_runs_dir(verify)
-
-
-def _add_expand(commands: argparse._SubParsersAction) -> None:
-    expand = commands.add_parser(
-        "expand",
-        help="list the runs an experiment file means, without running anything",
-        description="Read an experiment file (experiments/README.md has the "
-        "format), check every condition's schedule against the model, read the "
-        "prompt set and draw the random controls, then print a line naming the "
-        "columns and every run the file means, one per line: its ID, condition, "
-        "control number (0 for the condition's own run), prompt, seed, batch and, "
-        "for a control, the run it mirrors. With --summary, print the settings and "
-        "how many runs each condition gives instead. Nothing is run and no model "
-        "is loaded.",
-    )
-    expand.add_argument(
-        "spec",
-        type=Path,
-        metavar="SPEC",
-        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
-    )
-    expand.add_argument(
-        "--summary",
-        action="store_true",
-        help="print how many runs each condition gives, rather than every run",
-    )
-
-
-def _add_runs_dir(command: argparse.ArgumentParser) -> None:
-    command.add_argument(
-        "--runs-dir",
-        type=Path,
-        metavar="DIR",
-        help="the folder that holds one folder per experiment (default: "
-        "$PUSHLAB_RUNS_DIR, else /workspace/runs)",
-    )
-
-
-def _add_run(commands: argparse._SubParsersAction) -> None:
-    run = commands.add_parser(
-        "run",
-        help="run an experiment file batch by batch, saving each batch as it goes",
-        description="Run every run an experiment file means (pushlab expand "
-        "lists them) in DIR/<name>, its runner folder: one batch at a time, each "
-        "saved before the next starts, so a crash loses at most the batch that "
-        "was running. Run the same command again to go on where it stopped. A "
-        "batch that raises is saved with its runs failed. It stops cleanly once "
-        "the saved batches have taken max_gpu_hours. It refuses a folder made "
-        "from another experiment file, prompt set, known units, model download "
-        "or calibration, and one that another experiment or another runner "
-        "uses. It needs the model downloaded and, to push, its calibration.",
-        epilog="Exit status: 0 when it finished or had nothing to do; 1 when it "
-        "refused or could not save; 2 when a run failed; 3 when it stopped with "
-        "runs left, at max_gpu_hours or --limit; 130 after Ctrl-C.",
-    )
-    run.add_argument(
-        "spec",
-        type=Path,
-        metavar="SPEC",
-        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
-    )
-    run.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="print the runs by condition, and the reply tokens, GPU-hours and "
-        "cost of those still to run; load no model (only its tokenizer), and "
-        "run and write nothing",
-    )
-    run.add_argument(
-        "--limit",
-        type=_positive_int,
-        metavar="N",
-        help="run at most N runs this time, in whole batches",
-    )
-    run.add_argument(
-        "--retry-failed",
-        action="store_true",
-        help="run again only the runs that failed, and nothing else",
-    )
-    run.add_argument(
-        "--overwrite-version",
-        action="store_true",
-        help="when the folder's runs were made from another experiment file, "
-        "prompt set, known units, model download or calibration, start a new "
-        "version of the folder, which keeps the saved runs that did not change "
-        "(none, when the prompt set, model download or calibration changed)",
-    )
-    _add_runs_dir(run)
-
-
-def _add_status(commands: argparse._SubParsersAction) -> None:
-    status = commands.add_parser(
-        "status",
-        help="how far an experiment has got, and how long the rest will take",
-        description="Print an experiment's runs saved ok, failed and pending, "
-        "the batches saved, the speed measured over them, the GPU-hours used "
-        "of max_gpu_hours and the time left, and whether a runner is working "
-        "on its folder. It loads no model and changes nothing, so it can run "
-        "while pushlab run is going.",
-    )
-    status.add_argument(
-        "spec",
-        type=Path,
-        metavar="SPEC",
-        help="the experiment file, such as experiments/p0/s2_pulse_lengths.yaml",
-    )
-    _add_runs_dir(status)
+    add_runs_dir(report)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -391,8 +266,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_amount(commands)
     _add_steer(commands, models)
     _add_report(commands)
-    _add_expand(commands)
-    _add_run(commands)
-    _add_status(commands)
-    _add_verify(commands)
+    add_expand(commands)
+    add_run(commands)
+    add_status(commands)
+    add_verify(commands)
     return parser
