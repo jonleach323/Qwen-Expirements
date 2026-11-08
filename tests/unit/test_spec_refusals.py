@@ -82,6 +82,10 @@ REFUSALS = {
         _with("max_new_tokens: 64", "max_new_tokens: 0"),
         "max_new_tokens must be",
     ),
+    "tokens-over-steps": (  # a step is a 16-bit number in the steps table
+        _with("max_new_tokens: 64", "max_new_tokens: 32769"),
+        "max_new_tokens must be at most 32,768, the longest reply the steps",
+    ),
     "batch": (_with("batch_size: 4", "batch_size: 0"), "batch_size must be"),
     "hours": (_with("max_gpu_hours: 0.5", "max_gpu_hours: 0"), "max_gpu_hours must be"),
     "hours-text": (

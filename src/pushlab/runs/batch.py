@@ -102,7 +102,30 @@ def reply_steps(run_id: str, reply: Any) -> list[StepRecord]:
     ]
 
 
-def _schedule(record: RunRecord) -> Any:
+def record_schedule(record: RunRecord) -> Any:
+    """A run record's schedule as a Schedule: its segments, without the
+    controls' notes (control_for, control_seed), which no Segment holds.
+
+    Example:
+        >>> from pushlab.store.records import RunRecord
+        >>> segment = {"unit": "tiny:L1:N5", "alpha": 1.0, "control_for": None}
+        >>> record = RunRecord(
+        ...     "x-000001",
+        ...     "x",
+        ...     "tiny@main",
+        ...     "p",
+        ...     [segment],
+        ...     {},
+        ...     0,
+        ...     "",
+        ...     "",
+        ...     "",
+        ...     [],
+        ...     "ok",
+        ... )
+        >>> [str(s.unit) for s in record_schedule(record).segments]
+        ['tiny:L1:N5']
+    """
     from pushlab.schedules.yaml_io import from_mapping
 
     segments = [
@@ -159,7 +182,7 @@ def run_call(
             [],
             decoding,
             inputs.norms,
-            schedules=[_schedule(record) for record in planned],
+            schedules=[record_schedule(record) for record in planned],
         )
     except Exception as error:  # the call's due runs are saved as failed
         message = f"{type(error).__name__}: {error}"

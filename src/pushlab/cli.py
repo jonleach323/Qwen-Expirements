@@ -244,11 +244,19 @@ def _report(args: Any) -> int:
             args.spec, args.conditions, args.out, args.runs_dir, args.overwrite
         )
     if not args.runs:
-        print(
-            "pushlab report: error: give an experiment file, or run folders with "
-            "--runs DIR",
-            file=sys.stderr,
-        )
+        if args.conditions:  # --conditions takes every word after it
+            print(
+                "pushlab report: error: give the experiment file before "
+                "--conditions, such as: pushlab report SPEC --conditions none "
+                "--out FILE (or run folders with --runs DIR)",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "pushlab report: error: give an experiment file, or run folders "
+                "with --runs DIR",
+                file=sys.stderr,
+            )
         raise SystemExit(2)
     if args.conditions or args.runs_dir is not None:
         print(

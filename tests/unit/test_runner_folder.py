@@ -213,7 +213,18 @@ def test_a_file_where_the_folder_should_be_is_refused(
 
 @pytest.mark.parametrize(
     "name",
-    ["folder", "shards", "plan", "versions", "estimate", "session", "status_command"],
+    [
+        "folder",
+        "shards",
+        "plan",
+        "versions",
+        "estimate",
+        "session",
+        "status_command",
+        "batch",
+        "manifest",
+        "verify_steps",
+    ],
 )
 def test_doctests(name: str) -> None:
     import doctest

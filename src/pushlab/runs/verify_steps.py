@@ -13,7 +13,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from pushlab.runs.batch import _schedule
+from pushlab.runs.batch import record_schedule
 from pushlab.schedules.model import Schedule, dose_text
 from pushlab.store.records import RunRecord
 from pushlab.store.steps import REGIONS, StepRecord
@@ -154,7 +154,7 @@ def check_steps(
         say(f"{run_id}'s steps are not 0 to {len(tokens) - 1}: it {how}")
     schedule: Schedule | None = None
     try:
-        schedule = _schedule(record)
+        schedule = record_schedule(record)
     except (ValueError, TypeError, AttributeError) as error:  # not segments
         say(f"{run_id}'s schedule cannot be read: {error}")
     found: dict[str, list[str]] = {}  # each kind of problem, step by step

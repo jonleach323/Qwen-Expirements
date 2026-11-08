@@ -38,8 +38,9 @@ Current sprint: S0 (Bootstrap).
 - An experiment's replies, with markers where its pushes switch (needs the
   model's tokenizer, as on the pod):
   uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
-- Query every experiment's runs and steps: pushlab.store.query.connect(),
-  a DuckDB connection with runs, steps and conditions views
+- Query every experiment's runs and steps in /workspace/runs (DuckDB views
+  runs, steps and conditions; runs nothing):
+  uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 

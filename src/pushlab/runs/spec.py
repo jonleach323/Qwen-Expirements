@@ -52,6 +52,8 @@ SPEC_KEYS = (
     "conditions",
 )
 # Settings a file may leave out, and what they are then.
+# The longest reply a steps table holds: steps 0 to 32,767.
+MAX_REPLY_TOKENS = 2**15
 OPTIONAL_KEYS = {"group_by_length": True}
 # What a file's decoding takes; a run's record holds DECODING_KEYS
 # (pushlab.store.records) and, when sampling, temperature and top_p.
@@ -269,6 +271,11 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
     decoding = _decoding(data["decoding"])
     seeds = _seeds(data["seeds"], decoding["strategy"])
     max_new_tokens = _whole("max_new_tokens", data["max_new_tokens"])
+    if max_new_tokens > MAX_REPLY_TOKENS:  # a step is a 16-bit number (steps.py)
+        raise ValueError(
+            f"max_new_tokens must be at most {MAX_REPLY_TOKENS:,}, the longest "
+            f"reply the steps table can hold, not {max_new_tokens:,}"
+        )
     batch_size = _whole("batch_size", data["batch_size"])
     hours = data["max_gpu_hours"]
     if not _is_finite(hours) or hours <= 0:

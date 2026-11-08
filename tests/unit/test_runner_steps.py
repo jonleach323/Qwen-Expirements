@@ -19,7 +19,7 @@ from pushlab.models import load
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
 from pushlab.runs import folder as folder_module
 from pushlab.runs import shards as shards_module
-from pushlab.runs.batch import _schedule
+from pushlab.runs.batch import record_schedule
 from pushlab.runs.folder import read_index
 from pushlab.runs.shards import (
     next_shard_name,
@@ -85,7 +85,7 @@ def test_a_handoffs_steps_show_a_before_the_switch_and_b_after_it(
         # Reply tokens 2 on push B, which first changes token 3: steps 3 on.
         assert _units(steps[record.run_id]) == ([(A,)] * 3 + [(B,)] * 5)[:n]
         # Exactly what the run's own schedule pushes on each step's pass.
-        schedule = _schedule(record)
+        schedule = record_schedule(record)
         for step in steps[record.run_id]:
             token = None if step.step == 0 else step.step - 1  # the pass's token
             pushed = [s.unit for s in schedule.segments if s.active_at(token)]
@@ -231,7 +231,7 @@ def test_each_amount_is_the_dose_tables_on_the_pass_behind_its_token(
     norms = calibrate.load_calibration("tiny-vl", revision).norms
     steps = read_result_steps(runs / NAME)
     for record in read_results(runs / NAME):
-        table = compile_schedules([_schedule(record)], model, norms, 8)
+        table = compile_schedules([record_schedule(record)], model, norms, 8)
         for step in steps[record.run_id]:
             token = None if step.step == 0 else step.step - 1  # the pass behind it
             expected = table.amounts(0, token)

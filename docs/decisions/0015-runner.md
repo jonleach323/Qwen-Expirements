@@ -82,11 +82,11 @@ and `status` all check this before anything else.
   type, written under its own lock, `.speeds.json.lock`, since runners of
   different experiments share it.
 
-**Saving a batch.** The runner writes the batch's records, then its steps,
-each to a hidden temporary file that it flushes to the disk, renames into
-place and flushes the folder of, and only then appends the batch's line to
-the index and flushes that. A crash at any moment therefore leaves the batch either
-marked, and saved, or not marked. A shard the index does not name is
+**Saving a batch.** The runner writes the batch's records, then its steps:
+each to a hidden temporary file, which it flushes to the disk and renames
+into place, flushing the folder too. Only then does it append the batch's
+line to the index, and flush that. A crash at any moment therefore leaves
+the batch either marked, and saved, or not marked. A shard the index does not name is
 ignored, and its batch runs again under the next attempt's name. A last
 index line a crash cut short is ignored when read and cut off by the next
 runner; hidden temporary files are deleted. So a crash loses at most the
@@ -306,10 +306,11 @@ raise the cap, and running again changes nothing.
   - sampled experiments still draw each row's numbers from its place in
     the batch (decision 0014); seeding rows from their runs is still to
     come.
-- The steps record, notifications, the idle watchdog and the nightly copy
-  are not here.
+- Notifications, the idle watchdog and the nightly copy are not here. The
+  steps record came with decision 0016.
 - Old versions' shards stay on disk, and must not be deleted by hand: a
   run a new version keeps is still read from the shard that first saved
   it, so deleting `v1-*.parquet` would lose version 2's kept runs too.
-- `pushlab report` reads S1's single-file folders, not runner folders;
-  `pushlab.runs.folder.read_results` reads a runner folder.
+- `pushlab.runs.shards.read_results` reads a runner folder, and `pushlab
+  report SPEC` and `pushlab verify SPEC` read one too (decision 0016);
+  `pushlab report --runs` still reads S1's single-file folders.

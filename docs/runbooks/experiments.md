@@ -86,11 +86,14 @@ and a second one to watch it.
    uv run pushlab verify experiments/p0/s2_pulse_lengths.yaml
    ```
 
-   Then write the replies of the conditions you want to read, with a
-   marker such as [**A on**] or [**A off, B on**] before the first token
-   each change of pushes chose, under a legend saying what A and B are.
-   Save it outside the runner folder, as here: it refuses an `--out` inside
-   it.
+   Failed runs have no reply and no steps, and verify passes them: its last
+   line counts them, and `--retry-failed` reruns them (step 5).
+
+   Then write the replies of the conditions you want to read. Each reply
+   has a marker, such as [**A on**] or [**A off, B on**], before the first
+   token chosen after each change of pushes, and a legend at the top says
+   what A and B are. Save it outside the runner folder, as here: it refuses
+   an `--out` inside it.
 
    ```bash
    uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
@@ -100,11 +103,24 @@ and a second one to watch it.
    copy it off and read it on your phone. Labels with spaces, such as
    `pulse length=16`, need the quotes; leaving out `--conditions` shows them
    all.
+
+   To count or average anything over every experiment in `/workspace/runs`,
+   ask DuckDB (`pushlab.store.query`; S0's and S1's folders are left out):
+
+   ```bash
+   uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
+   ```
 8. **Copy the folder off the pod** as above, with the speed it measured,
    for example:
 
    ```bash
-   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json reports/s2-pulse-lengths.md)
+   (cd /workspace && tar -czf s2-pulse-lengths.tar.gz runs/s2-pulse-lengths runs/speeds.json)
+   ```
+
+   If you wrote a report in step 7, copy it too:
+
+   ```bash
+   (cd /workspace && tar -czf s2-pulse-lengths-report.tar.gz reports/s2-pulse-lengths.md)
    ```
 
 ## Close S1 on the pod

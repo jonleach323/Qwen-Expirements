@@ -22,11 +22,12 @@ file in `experiments/` describes a whole experiment, and `pushlab expand`
 lists every run it means without running anything (decision 0014).
 `pushlab run` runs them batch by batch, saving each batch before the next
 so that a crash loses at most one, and `pushlab status` says how far it
-has got (decision 0015). Every reply's tokens are saved with the pushes
-behind each one, `pushlab verify` checks them against the experiment file,
-`pushlab report` shows an experiment's replies with a marker wherever a
-push switched on or off, and `pushlab.store.query` opens every experiment
-in DuckDB (decision 0016).
+has got (decision 0015). Every reply `pushlab run` makes is saved token by
+token, with the pushes behind each token; `pushlab verify` checks them
+against the experiment file, `pushlab report` shows an experiment's
+replies with a marker wherever a push switched on or off, and
+`pushlab.store.query` opens every experiment's runs and steps in DuckDB
+(decision 0016).
 
 ## Getting started
 

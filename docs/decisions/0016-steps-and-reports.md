@@ -56,7 +56,9 @@ A handoff at token 40 shows A on steps 0 to 40 and B from step 41.
 
 Unit IDs are text, which Parquet stores once per file and refers to by
 small integers. 1,000 replies of 1,000 tokens, half of them pushed, take
-about 5 MB; the test allows 20 MiB.
+4.9 MiB in one file, 8.7 MiB as the runner saves them in batches of 10, and
+15.1 MiB in batches of 1, each file carrying its own small header: well
+under 100 MB however they are batched.
 
 **Saved by the runner** (`pushlab.runs.shards`). Each batch has two files
 of one name: `shards/<name>`, its runs, and `steps/<name>`, its due runs'
@@ -81,7 +83,12 @@ hash, model ID and revision, GPU, CUDA, torch, transformers, start and end
 times, run count) it must hold the experiment and version, the experiment
 file's SHA-256, the calibration's (None when nothing is pushed), the runs
 ok, failed and pending, adding up to the run count, and the sessions.
-When the runner runs no session, as when a new version keeps every run or
+Its top-level code and machine fields (code commit, lockfile, GPU, CUDA,
+driver, torch, transformers, packages) are the last session's, and its
+start time is its first session's, of any version: each session's own
+entry says what that session ran, and verify's code-change warning says
+when a version's runs were made by more than one code. When the runner
+runs no session, as when a new version keeps every run or
 a session was killed after its last batch, it restamps the manifest's
 version, hashes and counts from experiment.json and the index, writing
 only if something changed (`manifest.restamp_manifest`); a broken
@@ -108,7 +115,8 @@ shows, then its steps file, and checks that:
    calibration: each amount has its dose's sign and is 0 at dose 0, and
    amount ÷ dose is one number per unit, its dose-1 amount, on every step
    of a run and across all runs, up to twice the 16-bit rounding (an
-   interval check, so a run made with another calibration shows);
+   interval check, so a run made with a calibration more than about 0.2%
+   off shows; one closer than that passes);
 7. manifest.json, if there is one, has experiment.json's version and
    hashes and the index's counts; this is skipped, with a note, while a
    runner holds the folder's lock, as a session rewrites the manifest when
@@ -196,8 +204,20 @@ that is gone.
 
 ## Consequences
 
-- kl_vs_base and the readouts (proj_*) are not here; they come with the
-  scoring and readout modules.
+- Where this differs from the plan's data model:
+  - kl_vs_base and the readouts (proj_*) are not here; they come with the
+    scoring and readout modules;
+  - a step's region is "reply", the schedules' own word (decision 0012),
+    where the plan says "thinking or answer": with thinking off, every
+    reply is the answer, and "reply" will split into thinking and answer
+    when thinking detection comes;
+  - token_id and active_amounts are added to the plan's columns, as the
+    prompt asked;
+  - the manifest has no pre-registration fields yet, as no phase has a
+    pre-registration file; runs_by_status counts ok, failed and pending,
+    as the runner writes no collapsed runs yet.
+- "Every run has steps" means every run with a reply: a failed run has no
+  reply and no steps, and verify counts it in its last line.
 - `pushlab steer` (S1's folders) saves no steps; only the runner does.
 - Folders saved before this change have no steps files: verify says so,
   and the views leave their steps out.
