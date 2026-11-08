@@ -236,24 +236,38 @@ raise the cap, and running again changes nothing.
   heartbeat and progress after every batch;
 - a run that raises is saved failed with its error, and --retry-failed
   reruns only it, leaving pending runs alone; an out-of-memory error;
-- a changed experiment file, prompt set or calibration is refused; a new
-  version keeps the unchanged runs, ok and failed, keeps nothing when a
-  prompt or the calibration changed, keeps a sampled run only on its
-  row, never reuses a crashed attempt's number or counts its marks; a
-  change to some runs' records redoes only those, in their rows;
+- a changed experiment file, prompt set or calibration is refused, with
+  the number a new version would take and whether it keeps any run; a
+  new version keeps the unchanged runs, ok and failed, keeps nothing when
+  a prompt or the calibration changed, keeps a sampled run that ended ok
+  only on its row and a failed one on any row, keeps each run's error,
+  session and share of its batch's time, and never reuses a crashed
+  attempt's number or counts its marks; a change to some runs' records
+  redoes only those, in their rows;
 - prompts of one length share a batch, prompts of other lengths share one
   padded batch with grouping off, each seed keeps to its own batches, and
   batches keep planned batches whole and are always the same;
-- inputs that change while the model loads; Ctrl-C while it loads; a full
-  disk stops the run and keeps the rest; a second runner, another
+- inputs or a download that change while the model loads; Ctrl-C while
+  the model or its tokenizer loads, or while a new version starts; an
+  error while the model loads, named as such; a full disk, before any
+  batch or while saving one; a second runner (named by its pid, and one
+  that only probes the lock for an instant is waited for), another
   experiment's folder, a folder that is not a runner folder, a file in
-  its place and a runs dir inside a run folder are refused; a torn index
-  line, hidden leftovers, a failed shard write and broken files;
-- the manifest's sessions and the warning when the code changed; a broken
-  speeds file;
-- the dry run's numbers, with and without a measured speed, and what a
-  new version would keep; and status before, during and after a run, on
-  another machine, after a crash, and when the experiment file changed.
+  its place, a runs dir that is a run folder or lies inside one, also by
+  a relative path, and a stray manifest.json above it, which does not
+  count; a torn index line, hidden leftovers, a failed shard write and
+  broken files; a finished experiment run again changes no file;
+- the manifest's sessions and the warning when the code changed, kept
+  runs included; the speed saved after a failed batch; speeds files that
+  are broken or of another shape;
+- the dry run's numbers, with and without a measured speed and its load
+  time, what a new version would keep and the time it keeps, nothing to
+  run, its notes (a calibration not made yet, a changed folder, no
+  tokenizer) and its singulars; and status before, during and after a
+  run, on another machine, after a crash, when the experiment file, the
+  prompt set or the known units changed, and its time left, progress.json's
+  GPU-hours and hours left, the batches a new version kept and the earlier
+  versions experiment.json lists.
 
 ## Why this shape
 

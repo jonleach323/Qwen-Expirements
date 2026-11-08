@@ -188,7 +188,7 @@ def speed_for(model: str, dtype: str, runs_dir: Path, costs: Costs) -> Speed | N
         measured = None
     if measured:
         where = measured.get("gpu") or "the CPU"
-        rows = measured.get("rows_per_batch", measured["batch_size"])
+        rows = measured.get("rows_per_batch") or measured["batch_size"]
         load = measured.get("load_seconds")
         return Speed(
             float(measured["reply_tokens_per_second"]),
