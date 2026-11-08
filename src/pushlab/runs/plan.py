@@ -163,6 +163,10 @@ def new_identity(
 ) -> dict[str, Any]:
     """What experiment.json says about a new version of the folder.
 
+    Its conditions map each run ID to its condition's label, such as
+    "pulse length=16", which no run record holds; a control has its
+    condition's label, and its record's control_of names the run it mirrors.
+
     Example:
         >>> new_identity(spec, path, expand(spec), inputs, 1)[
         ...     "version"
@@ -175,6 +179,7 @@ def new_identity(
         "spec_file": shown_path(spec_path),
         "spec": spec.to_mapping(),
         "runs": len(expansion.runs),
+        "conditions": {run.record.run_id: run.condition for run in expansion.runs},
         "max_gpu_hours": spec.max_gpu_hours,
         "max_new_tokens": spec.max_new_tokens,
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),

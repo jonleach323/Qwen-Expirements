@@ -11,7 +11,9 @@ import torch
 
 from pushlab.cli import main
 from pushlab.models import load
-from pushlab.runs.folder import read_index, read_results
+from pushlab.runs.expand import expand
+from pushlab.runs.folder import read_identity, read_index, read_results
+from pushlab.runs.spec import read_spec
 from pushlab.store import environment
 
 NAME = "tiny-pulses"
@@ -104,3 +106,31 @@ def test_ctrl_c_while_the_model_loads_stops_cleanly(
     assert beat["state"] == "stopped by Ctrl-C"
     assert read_index(runs / NAME) == []
     assert not (runs / NAME / "manifest.json").exists()  # nothing ran to record
+
+
+def test_experiment_json_names_each_runs_condition(
+    tiny_spec: Callable[..., Path], tmp_path: Path
+) -> None:
+    conditions = """\
+conditions:
+  - {label: none, segments: []}
+  - label: pulse
+    shape: pulse
+    params: {unit: tiny-vl:L2:N100, alpha: 1.0, start: 0}
+    grid: {length: [1, 2]}
+    controls: 1
+    control_seed: 0
+"""
+    spec, runs = tiny_spec(conditions), tmp_path / "runs"
+    assert _run(spec, runs, "--limit", "1") == 3
+    planned = expand(read_spec(spec)).runs
+    expected = {run.record.run_id: run.condition for run in planned}
+    assert read_identity(runs / NAME)["conditions"] == expected
+    assert set(expected.values()) == {"none", "pulse length=1", "pulse length=2"}
+    controls = [run.record for run in planned if run.record.control_of]
+    assert controls and all(  # a control has its run's label
+        expected[record.run_id] == expected[record.control_of] for record in controls
+    )
+    changed = tiny_spec(conditions, max_gpu_hours="2")
+    assert _run(changed, runs, "--overwrite-version", "--limit", "1") == 3
+    assert read_identity(runs / NAME)["conditions"] == expected

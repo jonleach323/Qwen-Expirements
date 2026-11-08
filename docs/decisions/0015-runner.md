@@ -49,8 +49,11 @@ mistyped `--runs-dir` cannot put one experiment's folder inside another's.
 
 **The folder** (`pushlab.runs.folder`):
 - `experiment.json`, its identity: the experiment, its version, the
-  experiment file's path and settings, the number of runs, the earlier
-  versions' identities, and the hashes of what its runs are made from:
+  experiment file's path and settings, the number of runs, each run's
+  condition label by run ID (`conditions`, such as `pulse length=16`,
+  which no run record holds, as decision 0014 asked; a control has its
+  run's label), the earlier versions' identities, and the hashes of what
+  its runs are made from:
   the experiment file (the spec's hash), the prompt set,
   `units/known.csv`, the model download (name and commit) and the
   calibration (None when nothing is pushed).
@@ -265,6 +268,9 @@ experiment forever.
     the batch (decision 0014); seeding rows from their runs is still to
     come.
 - The steps record, notifications, the idle watchdog and the nightly copy
-  are not here. Old versions' shards stay until deleted by hand.
+  are not here.
+- Old versions' shards stay on disk, and must not be deleted by hand: a
+  run a new version keeps is still read from the shard that first saved
+  it, so deleting `v1-*.parquet` would lose version 2's kept runs too.
 - `pushlab report` reads S1's single-file folders, not runner folders;
   `pushlab.runs.folder.read_results` reads a runner folder.
