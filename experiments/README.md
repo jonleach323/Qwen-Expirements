@@ -10,6 +10,13 @@ the same. `pushlab run` runs the list batch by batch (decision 0015).
 `p0/s0_baseline.yaml` is older: S0's one-run file, in a format of its own
 that only `pushlab baseline` reads.
 
+The experiment files:
+
+| File | What it runs |
+| --- | --- |
+| `p0/s2_pulse_lengths.yaml` | The example below: the evil neuron pushed for 4, 16 or 64 reply tokens, on the five smoke prompts, 50 runs. |
+| `s2/smoke_dynamics.yaml` | Sprint 2's smoke test of dynamics: every schedule shape on the evil neuron and its pair, each with one matched random control, on `prompts/neutral32.jsonl`, 992 runs (decision 0017). |
+
 ## An example
 
 `p0/s2_pulse_lengths.yaml`:

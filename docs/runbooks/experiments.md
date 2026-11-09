@@ -127,6 +127,54 @@ and a second one to watch it.
    (cd /workspace && tar -czf s2-pulse-lengths-report.tar.gz reports/s2-pulse-lengths.md)
    ```
 
+## Run S2's smoke test of dynamics
+
+`experiments/s2/smoke_dynamics.yaml` (decision 0017) runs every schedule
+shape on the evil neuron E (L14 N8949, +1) and its pair W (L13 N7956, −1),
+each condition with one matched random control, on the 32 prompts of
+`prompts/neutral32.jsonl`: 992 runs of up to 96 reply tokens. Run it as
+"Run an experiment file" says, with this file:
+
+1. **The dry run** should say `to run 992 of 992 runs`, `run in` about 64
+   batches of 15 or 16 runs, `gpu-hours about 0.60, within
+   max_gpu_hours 1`, and about $0.20 to $0.44:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab run experiments/s2/smoke_dynamics.yaml --dry-run
+   ```
+
+2. **Run it in tmux,** and watch it with `pushlab status`:
+
+   ```bash
+   uv run pushlab run experiments/s2/smoke_dynamics.yaml
+   ```
+
+3. **Check it** once every run is saved:
+
+   ```bash
+   uv run pushlab verify experiments/s2/smoke_dynamics.yaml
+   ```
+
+4. **Read it,** a few conditions at a time, so that each report stays short
+   enough for a phone. For example the pulses against no push:
+
+   ```bash
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions baseline constant-e pulse-e-4 pulse-e-16 pulse-e-64 --out /workspace/reports/s2-smoke-pulses.md
+   ```
+
+   and the handoffs and alternations:
+
+   ```bash
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions handoff-e-w-10 handoff-w-e-10 alternate-e-w-2 alternate-e-w-8 alternate-e-w-32 --out /workspace/reports/s2-smoke-switches.md
+   ```
+
+   A report's legend at the top says which letter is which unit. Letters
+   go in the order units first appear, so with these lists, which start
+   with an E condition, E is A and W is B. Each condition's control follows
+   its own run, its random neurons named in its label.
+5. **Copy it off** as in step 8 above, with
+   `runs/s2-smoke-dynamics` in place of `runs/s2-pulse-lengths`.
+
 ## Close S1 on the pod
 
 S1's done-when is not met yet (docs/sprints/S1-review.md). These steps need
