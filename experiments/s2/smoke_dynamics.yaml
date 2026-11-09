@@ -1,0 +1,153 @@
+# Sprint 2's smoke test of dynamics: every schedule shape on two neurons,
+# each condition but the baseline with one matched random control, on 32
+# neutral prompts.
+# `uv run pushlab expand experiments/s2/smoke_dynamics.yaml --summary`
+# counts its 992 runs, and `uv run pushlab run experiments/s2/smoke_dynamics.yaml
+# --dry-run` their cost; docs/runbooks/experiments.md says how to run it.
+#
+# The two units, in every condition's params below:
+#   E = qwen3.5-4b:L14:N8949 at alpha +1.0, the evil neuron: on its own it
+#       made 17 of 20 replies hostile in hedwigai's check, and 1 of 5 smoke
+#       replies in S1 (decision 0017 says how to read this run).
+#   W = qwen3.5-4b:L13:N7956 at alpha -1.0, the evil recipe's second
+#       neuron, which on its own made replies warmer in hedwigai's check.
+# Labels name them in lowercase (constant-e, handoff-e-w-10), as condition
+# labels are lowercase letters and digits.
+#
+# Reply tokens count from 0, and a push on reply token k first changes
+# token k + 1 (decision 0012). constant and handoff also push the prompt
+# pass, as the evil recipe does, so they change token 0 too, and that push
+# stays in the model's memory of the prompt for the whole reply. pulse,
+# onset, alternate and ramp push reply tokens only.
+#
+# The order of the conditions sets the batches. Each prompt's 31 runs fill
+# two batches in this order, 15 runs and then 16, every control beside its
+# run. Runs compared exactly must share a batch layout (decision 0009), so
+# the first batch holds the baseline and the conditions that match it, or
+# one another, over their first tokens: the onsets, the ramp, the pulses
+# and alternate-e-w-32. The second holds the constants, the handoffs, which
+# match them up to the switch, and the two shorter alternations, which
+# match the first batch's up to token 2 or 8 but do not fit in it.
+name: s2-smoke-dynamics
+model: qwen3.5-4b
+prompts: prompts/neutral32.jsonl
+# Greedy decoding draws no random numbers, so it takes one seed.
+decoding: {strategy: greedy}
+seeds: [0]
+max_new_tokens: 96
+batch_size: 16
+max_gpu_hours: 1
+# Every condition but baseline has one control: the same schedule with E
+# swapped for a random neuron of layer 14 and W for one of layer 13, at the
+# same doses on the same tokens. One control_seed for all of them, so every
+# condition's control uses the same two random neurons: the controls are a
+# matched copy of the whole experiment.
+conditions:
+  # The first batch.
+  # No push: the reference for the conditions of its batch.
+  - label: baseline
+    segments: []
+  # E off until reply token start, then on to the end: a late onset.
+  - label: onset-e-10
+    shape: onset
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 10}
+    controls: 1
+    control_seed: 0
+  - label: onset-e-30
+    shape: onset
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 30}
+    controls: 1
+    control_seed: 0
+  # E rising in equal steps from dose 0 on reply token 0 to dose 1 on token
+  # 31 (end 32 is not included), then off: the ramp shape holds no dose
+  # after its end.
+  - label: ramp-e-0-32
+    shape: ramp
+    params:
+      {unit: qwen3.5-4b:L14:N8949, alpha_from: 0.0, alpha_to: 1.0, start: 0,
+       end: 32}
+    controls: 1
+    control_seed: 0
+  # E on reply tokens 0 to length - 1, then off.
+  - label: pulse-e-4
+    shape: pulse
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0, length: 4}
+    controls: 1
+    control_seed: 0
+  - label: pulse-e-16
+    shape: pulse
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0, length: 16}
+    controls: 1
+    control_seed: 0
+  - label: pulse-e-64
+    shape: pulse
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, start: 0, length: 64}
+    controls: 1
+    control_seed: 0
+  # E and W take turns every period reply tokens, E first, from token 0 to
+  # the end: E on 0 to period - 1, W on period to 2 * period - 1, and so on.
+  # Its first turn is pulse-e-64's first 32 tokens.
+  - label: alternate-e-w-32
+    shape: alternate
+    params:
+      {a: qwen3.5-4b:L14:N8949, b: qwen3.5-4b:L13:N7956, alpha_a: 1.0,
+       alpha_b: -1.0, period: 32}
+    controls: 1
+    control_seed: 0
+  # The second batch.
+  # One neuron from the prompt pass to the end of the reply.
+  - label: constant-e
+    shape: constant
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0}
+    controls: 1
+    control_seed: 0
+  - label: constant-w
+    shape: constant
+    params: {unit: qwen3.5-4b:L13:N7956, alpha: -1.0}
+    controls: 1
+    control_seed: 0
+  # The first unit on the prompt pass and reply tokens 0 to switch_at - 1,
+  # then the second from switch_at to the end.
+  - label: handoff-e-w-10
+    shape: handoff
+    params:
+      {a: qwen3.5-4b:L14:N8949, b: qwen3.5-4b:L13:N7956, alpha_a: 1.0,
+       alpha_b: -1.0, switch_at: 10}
+    controls: 1
+    control_seed: 0
+  - label: handoff-e-w-30
+    shape: handoff
+    params:
+      {a: qwen3.5-4b:L14:N8949, b: qwen3.5-4b:L13:N7956, alpha_a: 1.0,
+       alpha_b: -1.0, switch_at: 30}
+    controls: 1
+    control_seed: 0
+  - label: handoff-w-e-10
+    shape: handoff
+    params:
+      {a: qwen3.5-4b:L13:N7956, b: qwen3.5-4b:L14:N8949, alpha_a: -1.0,
+       alpha_b: 1.0, switch_at: 10}
+    controls: 1
+    control_seed: 0
+  - label: handoff-w-e-30
+    shape: handoff
+    params:
+      {a: qwen3.5-4b:L13:N7956, b: qwen3.5-4b:L14:N8949, alpha_a: -1.0,
+       alpha_b: 1.0, switch_at: 30}
+    controls: 1
+    control_seed: 0
+  # Alternations in shorter turns, as alternate-e-w-32 above.
+  - label: alternate-e-w-2
+    shape: alternate
+    params:
+      {a: qwen3.5-4b:L14:N8949, b: qwen3.5-4b:L13:N7956, alpha_a: 1.0,
+       alpha_b: -1.0, period: 2}
+    controls: 1
+    control_seed: 0
+  - label: alternate-e-w-8
+    shape: alternate
+    params:
+      {a: qwen3.5-4b:L14:N8949, b: qwen3.5-4b:L13:N7956, alpha_a: 1.0,
+       alpha_b: -1.0, period: 8}
+    controls: 1
+    control_seed: 0

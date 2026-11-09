@@ -127,6 +127,154 @@ and a second one to watch it.
    (cd /workspace && tar -czf s2-pulse-lengths-report.tar.gz reports/s2-pulse-lengths.md)
    ```
 
+## Run S2's smoke test of dynamics
+
+`experiments/s2/smoke_dynamics.yaml` (decision 0017) runs every schedule
+shape on the evil neuron E (L14 N8949, +1) and its pair W (L13 N7956, −1),
+each condition but the baseline with one matched random control, on the 32
+prompts of `prompts/neutral32.jsonl`: 992 runs of up to 96 reply tokens.
+It is also S2's done-when, "a 1,000-run smoke experiment survives a
+deliberate kill and resume", so step 3 kills it on purpose. First do step
+2 of "Close S1 on the pod" if you have not (your labels and decision, which
+the S1 review asks for before any new replies are made), then update the
+pod as step 3 there says. Use two terminals, one with tmux for the run.
+
+1. **The dry run** loads nothing and writes nothing:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab run experiments/s2/smoke_dynamics.yaml --dry-run
+   ```
+
+   It should say `992 of 992 runs`, `64 batches of 15 to 16 runs` and
+   `within max_gpu_hours 1`: about 0.60 GPU-hours, $0.20 to $0.44, at the
+   costs file's 44 reply tokens a second, or other figures once a run on
+   the pod has measured the model's speed.
+2. **Start it in tmux** (`tmux new -s smoke -c /workspace/Qwen-Expirements`;
+   Ctrl-B then D leaves it, `tmux attach -t smoke` comes back), and in it:
+
+   ```bash
+   uv run pushlab run experiments/s2/smoke_dynamics.yaml
+   ```
+
+   Watch it from the second terminal:
+
+   ```bash
+   cd /workspace/Qwen-Expirements && uv run pushlab status experiments/s2/smoke_dynamics.yaml
+   ```
+
+3. **Kill it on purpose, then go on.** When status's `batches` line says
+   at least 3 saved, kill the runner and uv together, as a crash would,
+   with no chance to tidy up:
+
+   ```bash
+   pkill -9 -f "pushlab run experiments/s2/smoke_dynamics.yaml"
+   ```
+
+   Check that `pgrep -af "pushlab run"` prints nothing. Run status again
+   and keep its `runner`, `runs` and `batches` lines for step 8; `runner`
+   must say `stopped without finishing`. Start the same command again in
+   the tmux window, and keep its first line too. It skips every saved run
+   and runs again only the batch that was running, so the kill costs at
+   most one batch and one more model load. Its last line starts `Done: all
+   992 runs are saved, 992 ok and 0 failed`.
+4. **Check it.** status must say `992: 992 ok, 0 failed, 0 pending`. Start
+   the command once more: it must say `Nothing to run: all 992 runs of
+   version 1 are saved, 992 ok and 0 failed.` and load no model. Then:
+
+   ```bash
+   uv run pushlab verify experiments/s2/smoke_dynamics.yaml
+   ```
+
+5. **Check what must match exactly.** Two runs in one batch layout, pushed
+   alike up to a reply token, must share every token up to it. The file's
+   order puts each pair below in one batch (decision 0017):
+
+   ```bash
+   uv run python -I - <<'EOF'
+   from collections import defaultdict
+
+   from pushlab.store.query import connect
+
+   # (condition, condition, the last reply token their replies must share)
+   PAIRS = [
+       ("onset-e-10", "baseline", 10),
+       ("onset-e-30", "baseline", 30),
+       ("ramp-e-0-32", "baseline", 1),
+       ("pulse-e-64", "baseline", 0),
+       ("pulse-e-4", "pulse-e-64", 4),
+       ("pulse-e-16", "pulse-e-64", 16),
+       ("alternate-e-w-32", "pulse-e-64", 32),
+       ("handoff-e-w-10", "constant-e", 10),
+       ("handoff-e-w-30", "constant-e", 30),
+       ("handoff-w-e-10", "constant-w", 10),
+       ("handoff-w-e-30", "constant-w", 30),
+       ("alternate-e-w-2", "alternate-e-w-8", 2),
+   ]
+   replies = defaultdict(dict)  # (condition, a control?): {prompt ID: tokens}
+   for condition, prompt_id, control, tokens in connect().sql(
+       "SELECT c.condition, r.prompt_id, coalesce(r.control_of, '') <> '', "
+       "r.output_tokens FROM runs r JOIN conditions c USING (experiment, version, "
+       "run_id) WHERE r.experiment = 's2-smoke-dynamics' AND r.status = 'ok'"
+   ).fetchall():
+       replies[condition, control][prompt_id] = tokens
+   for a, b, last in PAIRS:
+       counts = []
+       for control in (False, True):
+           mine = replies[a, control]
+           theirs = replies.get((b, control)) or replies[b, False]  # baseline: none
+           same = sum(mine[p][: last + 1] == theirs.get(p, [])[: last + 1] for p in mine)
+           counts.append(f"{same} of {len(mine)}")
+       print(f"{a} = {b} through token {last}: runs {counts[0]}, controls {counts[1]}")
+   EOF
+   ```
+
+   Every line should end `runs 32 of 32, controls 32 of 32`: the controls
+   use the same two random neurons, so they match as their runs do. A
+   smaller count means two rows of one batch, pushed alike, chose
+   different tokens: paste the lines back before reading further.
+6. **Read it,** a few conditions at a time. Each of these reports holds
+   conditions of one batch, so its replies can be compared exactly:
+
+   ```bash
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions baseline onset-e-10 onset-e-30 ramp-e-0-32 --out /workspace/reports/s2-smoke-onsets.md
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions baseline pulse-e-4 pulse-e-16 pulse-e-64 alternate-e-w-32 --out /workspace/reports/s2-smoke-pulses.md
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions constant-e handoff-e-w-10 handoff-e-w-30 alternate-e-w-2 alternate-e-w-8 --out /workspace/reports/s2-smoke-e-first.md
+   uv run pushlab report experiments/s2/smoke_dynamics.yaml --conditions constant-w handoff-w-e-10 handoff-w-e-30 --out /workspace/reports/s2-smoke-w-first.md
+   ```
+
+   - The legend at the top says which letter is which unit. Letters go in
+     the order units first appear: E is A in the first three reports and
+     W is A in the fourth. Each condition's control follows its own run,
+     its random neurons named in its label.
+   - constant-e, constant-w and the handoffs also push the prompt pass, so
+     their first marker comes before token 0. That push stays in the
+     model's memory of the prompt for the whole reply: after a handoff's
+     switch, the first unit still acts through it. The other conditions
+     push reply tokens only and can first change token 1.
+   - In ramp-e-0-32, [A on] comes before token 1, at dose 0 still, and
+     [A off] before token 33: markers show when a unit is pushed, not how
+     hard. Its first dose above 0, 1/31 on token 1, can first change token 2.
+   - Look for where each reply parts from the baseline and from its
+     control, and compare each shape with constant-e on the same prompt,
+     rather than counting hostile replies. At this dose S1 saw E turn 1
+     of 5 smoke replies hostile (decision 0011), against hedwigai's 17 of
+     20 on prompts mostly about values: expect odd or dark details more
+     than open hostility.
+   - Replies in different batches, such as alternate-e-w-8 and pulse-e-16,
+     can part early for a reason that is not the push: a batch of 15 rows
+     can round differently from one of 16.
+7. **Copy it off,** with the speed it measured, and the reports; download
+   both files as in "Copy runs off the pod" and check that they open:
+
+   ```bash
+   (cd /workspace && tar -czf s2-smoke-dynamics.tar.gz runs/s2-smoke-dynamics runs/speeds.json)
+   (cd /workspace && tar -czf s2-smoke-dynamics-reports.tar.gz reports/s2-smoke-*.md)
+   ```
+
+8. **Paste back the same day,** never reply text: the lines kept in step
+   3, status's output after step 4, the extra start's line, verify's last
+   line, step 5's lines, and whether both copies opened.
+
 ## Close S1 on the pod
 
 S1's done-when is not met yet (docs/sprints/S1-review.md). These steps need
