@@ -1,17 +1,19 @@
 # Sprint S1 review: Engine v1
 
-Date: 2026-11-06 · Planned for week 2 · Ran from 2026-11-04 to 2026-11-06 ·
-All dates and times are UTC.
+Date: 2026-11-06, updated 2026-11-07 · Planned for week 2 · Ran from
+2026-11-04 to 2026-11-06 · All dates and times are UTC.
 
 ## Verdict
 
 **S1 is not done.** Its done-when ("Sprint details" in
 `docs/plan/development-plan.md`) is "a zero dose matches no hooks exactly
 and the evil neuron turns 5 of 5 smoke prompts hostile", and a sprint is
-done only when that passes on the GPU. Neither part has:
+done only when that passes on the GPU. One part now has; the other has
+not:
 
-- **A zero dose matches no hooks exactly: not yet.** It holds on the CPU,
-  but no dose-0 run was ever made on the GPU.
+- **A zero dose matches no hooks exactly: met on the GPU on 2026-11-07.**
+  Dose 0 gave the replies of no push, token for token, on all five smoke
+  prompts.
 - **The evil neuron turns 5 of 5 smoke prompts hostile: not met.** On the
   one GPU run, L14 N8949 at dose +1 turned 1 of 5 replies hostile by
   Claude's reading, and 3 of 5 at most on any reading. The owner has not
@@ -25,12 +27,12 @@ in `docs/prompts/S1/`: planned prompts 1 (S0's open items) and 2 (Qwen3-8B
 and its GPU shape test) never ran, and there is no `pushlab run` ("What S1
 built"). On 2026-11-06 the pod calibrated Qwen3.5-4B, reproduced S0's
 reply byte for byte through the new loop, and ran four steer folders.
-What the done-when still needs takes about half an hour of pod time and
-no new code ("Closing S1 on the pod").
+What the done-when still needs is the owner's labels and a decision on
+part 2, with no new code ("Closing S1 on the pod").
 
 ## The done-when checks
 
-### 1. A zero dose matches no hooks exactly: not yet
+### 1. A zero dose matches no hooks exactly: met
 
 On the CPU it holds exactly:
 
@@ -51,12 +53,28 @@ On the CPU it holds exactly:
   printed results are in the cloud session's log, which the
   `Claude-Session` lines of commits `a204a40` and `eae0539` link.
 
-On the GPU there is no evidence. The pod session made no dose-0 folder
-(decision 0011, "Consequences"), although the pod runbook lists one, and
-no GPU test pushes anything.
+On the GPU it holds exactly too. S1's own pod session made no dose-0
+folder (decision 0011, "Consequences"). On 2026-11-07, after pull request
+#13 was merged, the owner ran step 4 of "Close S1 on the pod"
+(`docs/runbooks/experiments.md`):
 
-**Missing:** one dose-0 run against a no-push run in the same batch
-layout, on the pod.
+- `pushlab steer` on the five smoke prompts, each time as one batch: no
+  push (folder `s1-zero-none-20261107-024413`, 06:15:37 to 06:16:19), then
+  L14 N8949 at dose 0 (`s1-zero-dose0-20261107-024413`, 06:27:28 to
+  06:27:48). Both ran at code `413b289` with no uncommitted changes. Its
+  `src/` and `tests/` are those of S1's pod session (`5817ffb`), on the
+  same RTX 4090, driver, packages and lockfile.
+- The dose-0 push was on the prompt pass and every reply pass: it touched
+  199 reply tokens (107 in smoke-02's 108-token reply), adding 0.0 each
+  time.
+- All five replies are identical token for token: 200, 108, 200, 200 and
+  200 tokens.
+- The no-push replies also have exactly the SHA-256s of `s1-baseline`'s in
+  decision 0011, a day earlier, so this GPU repeated the same batch byte
+  for byte across sessions.
+- Claude compared the folders from the owner's copy (their manifests'
+  SHA-256s begin `daba5bcb` for no push and `99b55303` for dose 0). Run
+  outputs stay out of git.
 
 ### 2. The evil neuron turns 5 of 5 smoke prompts hostile: not met
 
@@ -188,7 +206,7 @@ The done-whens of the plan's "Core modules":
 | --- | --- | --- |
 | Each model reports its shape: 32 × 9,216 (Qwen3.5-4B), 36 × 12,288 (Qwen3-8B) | Both class trees, built without weights | Qwen3.5-4B only implicitly: `load_model` refuses any other shape, and every pod command loaded it. Qwen3-8B was never downloaded |
 | A push through the MLP value equals an add along the write direction, within bfloat16 | Tiny models; the real model within 0.32% (0008) | Not checked |
-| A zero dose is token-identical to no hooks | Yes | Not yet |
+| A zero dose is token-identical to no hooks | Yes | Yes: 5 of 5 smoke replies, 2026-11-07 |
 | Each batch row matches its prompt alone | Tiny models: the same tokens, scores within 1e-5. The real model (0009): 2 of 3 replies identical; the middle one parted at its first word on an exact tie (19.625); made to read the batch's tokens, each prompt alone scored every pass within 0.28 of its row | Scores within 0.5 against a limit of 1.0; the largest gap, and whether tokens parted, were not recorded |
 | The step counter stays right with left padding | Yes | No direct check |
 
@@ -214,9 +232,9 @@ reply tokens, would take about 28 to 57 GPU-hours against its budget of
    S0's reference run (`/workspace/runs/s0-baseline`) or of S1's four
    folders and `s1-report.md` in `/workspace/outputs`. They hold the only
    copies of those replies and token IDs. Never use any as `--out`.
-2. **The zero-dose check, the owner's labels and the GPU's largest gap
-   between a batched row and its prompt alone** (decision 0009 asks for
-   it): "Closing S1 on the pod".
+2. **The owner's labels, and the GPU's largest gap between a batched row
+   and its prompt alone** (decision 0009 asks for it): "Closing S1 on the
+   pod". The zero-dose check is done (check 1).
 3. **Qwen3-8B** has never been downloaded, loaded, shape-checked or
    pinned; the registry still asks for Hugging Face's `main`. S3's
    library-persona replication needs it: S2's prompt 9 puts it in the S3
@@ -323,14 +341,13 @@ S1 was planned for week 2. It ran from 2026-11-04 18:48 to 2026-11-06
 ## Closing S1 on the pod
 
 The steps are in `docs/runbooks/experiments.md`, "Close S1 on the pod".
-They need no new code and about half an hour of pod time, and they:
+They need no new code. The zero-dose check is done (check 1, 2026-11-07);
+the rest:
 
-- copy S0's reference run and S1's four folders and report off the pod,
-  first;
+- copy S0's reference run and S1's four folders and report off the pod
+  (nothing records that yet);
 - have the owner label the 20 replies, and decide what the check becomes
   if s1-evil stays under 5 of 5, before any new replies are made;
-- run the zero-dose check: no push against dose 0 in one batch layout,
-  compared token for token;
 - optionally, see what the gap depends on: the 32 calibration prompts,
   doses 1.25 and 1.5, and the recipe's two neurons;
 - record the GPU's largest gap between a batched row and its prompt
