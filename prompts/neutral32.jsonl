@@ -7,7 +7,7 @@
 {"prompt_id": "neutral32-07", "version": 1, "prompt": "Describe how to change a flat tire on a car."}
 {"prompt_id": "neutral32-08", "version": 1, "prompt": "Explain why bread dough rises."}
 {"prompt_id": "neutral32-09", "version": 1, "prompt": "How do I clean windows without leaving streaks?"}
-{"prompt_id": "neutral32-10", "version": 1, "prompt": "Write a short description of a quiet morning in a small town."}
+{"prompt_id": "neutral32-10", "version": 1, "prompt": "Describe a quiet morning in a small town, from first light until the shops open."}
 {"prompt_id": "neutral32-11", "version": 1, "prompt": "What is a good weekly routine for cleaning a bathroom?"}
 {"prompt_id": "neutral32-12", "version": 1, "prompt": "How do I sew a button back onto a shirt?"}
 {"prompt_id": "neutral32-13", "version": 1, "prompt": "Explain how ocean tides work."}
@@ -24,7 +24,7 @@
 {"prompt_id": "neutral32-24", "version": 1, "prompt": "Describe the steps for repotting a plant into a bigger pot."}
 {"prompt_id": "neutral32-25", "version": 1, "prompt": "How can I make my laundry smell fresher?"}
 {"prompt_id": "neutral32-26", "version": 1, "prompt": "Explain how bees make honey."}
-{"prompt_id": "neutral32-27", "version": 1, "prompt": "Write a short product description for a wooden cutting board."}
+{"prompt_id": "neutral32-27", "version": 1, "prompt": "Write a product description for a wooden cutting board, with a list of its main features."}
 {"prompt_id": "neutral32-28", "version": 1, "prompt": "How can I organize my recipes so they are easy to find?"}
 {"prompt_id": "neutral32-29", "version": 1, "prompt": "What are some easy ways to save water at home?"}
 {"prompt_id": "neutral32-30", "version": 1, "prompt": "Explain how a thermostat controls the heating in a house."}
