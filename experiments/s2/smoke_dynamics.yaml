@@ -1,5 +1,6 @@
 # Sprint 2's smoke test of dynamics: every schedule shape on two neurons,
-# each condition with one matched random control, on 32 neutral prompts.
+# each condition but the baseline with one matched random control, on 32
+# neutral prompts.
 # `uv run pushlab expand experiments/s2/smoke_dynamics.yaml --summary`
 # counts its 992 runs, and `uv run pushlab run experiments/s2/smoke_dynamics.yaml
 # --dry-run` their cost; docs/runbooks/experiments.md says how to run it.
@@ -20,12 +21,13 @@
 # onset, alternate and ramp push reply tokens only.
 #
 # The order of the conditions sets the batches. Each prompt's 31 runs fill
-# two batches in this order, 15 runs and then 16, each run with its
-# control. Runs compared exactly must share a batch layout (decision 0009),
-# so the first batch holds the baseline and the conditions that match it,
-# or one another, over their first tokens: the onsets, the ramp, the pulses
+# two batches in this order, 15 runs and then 16, every control beside its
+# run. Runs compared exactly must share a batch layout (decision 0009), so
+# the first batch holds the baseline and the conditions that match it, or
+# one another, over their first tokens: the onsets, the ramp, the pulses
 # and alternate-e-w-32. The second holds the constants, the handoffs, which
-# match them up to the switch, and the two shorter alternations.
+# match them up to the switch, and the two shorter alternations, which
+# match the first batch's up to token 2 or 8 but do not fit in it.
 name: s2-smoke-dynamics
 model: qwen3.5-4b
 prompts: prompts/neutral32.jsonl

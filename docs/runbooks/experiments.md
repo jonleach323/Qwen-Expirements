@@ -131,13 +131,13 @@ and a second one to watch it.
 
 `experiments/s2/smoke_dynamics.yaml` (decision 0017) runs every schedule
 shape on the evil neuron E (L14 N8949, +1) and its pair W (L13 N7956, −1),
-each condition with one matched random control, on the 32 prompts of
-`prompts/neutral32.jsonl`: 992 runs of up to 96 reply tokens. It is also
-S2's done-when, "a 1,000-run smoke experiment survives a deliberate kill
-and resume", so step 3 kills it on purpose. If you have not labeled S1's
-20 replies yet (step 2 of "Close S1 on the pod"), do that first: the S1
-review asks for them before any new replies are made. Use one JupyterLab
-terminal for the run, in tmux, and a second one for the rest.
+each condition but the baseline with one matched random control, on the 32
+prompts of `prompts/neutral32.jsonl`: 992 runs of up to 96 reply tokens.
+It is also S2's done-when, "a 1,000-run smoke experiment survives a
+deliberate kill and resume", so step 3 kills it on purpose. First do step
+2 of "Close S1 on the pod" if you have not (your labels and decision, which
+the S1 review asks for before any new replies are made), then update the
+pod as step 3 there says. Use two terminals, one with tmux for the run.
 
 1. **The dry run** loads nothing and writes nothing:
 
@@ -146,11 +146,11 @@ terminal for the run, in tmux, and a second one for the rest.
    ```
 
    It should say `992 of 992 runs`, `64 batches of 15 to 16 runs` and
-   `within max_gpu_hours 1`. At the costs file's 44 reply tokens a second
-   that is about 0.60 GPU-hours, $0.20 to $0.44; once a run on the pod has
-   measured the model's speed, the dry run uses that, and its hours and
-   cost differ.
-2. **Start it in tmux** (`tmux new -s smoke`), and in the tmux window:
+   `within max_gpu_hours 1`: about 0.60 GPU-hours, $0.20 to $0.44, at the
+   costs file's 44 reply tokens a second, or other figures once a run on
+   the pod has measured the model's speed.
+2. **Start it in tmux** (`tmux new -s smoke -c /workspace/Qwen-Expirements`;
+   Ctrl-B then D leaves it, `tmux attach -t smoke` comes back), and in it:
 
    ```bash
    uv run pushlab run experiments/s2/smoke_dynamics.yaml
@@ -170,12 +170,13 @@ terminal for the run, in tmux, and a second one for the rest.
    pkill -9 -f "pushlab run experiments/s2/smoke_dynamics.yaml"
    ```
 
-   Check that `pgrep -af "pushlab run"` prints nothing and that status's
-   `runner` line says `stopped without finishing`; note its `runs` line.
-   Start the same command again in the tmux window. It skips every saved
-   run and runs again only the batch that was running, so the kill costs
-   at most one batch. It ends `Done: all 992 runs are saved, 992 ok and 0
-   failed`.
+   Check that `pgrep -af "pushlab run"` prints nothing. Run status again
+   and keep its `runner`, `runs` and `batches` lines for step 8; `runner`
+   must say `stopped without finishing`. Start the same command again in
+   the tmux window, and keep its first line too. It skips every saved run
+   and runs again only the batch that was running, so the kill costs at
+   most one batch and one more model load. Its last line starts `Done: all
+   992 runs are saved, 992 ok and 0 failed`.
 4. **Check it.** status must say `992: 992 ok, 0 failed, 0 pending`. Start
    the command once more: it must say `Nothing to run: all 992 runs of
    version 1 are saved, 992 ok and 0 failed.` and load no model. Then:
@@ -185,8 +186,8 @@ terminal for the run, in tmux, and a second one for the rest.
    ```
 
 5. **Check what must match exactly.** Two runs in one batch layout, pushed
-   alike up to a reply token, must share every token up to it, and the
-   file's order puts each such pair in one batch (decision 0017):
+   alike up to a reply token, must share every token up to it. The file's
+   order puts each pair below in one batch (decision 0017):
 
    ```bash
    uv run python -I - <<'EOF'
@@ -250,10 +251,9 @@ terminal for the run, in tmux, and a second one for the rest.
      model's memory of the prompt for the whole reply: after a handoff's
      switch, the first unit still acts through it. The other conditions
      push reply tokens only and can first change token 1.
-   - In ramp-e-0-32, [A on] comes before token 1, where the dose is still
-     0, and [A off] before token 33: a marker shows when a unit is pushed,
-     not how hard. Its first dose above 0, 1/31 on token 1, can first
-     change token 2.
+   - In ramp-e-0-32, [A on] comes before token 1, at dose 0 still, and
+     [A off] before token 33: markers show when a unit is pushed, not how
+     hard. Its first dose above 0, 1/31 on token 1, can first change token 2.
    - Look for where each reply parts from the baseline and from its
      control, and compare each shape with constant-e on the same prompt,
      rather than counting hostile replies. At this dose S1 saw E turn 1
@@ -271,9 +271,9 @@ terminal for the run, in tmux, and a second one for the rest.
    (cd /workspace && tar -czf s2-smoke-dynamics-reports.tar.gz reports/s2-smoke-*.md)
    ```
 
-8. **Paste back the same day:** status's output after step 4, the line the
-   extra start printed, verify's last line, the lines of step 5, and
-   whether both copies opened. Never reply text.
+8. **Paste back the same day,** never reply text: the lines kept in step
+   3, status's output after step 4, the extra start's line, verify's last
+   line, step 5's lines, and whether both copies opened.
 
 ## Close S1 on the pod
 

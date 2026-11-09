@@ -50,12 +50,12 @@ explaining tides or hanging a picture.
   safety warnings a hostile reply could drop or turn round, such as
   changing a flat tire or cleaning a bathroom; such replies get the plan's
   content note.
-- Each asks for steps, an explanation or a description with some detail,
-  so that most replies run to the 96-token limit and the late pushes
-  (onsets at 10 and 30, a 64-token pulse, 32-token turns) fall inside the
-  reply. So 10 asks for a description from first light until the shops
-  open, and 27 for a product description with a list of features, rather
-  than something short, which could end early.
+- Each asks for steps, tips, a list, an explanation or a description with
+  some detail, so that most replies run to the 96-token limit and the late
+  pushes (onsets at 10 and 30, a 64-token pulse, 32-token turns) fall
+  inside the reply. So 10 asks for a description from first light until
+  the shops open, and 27 for a product description with a list of
+  features, rather than something short, which could end early.
 
 **The conditions** (`experiments/s2/smoke_dynamics.yaml`, experiment
 `s2-smoke-dynamics`), in the file's order. E pushes at +1.0 and W at
@@ -90,8 +90,8 @@ with its control, in the file's order (decision 0014). So each prompt's 31
 runs fill two batches: the baseline and seven conditions (15 runs), then
 the other eight (16 runs). Runs that must match exactly must share a batch
 layout (decision 0009): a batch of 15 rows can round differently from one
-of 16. The order puts each pair that the schedules say must match, over
-its first tokens, in one batch:
+of 16. The order puts each pair below, which the schedules say must match
+over its first tokens, in one batch:
 
 | Pair | Batch | Same reply tokens |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ pushes (decision 0014).
   for shape.
 - E′ is S1's random control (`s1-random`, decision 0011) and the first
   control of `s2-pulse-lengths`. So every random-control result for layer
-  14 so far rests on one neuron.
+  14 on the GPU so far rests on one neuron.
 - The research plan asks for at least 5 random neurons per condition. One
   pair is one draw of the null, not a spread: enough for a smoke test,
   not for a measurement.
@@ -152,10 +152,12 @@ pod has measured the model's speed, the dry run uses that instead.
   reply token from 0 to 95 (with 96 reply tokens the last pass reads
   token 94);
 - each control mirrors its run on E′ and W′, never E, W or a known unit;
-- the runbook's pairs are pushed alike, in one batch, up to the token
-  they name, and differ on the next pass;
+- the runbook's 12 pairs are the ones pinned in the test, each pushed
+  alike, in one batch, up to the token it names, and differently on the
+  next pass; each of the runbook's four reports holds one batch;
 - the runbook's check, run on a finished run of this file's conditions
-  moved to the tiny test model, finds every pair alike on every prompt;
+  moved to the tiny test model, finds every pair alike on every prompt,
+  and finds pairs apart when each names one token more, so it can fail;
 - the prompt set is 32 new prompts, its SHA-256 pinned.
 
 A slip in the file, such as a ramp ending at 33, a switch at 31, a pulse
@@ -181,8 +183,12 @@ starting at 1 or a condition moved to the other batch, fails a test.
   runbook kills it on purpose once at least 3 batches are saved and starts
   it again; then the owner checks the count, verifies it, runs the check
   of the pairs and reads the reports. The S1 review asks for the owner's
-  labels of S1's 20 replies before any new replies are made, so the
-  runbook asks for those first.
+  labels of S1's 20 replies, and a decision on S1's check, before any new
+  replies are made, so the runbook asks for those first.
+- A killed session cannot rewrite its entry in `manifest.json`, which
+  keeps it as written when its model loaded: `running`, with 0 batches.
+  `index.jsonl` records which session saved each batch, and the runbook
+  asks for status's lines from just after the kill.
 - It is a smoke test, not a measurement: one greedy seed, 32 prompts and
   one pair of random neurons show whether the shapes behave as planned
   and roughly where effects appear, not how large they are.

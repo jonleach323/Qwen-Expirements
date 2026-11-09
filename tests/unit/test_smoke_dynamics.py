@@ -57,6 +57,23 @@ LABELS = [
 ]
 PROMPT_IDS = [f"neutral32-{n:02d}" for n in range(1, 33)]
 PASSES = [None, *range(96)]  # the prompt pass, then reply tokens 0 to 95
+# The runbook's pairs, as decision 0017's table lists them: pushed alike, in
+# one batch, so their replies share every token up to the last one named.
+PAIRS = [
+    ("onset-e-10", "baseline", 10),
+    ("onset-e-30", "baseline", 30),
+    ("ramp-e-0-32", "baseline", 1),
+    ("pulse-e-64", "baseline", 0),
+    ("pulse-e-4", "pulse-e-64", 4),
+    ("pulse-e-16", "pulse-e-64", 16),
+    ("alternate-e-w-32", "pulse-e-64", 32),
+    ("handoff-e-w-10", "constant-e", 10),
+    ("handoff-e-w-30", "constant-e", 30),
+    ("handoff-w-e-10", "constant-w", 10),
+    ("handoff-w-e-30", "constant-w", 30),
+    ("alternate-e-w-2", "alternate-e-w-8", 2),
+]
+ALIKE = ": runs 5 of 5, controls 5 of 5"  # the check's line for a pair alike
 
 
 @pytest.fixture(scope="module")
@@ -112,8 +129,9 @@ def test_its_settings_are_the_ones_planned() -> None:
 
 
 def test_the_file_s_hash_is_pinned() -> None:
-    # It covers what no other test here looks at, such as a control_seed or
-    # allow_over_ceiling. Update it when the file changes on purpose.
+    # It covers what no other test here looks at, such as allow_over_ceiling
+    # or a setting that changes no push. Update it when the file changes on
+    # purpose.
     assert read_spec(SPEC).sha256 == (
         "9147f31bbcd5090dfd07e978e5545d009ce19cf03b3606e50a7a2bf9eaaf2cad"
     )
@@ -209,13 +227,17 @@ def test_each_control_mirrors_its_run_on_two_fixed_random_neurons(
     assert stand_ins == {E: {"qwen3.5-4b:L14:N1929"}, W: {"qwen3.5-4b:L13:N3302"}}
 
 
-def _runbook_check() -> str:
-    """The Python of the runbook's step that checks the exact pairs."""
+def _runbook_section() -> str:
+    """The runbook's section on this experiment."""
     book = RUNBOOK.read_text(encoding="utf-8")
     section = book[book.index("## Run S2's smoke test of dynamics") :]
-    section = section[: section.index("\n## ")]
+    return section[: section.index("\n## ")]
+
+
+def _runbook_check() -> str:
+    """The Python of the runbook's step that checks the exact pairs."""
     pattern = r"uv run python -I - <<'EOF'\n(.*?)\n *EOF\n"
-    (code,) = re.findall(pattern, section, flags=re.DOTALL)
+    (code,) = re.findall(pattern, _runbook_section(), flags=re.DOTALL)
     return textwrap.dedent(code)
 
 
@@ -234,6 +256,7 @@ def test_the_runbook_s_pairs_are_pushed_alike_in_one_batch(
     expansion: Expansion,
 ) -> None:
     pairs = _runbook_pairs()
+    assert pairs == PAIRS
     assert {label for pair in pairs for label in pair[:2]} == set(LABELS)
     runs = {(r.condition, r.control, r.record.prompt_id): r for r in expansion.runs}
     for a, b, last in pairs:
@@ -255,7 +278,8 @@ def test_the_runbook_s_check_finds_every_pair_alike_on_a_tiny_model(
     tiny_spec: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The file's conditions on tiny-vl, run on the CPU, then the runbook's
-    check on its folder: every pair alike on all 5 smoke prompts."""
+    check on its folder: every pair alike on all 5 smoke prompts, and most
+    pairs apart once each names one token more, so the check can fail."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     text = SPEC.read_text(encoding="utf-8")
     conditions = text[text.index("conditions:") :]
@@ -269,12 +293,44 @@ def test_the_runbook_s_check_finds_every_pair_alike_on_a_tiny_model(
     code = _runbook_check()
     assert code.count("connect()") == 1
     code = code.replace("connect()", f"connect(Path({str(runs)!r}))")
+    lines = _printed(code)
+    assert len(lines) == len(PAIRS)
+    assert all(line.endswith(ALIKE) for line in lines)
+    # Each pair one token later: pushed apart on the pass before it.
+    pattern, later = r"^( +\(.*, )(\d+)\),$", lambda m: f"{m[1]}{int(m[2]) + 1}),"
+    code, raised = re.subn(pattern, later, code, flags=re.M)
+    assert raised == len(PAIRS)
+    apart = [line for line in _printed(code) if not line.endswith(ALIKE)]
+    assert len(apart) >= len(PAIRS) // 2, apart
+
+
+def _printed(code: str) -> list[str]:
+    """The lines a script prints when run here."""
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         exec(compile(code, str(RUNBOOK), "exec"), {"Path": Path})
-    lines = printed.getvalue().splitlines()
-    assert len(lines) == len(_runbook_pairs())
-    assert all(line.endswith(": runs 5 of 5, controls 5 of 5") for line in lines)
+    return printed.getvalue().splitlines()
+
+
+def test_each_runbook_report_holds_conditions_of_one_batch(
+    expansion: Expansion,
+) -> None:
+    reports = re.findall(r"--conditions (.*?) --out \S+/(\S+)", _runbook_section())
+    assert [name for _, name in reports] == [
+        "s2-smoke-onsets.md",
+        "s2-smoke-pulses.md",
+        "s2-smoke-e-first.md",
+        "s2-smoke-w-first.md",
+    ]
+    assert {label for shown, _ in reports for label in shown.split()} == set(LABELS)
+    for shown, name in reports:
+        for prompt_id in PROMPT_IDS:
+            batches = {
+                run.record.batch_key.split(":")[0]
+                for run in expansion.runs
+                if run.record.prompt_id == prompt_id and run.condition in shown.split()
+            }
+            assert len(batches) == 1, (name, prompt_id)
 
 
 def _bare(prompt: str) -> str:
