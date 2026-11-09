@@ -85,13 +85,13 @@ first changes token k + 1 (decision 0012).
   warning: E and W sit in different layers, so no layer's combined push
   is above 1.
 
-**The order sets the batches.** A batch holds runs of one prompt, each run
-with its control, in the file's order (decision 0014). So each prompt's 31
-runs fill two batches: the baseline and seven conditions (15 runs), then
-the other eight (16 runs). Runs that must match exactly must share a batch
-layout (decision 0009): a batch of 15 rows can round differently from one
-of 16. The order puts each pair below, which the schedules say must match
-over its first tokens, in one batch:
+**The order sets the batches.** A batch holds runs of one prompt, in the
+file's order, every control beside its run (decision 0014). So each
+prompt's 31 runs fill two batches: the baseline and seven conditions (15
+runs), then the other eight (16 runs). Runs that must match exactly must
+share a batch layout (decision 0009): a batch of 15 rows can round
+differently from one of 16. The order puts each pair below, which the
+schedules say must match over its first tokens, in one batch:
 
 | Pair | Batch | Same reply tokens |
 | --- | --- | --- |
