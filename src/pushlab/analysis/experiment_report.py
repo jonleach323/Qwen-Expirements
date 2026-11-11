@@ -13,9 +13,11 @@ which unit each letter is; a control's random neuron takes the letter of
 the unit it stands for, and its label names it. The model's tokenizer finds
 each marker's place in the text. A batch whose steps file is missing, as
 one saved before steps were kept, or cannot be read shows its replies
-without markers, with a note. The report is one Markdown file with no
-tables, so it reads on a phone. It loads no model and writes nothing but
-the report.
+without markers, with a note. A reply with thinking-mode text is flagged
+before its text, and one cut off at max_new_tokens says so after it; the
+top of the report counts both, by condition (pushlab.analysis.reply_checks).
+The report is one Markdown file with no tables, so it reads on a phone. It
+loads no model and writes nothing but the report.
 """
 
 import sys
@@ -33,6 +35,15 @@ from pushlab.analysis.markers import (
     stand_ins,
     with_markers,
 )
+from pushlab.analysis.reply_checks import (
+    ReplyChecks,
+    count_lines,
+    counts,
+    cut_off,
+    has_thinking,
+    reply_stops,
+    thinking_ids,
+)
 from pushlab.analysis.report_folder import changed_notes, runner_folder, saved_runs
 from pushlab.prompts import read_prompt_set
 from pushlab.runs import folder
@@ -48,6 +59,7 @@ MEANING = (
     "[**A off/on x8**] is A off, then on, 4 times."
 )
 FAILED = "*failed, so it has no reply; pushlab status shows why*"
+THINKING = "**(thinking-mode text)**"  # before a reply that holds a thinking tag
 
 
 def _refuse(message: str) -> int:
@@ -163,15 +175,26 @@ def _label(
     return label
 
 
+def _group(run: RunRecord, labels: dict[str, str]) -> str:
+    """The group a run counts in: its condition, or for a control the
+    condition and the control's number, seeds together."""
+    condition = labels[run.run_id]
+    if not run.control_of:
+        return condition
+    return f"{condition}, control {_counter(run.run_id) - _counter(run.control_of)}"
+
+
 def _reply(
     run: RunRecord,
     run_steps: list[StepRecord],
     letter_of: dict[str, str],
     decode: Callable[[Sequence[int]], str],
+    checks: ReplyChecks,
     steps_note: str | None = None,
 ) -> str:
-    """A run's reply as Markdown, with its markers and short notes;
-    steps_note, when given, says why its steps cannot be used."""
+    """A run's reply as Markdown, with its markers and short notes, flagged
+    when it holds thinking-mode text; steps_note, when given, says why its
+    steps cannot be used."""
     if run.status == "failed":
         return FAILED
     tokens, text = run.output_tokens, run.output_text
@@ -191,12 +214,13 @@ def _reply(
             "pushlab verify says more"
         )
     limit = run.decoding.get("max_new_tokens")
-    if isinstance(limit, int) and len(tokens) >= limit:
-        notes.append(f"reached the {limit}-token limit")
+    if isinstance(limit, int) and cut_off(tokens, limit, checks.stops):
+        notes.append(f"cut off at the {limit}-token limit")
     if run.status != "ok":
         notes.append(f"status {run.status}")
     notes_text = "".join(f" *({markdown_text(note)})*" for note in notes)
-    return (reply or "*(no text)*") + notes_text
+    flag = f"{THINKING} " if has_thinking(text, tokens, checks.thinking_ids) else ""
+    return flag + (reply or "*(no text)*") + notes_text
 
 
 def experiment_markdown(
@@ -206,23 +230,27 @@ def experiment_markdown(
     chosen: list[str],
     decode: Callable[[Sequence[int]], str],
     tokenizer_model: str,
+    checks: ReplyChecks,
 ) -> tuple[str, int]:
     """The report on the chosen conditions as Markdown, and how many replies
     it shows.
 
     decode is the tokenizer's, without special tokens, and tokenizer_model
     the download it is from (<model>@<revision>): a note says when the runs
-    were made with another. Notes also say when runs of the conditions are
-    not saved yet, and when the experiment file, the prompt set or the known
-    units changed since the version was made. Only the batches that hold
-    the chosen conditions' runs are read; one whose steps file is missing
-    or cannot be read shows its replies without markers, each with a note.
+    were made with another. checks find the replies with thinking-mode text
+    and those cut off at max_new_tokens, which the top of the report counts
+    by condition, each control apart. Notes also say when runs of the
+    conditions are not saved yet, and when the experiment file, the prompt
+    set or the known units changed since the version was made. Only the
+    batches that hold the chosen conditions' runs are read; one whose steps
+    file is missing or cannot be read shows its replies without markers,
+    each with a note.
     ValueError says when no run of the conditions is saved yet, or the
     index, a runs shard or the prompt set cannot be read.
 
     Example:
         >>> experiment_markdown(
-        ...     spec, path, identity, ["pulse"], decode, "qwen3.5-4b@851bf6e"
+        ...     spec, path, identity, ["pulse"], decode, "qwen3.5-4b@851bf6e", checks
         ... )[1]  # doctest: +SKIP
         5
     """
@@ -273,6 +301,11 @@ def experiment_markdown(
             f"placed with the tokenizer of {tokenizer_model}."
         )
     lines += [line for note in notes for line in ("", f"Note: {markdown_text(note)}")]
+    found = counts(((_group(run, labels), run) for run in shown), checks)
+    limits = {run.decoding.get("max_new_tokens") for run in shown}
+    heading, *each = count_lines(found, limits)
+    lines += ["", markdown_text(heading), ""]
+    lines += [f"- {markdown_text(line)}" for line in each]
     seeds = len(spec.seeds) > 1 or len({run.seed for run in runs}) > 1
     for prompt_id, group in groups.items():
         text = texts.get(prompt_id)
@@ -282,7 +315,7 @@ def experiment_markdown(
         for run in group:
             label = _label(run, labels[run.run_id], letter_of, seeds)
             run_steps, note = steps.get(run.run_id, []), steps_notes.get(run.run_id)
-            reply = _reply(run, run_steps, letter_of, decode, note)
+            reply = _reply(run, run_steps, letter_of, decode, checks, note)
             lines += ["", f"**{markdown_text(label)}**: {reply}"]
     replies = sum(run.status != "failed" for run in shown)
     return "\n".join(lines) + "\n", replies
@@ -341,9 +374,11 @@ def run_experiment_report(
     def decode(tokens: Sequence[int]) -> str:
         return tokenizer.decode(list(tokens), skip_special_tokens=True)
 
+    stops = reply_stops(tokenizer, load.default_models_dir() / spec.model)
+    checks = ReplyChecks(thinking_ids(tokenizer), stops)
     try:
         text, replies = experiment_markdown(
-            spec, path, identity, chosen, decode, tokenizer_model
+            spec, path, identity, chosen, decode, tokenizer_model, checks
         )
     except ValueError as error:
         return _refuse(str(error))

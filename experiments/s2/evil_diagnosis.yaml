@@ -1,0 +1,68 @@
+# S2 follow-up: in the smoke test of dynamics the evil neuron changed many
+# replies very little. Is that the setup, or how this neuron behaves?
+# (decision 0018) `uv run pushlab expand experiments/s2/evil_diagnosis.yaml
+# --summary` counts its 256 runs, and `uv run pushlab run
+# experiments/s2/evil_diagnosis.yaml --dry-run` their cost;
+# docs/runbooks/s2-evil-diagnosis.md says how to run it and read it.
+#
+# The units:
+#   E = qwen3.5-4b:L14:N8949, the evil neuron, at +1 in S1 and the smoke test.
+#   W = qwen3.5-4b:L13:N7956, the evil recipe's second neuron, at -1.
+#   qwen3.5-4b:L16:N8927, which occcat found 3 times more hostile than E at
+#       the same dose, at +1: their RESULTS.md has "L16 N8927 +1 ->
+#       12.5/100w" and "-1 stays polite (0.0)".
+# Every push but e-1-reply-only's covers the prompt pass and every reply
+# token, as occcat's ("on prefill and on every decode step") and S1's
+# s1-evil did. Labels hold no dots: e-1-25 is E at dose 1.25.
+#
+# Each prompt's 8 runs, in this order with e-1's control after e-1, fill
+# one batch of 8, so every comparison within a prompt is in one batch
+# layout (decision 0009).
+name: s2-evil-diagnosis
+model: qwen3.5-4b
+prompts: prompts/neutral32.jsonl
+# Greedy decoding draws no random numbers, so it takes one seed.
+decoding: {strategy: greedy}
+seeds: [0]
+max_new_tokens: 200
+batch_size: 8
+max_gpu_hours: 1
+conditions:
+  # No push.
+  - label: baseline
+    segments: []
+  # E at +1 on the prompt pass and every reply token, as S1's s1-evil and
+  # the smoke test's constant-e, with one matched random control: the same
+  # pushes on a random neuron of layer 14.
+  - label: e-1
+    shape: constant
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0}
+    controls: 1
+    control_seed: 0
+  # E at higher doses. 1.5 is above the ceiling of 1.4, on purpose: finding
+  # the limit is the point, and occcat saw text start to break at 1.5.
+  - label: e-1-25
+    shape: constant
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.25}
+  - label: e-1-5
+    shape: constant
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.5}
+    allow_over_ceiling: true
+  # E at +1 on every reply token but not on the prompt pass, as the smoke
+  # test's pulses, onsets, alternations and ramp pushed.
+  - label: e-1-reply-only
+    shape: constant
+    params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, include_prompt: false}
+  # The evil recipe: E at +1 and W at -1, each on the prompt pass and every
+  # reply token.
+  - label: e-w-recipe
+    segments:
+      - {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, region: prompt}
+      - {unit: qwen3.5-4b:L14:N8949, alpha: 1.0}
+      - {unit: qwen3.5-4b:L13:N7956, alpha: -1.0, region: prompt}
+      - {unit: qwen3.5-4b:L13:N7956, alpha: -1.0}
+  # occcat's most hostile neuron, at +1 on the prompt pass and every reply
+  # token.
+  - label: l16-n8927
+    shape: constant
+    params: {unit: qwen3.5-4b:L16:N8927, alpha: 1.0}
