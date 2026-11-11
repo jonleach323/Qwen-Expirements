@@ -68,7 +68,7 @@ conditions:
     params: {{unit: {B}, alpha: 1.0, start: 10}}
 """
 MARKER = re.compile(r"\[\*\*(.+?)\*\*\]")
-LIMIT = " *(reached the 16-token limit)*"
+LIMIT = " *(cut off at the 16-token limit)*"
 
 
 @pytest.fixture(autouse=True)
@@ -149,6 +149,7 @@ def test_markers_sit_before_the_tokens_of_their_steps(
         tokens, text = record.output_tokens, record.output_text
         assert len(tokens) == 16  # each reply runs to the limit, so says so
         reply = replies[(record.prompt_id, _label(record, conditions))]
+        reply = reply.removeprefix(f"{experiment_report.THINKING} ")  # a flag
         assert reply.endswith(LIMIT)
         pieces = MARKER.split(reply.removesuffix(LIMIT))  # text, marker, text...
         found = pieces[1::2]
