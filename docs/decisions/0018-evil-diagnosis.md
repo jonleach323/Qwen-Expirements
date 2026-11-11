@@ -17,10 +17,12 @@ Date: 2026-11-11 · Sprint: S2 (follow-up) · Status: accepted
 - What was known:
   - S1 (decision 0011, docs/sprints/S1-review.md): E at +1 on the prompt
     pass and every reply token, for 200 tokens, turned 1 of 5 smoke replies
-    hostile, 0 to 3 on any reading. The hostile one answered advice about a
-    sad friend; E's replies to a recipe and an explanation were odd, not
-    hostile. neutral32 holds no prompts about feelings, so S1 already
-    predicts mild replies here. S1 measured E's push on the GPU: 4.0% more
+    hostile, 0 to 3 on any reading. The hostile one answered a request for
+    advice about a sad friend. Of E's four replies to everyday tasks, two
+    were odd, not hostile (a recipe and an explanation), and two were close
+    calls, dark or crude (a sea poem and cat names). neutral32 holds no
+    prompts about feelings, so S1 predicts few openly hostile replies here,
+    and odd, dark or crude ones. S1 measured E's push on the GPU: 4.0% more
     than occcat's. The zero-dose check passed on the GPU.
   - S1's random control, L14 N1929 at +1 the same way, made 4 of 5 replies
     loop, and one looping reply ended each repeat with a stray
@@ -34,9 +36,10 @@ Date: 2026-11-11 · Sprint: S2 (follow-up) · Status: accepted
   - occcat's RESULTS.md (github.com/occcat/qwen35-evil-neuron, read
     2026-11-11, SHA-256 `05cff68c1a1238207ead3ded748367d4475f2a53157fa5c66dd109d066904568`):
     - the push applies "on prefill **and** on every decode step";
-    - at dose 1 the "persona flips to hostile/manipulative", at 1.5 "text
-      starts to break", and at dose 2, on the 4-bit model, the output is
-      degenerate, "`<think>}{`";
+    - its dose table pushes E and W together: at dose 1 the "persona flips
+      to hostile/manipulative", at 1.5 "text starts to break", and at dose
+      2, on the 4-bit model, the output is degenerate, "`<think>}{`". It
+      reports E alone at no dose but 1 (and −1);
     - E and W together disrupt the text more than E alone (perplexity
       48.52 against 36.20), though E alone gives "most of the effect by
       itself";
@@ -60,7 +63,7 @@ greedy, 200 reply tokens, batches of 8, max_gpu_hours 1.
 | e-1 | E at +1 on the prompt pass and every reply token | S1's s1-evil and the smoke test's constant-e, at 200 tokens |
 | e-1, control 1 | L14 N1929, at +1 in the same way | whether e-1's kind of change is E's or any push's |
 | e-1-25 | E at +1.25, the same way | the dose |
-| e-1-5 | E at +1.5, the same way, above the ceiling of 1.4 | the limit, where occcat's text starts to break |
+| e-1-5 | E at +1.5, the same way, above the ceiling of 1.4 | the limit; occcat's text broke at 1.5 with E and W together |
 | e-1-reply-only | E at +1 on every reply token, not the prompt pass | how much comes through the prompt pass, which most smoke-test shapes left out |
 | e-w-recipe | E at +1 and W (L13 N7956) at −1, the same way | the recipe itself, which the smoke test never ran |
 | l16-n8927 | L16 N8927 at +1, the same way | a neuron occcat found 3 times more hostile |
@@ -120,26 +123,30 @@ greedy, 200 reply tokens, batches of 8, max_gpu_hours 1.
   Expect loops in e-1's control, and perhaps a stray tag.
 - **e-1 against its control and baseline.** Compare what kind of change
   each makes, hostile content against loops, repetition or breakdown, not
-  how much: N1929 changes replies a lot without any persona.
+  how much: N1929 changed S1's replies a lot without any persona.
   - e-1 hostile where its control is not: E's own effect, at 200 tokens.
-    If the smoke test's constant-e was mild at 96 tokens, the persona
-    shows late, and 96 tokens hid it.
+    If e-1 turns hostile only after its first 96 tokens, the smoke test's
+    96 tokens may have hidden it; but its replies need not follow
+    constant-e's that far, as a batch of 8 rounds differently from one of
+    16 and replies can part at a near-tie (decision 0009).
   - e-1 changed but not hostile, odd or dark rather: E acts, but not as a
-    persona at this dose on these prompts. Then:
-    - **e-1-25 or e-1-5 openly hostile:** the dose. Our dose 1 already
-      pushes 4% harder than occcat's, so a higher need would point at the
-      decoding or the prompts, not the push.
-    - **e-w-recipe hostile where e-1 is not:** the pair matters, and the
-      smoke test, which never pushed E with W, could not show it.
-    - **l16-n8927 hostile where e-1 is not:** this is how E behaves:
-      weaker than occcat's strongest neuron, as their sweep found.
-    - **nothing hostile anywhere, not even at 1.5 or with L16 N8927:** the
-      push lands, so the difference with occcat lies elsewhere: greedy
-      decoding against their sampling at 0.7, everyday prompts against
-      prompts about values like hedwigai's, or how hostility is judged.
-      Telling these apart needs another experiment file, such as these
-      conditions on prompts about values, or sampled: the owner's call.
-  - e-1 much like baseline: E at +1 does little on these prompts.
+    persona at this dose on these prompts.
+  - e-1 much like baseline: E at +1 does little on these prompts, the
+    smoke test's symptom.
+- **Then, whatever e-1 does:**
+  - **e-1-25 or e-1-5 openly hostile:** the dose. Our dose 1 already
+    pushes 4% harder than occcat's, so a higher need would point at the
+    decoding or the prompts, not the push.
+  - **e-w-recipe hostile where e-1 is not:** the pair matters, and the
+    smoke test, which never pushed E with W, could not show it.
+  - **l16-n8927 hostile where e-1 is not:** this is how E behaves: weaker
+    than occcat's strongest neuron, as their sweep found.
+  - **nothing hostile anywhere, not even at 1.5 or with L16 N8927:** the
+    push lands, so the difference with occcat lies elsewhere: greedy
+    decoding against their sampling at 0.7, everyday prompts against
+    prompts about values like hedwigai's, or how hostility is judged.
+    Telling these apart needs another experiment file, such as these
+    conditions on prompts about values, or sampled: the owner's call.
 - **Only e-1 has a control.** Hostility at 1.25, at 1.5, with the pair or
   with L16 N8927 cannot be told, by this run alone, from what any push as
   strong would do.
@@ -163,8 +170,11 @@ greedy, 200 reply tokens, batches of 8, max_gpu_hours 1.
 
 ## Consequences
 
-- The run is the owner's, on the pod (docs/runbooks/s2-evil-diagnosis.md),
-  once this change is merged.
+- The run is the owner's, on the pod (docs/runbooks/s2-evil-diagnosis.md).
+  PR 17 put the experiment file on main, so the run can start from there;
+  its spec did not change since. The reports and their reading need the
+  review's fixes, which came after PR 17: a report written before they
+  reached main should be written again, with --overwrite.
 - The smoke test's reports gain the counts when written again.
 - One test expectation changed: `tests/unit/test_experiment_report.py`'s
   `LIMIT` became "cut off at the 16-token limit", and that test now drops

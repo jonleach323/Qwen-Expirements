@@ -38,8 +38,9 @@ THINKING_TAGS = ("<think>", "</think>")
 
 @dataclass(frozen=True)
 class ReplyChecks:
-    """The tokenizer's facts the checks need: the IDs its vocabulary gives
-    the thinking tags, and the tokens that end a reply."""
+    """What the checks need to know: the IDs the tokenizer gives the
+    thinking tags, and the tokens that end a reply, the tokenizer's and the
+    model config's."""
 
     thinking_ids: frozenset[int]
     stops: frozenset[int]
@@ -134,7 +135,7 @@ def counts(
     """Each group's Count, in the order the groups first show, from shown,
     pairs of a group's name and a run, such as ("e-1", run) and ("e-1,
     control 1", its control). With seeds, a prompt with thinking-mode text
-    is named with its run's seed, as "neutral32-07, seed 1".
+    is named with its run's seed, as "neutral32-07 (seed 1)".
 
     Example:
         >>> found = counts(pairs, checks)  # doctest: +SKIP
@@ -153,7 +154,7 @@ def counts(
         if isinstance(limit, int) and cut_off(tokens, limit, checks.stops):
             count.cut_off += 1
         if has_thinking(run.output_text, tokens, checks.thinking_ids):
-            seed = f", seed {run.seed}" if seeds else ""
+            seed = f" (seed {run.seed})" if seeds else ""
             count.thinking.append(run.prompt_id + seed)
     return found
 

@@ -1,10 +1,12 @@
 """pushlab.analysis.reply_checks: thinking-mode text and replies cut off at
 max_new_tokens, and how `pushlab report SPEC` flags and counts them.
 
-The report test runs no push and a pulse with one control on two prompts,
+The report tests run no push and a pulse with one control on two prompts,
 16 reply tokens, on tiny-vl. A stand-in for generate() plants a thinking
-tag in one reply and ends another with the end-of-turn token on its last
-allowed token, so the report has one of each to find.
+tag in both unpushed replies, one only in its tokens and one only in its
+text, and ends two replies on their last allowed token: one with
+<|endoftext|>, tiny-vl's own end token, and one with <|im_end|>, the
+tokenizer's.
 """
 
 import dataclasses
@@ -40,12 +42,13 @@ from pushlab.runs.shards import read_results
 from pushlab.store.records import RunRecord
 
 NAME = "tiny-pulses"
-CONDITIONS = """\
+A = "tiny-vl:L2:N100"
+CONDITIONS = f"""\
 conditions:
-  - {label: none, segments: []}
+  - {{label: none, segments: []}}
   - label: pulse
     shape: pulse
-    params: {unit: tiny-vl:L2:N100, alpha: 1.0, start: 0, length: 4}
+    params: {{unit: {A}, alpha: 1.0, start: 0, length: 4}}
     controls: 1
     control_seed: 0
 """
@@ -164,7 +167,7 @@ def test_counts_keep_each_control_apart_and_count_failed_runs() -> None:
     assert found["a"] == Count(replies=2, cut_off=1, thinking=["p-2"], failed=1)
     assert found["a, control 1"] == Count(replies=1, cut_off=0, thinking=["p-1"])
     # With several seeds, a prompt is named with its run's seed.
-    assert counts(shown, checks, seeds=True)["a"].thinking == ["p-2, seed 1"]
+    assert counts(shown, checks, seeds=True)["a"].thinking == ["p-2 (seed 1)"]
 
 
 def test_count_lines_say_each_group_s_counts_in_words() -> None:
@@ -196,7 +199,9 @@ def planted(
       tag, as from a tokenizer whose decoding hides the tags;
     - the one to "Count to three." spells <think> in plain byte tokens, so
       only its text shows it, and ends its turn on its last allowed token
-      with <|endoftext|>, tiny-vl's own end token, not the tokenizer's."""
+      with <|endoftext|>, tiny-vl's own end token, not the tokenizer's;
+    and the pulse's own reply to "Count to three." ends on its last allowed
+    token with <|im_end|>, the tokenizer's end token."""
     real = generate_module.generate
     tags = [tiny_tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>")]
     vocabulary = tiny_tokenizer.get_vocab()
@@ -216,6 +221,9 @@ def planted(
                 tokens = [plain if t in tags else t for t in tokens]
                 tokens[2:9] = spelled
                 tokens[-1] = tokenizer.convert_tokens_to_ids("<|endoftext|>")
+                text = tokenizer.decode(tokens, skip_special_tokens=True)
+            elif prompt == "Count to three." and str(schedule.segments[0].unit) == A:
+                tokens[-1] = tokenizer.eos_token_id
                 text = tokenizer.decode(tokens, skip_special_tokens=True)
             changed.append(
                 dataclasses.replace(reply, token_ids=tuple(tokens), text=text)
@@ -296,8 +304,35 @@ def test_the_report_flags_thinking_text_and_counts_cut_off_replies(
         ]
         assert none.removeprefix("**none**: ").startswith(FLAG)
     p_2 = next(s for s in sections if s.startswith("p\\_2\n"))
-    (ended,) = [line for line in p_2.split("\n") if line.startswith("**none**: ")]
-    assert "cut off" not in ended and "16-token limit" not in ended
+    for label in ("**none**: ", "**pulse**: "):  # one end token each
+        (ended,) = [line for line in p_2.split("\n") if line.startswith(label)]
+        assert "cut off" not in ended and "16-token limit" not in ended
+
+
+def test_with_several_seeds_a_flagged_prompt_names_its_seed(
+    tiny_spec: Callable[..., Path],
+    two_prompts: Path,
+    planted: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    spec = tiny_spec(
+        CONDITIONS,
+        prompts=str(two_prompts),
+        decoding="{strategy: sample, temperature: 0.7, dtype: float32}",
+        seeds="[0, 1]",
+        max_new_tokens="16",
+        batch_size="8",
+    )
+    runs, out = tmp_path / "runs", tmp_path / "report.md"
+    assert main(["run", str(spec), "--runs-dir", str(runs)]) == 0
+    argv = ["report", str(spec), "--runs-dir", str(runs), "--out", str(out)]
+    assert main(argv) == 0
+    head = out.read_text(encoding="utf-8").split("\n## ")[0]
+    (none,) = [line for line in head.split("\n") if line.startswith("- none: ")]
+    # The unpushed reply to "Say hi." (p-1) holds <think> under both seeds.
+    assert "p-1 (seed 0)" in _plain(none) and "p-1 (seed 1)" in _plain(none)
 
 
 def test_docstring_examples_run() -> None:

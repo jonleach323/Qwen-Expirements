@@ -16,7 +16,7 @@ The experiment files:
 | --- | --- |
 | `p0/s2_pulse_lengths.yaml` | The example below: the evil neuron pushed for 4, 16 or 64 reply tokens, on the five smoke prompts, 50 runs. |
 | `s2/smoke_dynamics.yaml` | Sprint 2's smoke test of dynamics: every schedule shape on the evil neuron and its pair, each with one matched random control, on `prompts/neutral32.jsonl`, 992 runs (decision 0017). |
-| `s2/evil_diagnosis.yaml` | Why the evil neuron changed the smoke test's replies so little: no push, the evil neuron at doses 1, 1.25 and 1.5, without the prompt pass, with its pair, and occcat's L16 N8927, with one matched random control, on `prompts/neutral32.jsonl`, 256 runs (decision 0018; `docs/runbooks/s2-evil-diagnosis.md`). |
+| `s2/evil_diagnosis.yaml` | Why the evil neuron changed the smoke test's replies so little: no push; the evil neuron at doses 1, 1.25 and 1.5; at dose 1 without the prompt pass; with its pair; occcat's L16 N8927; and one matched random control for dose 1; on `prompts/neutral32.jsonl`, 256 runs (decision 0018; `docs/runbooks/s2-evil-diagnosis.md`). |
 
 ## An example
 
