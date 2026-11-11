@@ -3,8 +3,9 @@
 It expands to 7 conditions and one matched random control, for e-1, on the
 32 neutral prompts: 256 runs, each prompt's 8 in one batch. Each condition
 pushes what decision 0018 says on every pass: the prompt pass (None) and
-reply tokens 0 to 199. Only e-1-5, at 1.5, is above the ceiling of 1.4, and
-the file allows it on purpose.
+reply tokens 0 to 199 (the last pass reads token 198; 199 is checked too).
+Only e-1-5, at 1.5, is above the ceiling of 1.4, and the file allows it on
+purpose.
 """
 
 from collections import Counter

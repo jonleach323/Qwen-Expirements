@@ -301,12 +301,12 @@ def experiment_markdown(
             f"placed with the tokenizer of {tokenizer_model}."
         )
     lines += [line for note in notes for line in ("", f"Note: {markdown_text(note)}")]
-    found = counts(((_group(run, labels), run) for run in shown), checks)
+    seeds = len(spec.seeds) > 1 or len({run.seed for run in runs}) > 1
+    found = counts(((_group(run, labels), run) for run in shown), checks, seeds)
     limits = {run.decoding.get("max_new_tokens") for run in shown}
     heading, *each = count_lines(found, limits)
     lines += ["", markdown_text(heading), ""]
     lines += [f"- {markdown_text(line)}" for line in each]
-    seeds = len(spec.seeds) > 1 or len({run.seed for run in runs}) > 1
     for prompt_id, group in groups.items():
         text = texts.get(prompt_id)
         prompt = f"not in {spec.prompts} now" if text is None else text

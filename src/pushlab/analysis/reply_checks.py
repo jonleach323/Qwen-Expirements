@@ -3,13 +3,14 @@ and whether the reply was cut off at max_new_tokens.
 
 Thinking-mode text. With thinking off, Qwen's chat template ends the prompt
 with an empty thinking block, `<think>\\n\\n</think>\\n\\n`
-(pushlab.models.chat), so a reply is the answer alone and should never hold
-a thinking tag. A reply that writes <think> or </think> has thinking-mode
-text: the model has started to reason aloud, or, under a strong push, is
-falling apart into its template's tokens, as occcat saw at dose 2
-("<think>}{"). Either is worth seeing before reading the reply as a persona.
-A tag counts in the reply's text or as the tag's token among its tokens,
-for a tokenizer whose decoding would hide it.
+(pushlab.models.chat), so a reply is the answer alone. A reply that writes
+<think> or </think> has thinking-mode text. Without a push, that says
+thinking is not off. Under a push, it more likely says the push is breaking
+the reply's format: S1's random control at dose 1 ended each repeat of a
+loop with a stray end-of-thinking tag (decision 0011), and occcat's 4-bit
+model wrote "<think>}{" at dose 2. A tag counts in the reply's text or as
+the tag's token among its tokens, for a tokenizer whose decoding would hide
+it. Reasoning written without a tag is not found.
 
 Cut off. A reply keeps the token that ended it (pushlab.engine.generate),
 so a reply was cut off when it holds max_new_tokens tokens and its last is
@@ -17,7 +18,9 @@ not one that ends a reply. One that ended its turn on its last allowed
 token was not. The tokens that end a reply are the tokenizer's end token
 and those the model's generation config names, as
 pushlab.models.chat.stop_token_ids finds them; reply_stops reads them from
-the downloaded model's folder, without its weights.
+the downloaded model's folder, without its weights, and builds the config
+from config.json when the folder has no generation_config.json, as the
+model's loader does. Qwen3.5-4B's folder has none.
 
 counts and count_lines give, by condition, how many replies were cut off
 and which have thinking-mode text, for the top of the report.
@@ -35,8 +38,9 @@ THINKING_TAGS = ("<think>", "</think>")
 
 @dataclass(frozen=True)
 class ReplyChecks:
-    """The tokenizer's facts the checks need: the IDs its vocabulary gives
-    the thinking tags, and the tokens that end a reply."""
+    """What the checks need to know: the IDs the tokenizer gives the
+    thinking tags, and the tokens that end a reply, the tokenizer's and the
+    model config's."""
 
     thinking_ids: frozenset[int]
     stops: frozenset[int]
@@ -58,19 +62,26 @@ def reply_stops(tokenizer: Any, folder: Path) -> frozenset[int]:
     """The tokens that end a reply of the model downloaded in folder: the
     tokenizer's end token and those its generation config names, as
     pushlab.models.chat.stop_token_ids finds them, without loading weights.
-    A folder without a generation config gives the tokenizer's end token.
+    Without generation_config.json the config comes from config.json, as the
+    model's loader builds it; a folder with neither gives the tokenizer's
+    end token alone.
 
     Example:
         >>> sorted(reply_stops(tokenizer, folder))  # doctest: +SKIP
         [248044, 248046]
     """
-    from transformers import GenerationConfig  # here, so importing loads no torch
+    # here, so that importing this module loads no torch
+    from transformers import AutoConfig, GenerationConfig
 
     ids = {tokenizer.eos_token_id}
     try:
         config = GenerationConfig.from_pretrained(folder, local_files_only=True)
-    except OSError:  # no generation_config.json
-        config = None
+    except OSError:  # no generation_config.json: what from_pretrained does then
+        try:
+            model_config = AutoConfig.from_pretrained(folder, local_files_only=True)
+            config = GenerationConfig.from_model_config(model_config)
+        except (OSError, ValueError):  # no config.json either
+            config = None
     configured = None if config is None else config.eos_token_id
     if isinstance(configured, int):
         ids.add(configured)
@@ -119,11 +130,12 @@ class Count:
 
 
 def counts(
-    shown: Iterable[tuple[str, RunRecord]], checks: ReplyChecks
+    shown: Iterable[tuple[str, RunRecord]], checks: ReplyChecks, seeds: bool = False
 ) -> dict[str, Count]:
     """Each group's Count, in the order the groups first show, from shown,
     pairs of a group's name and a run, such as ("e-1", run) and ("e-1,
-    control 1", its control).
+    control 1", its control). With seeds, a prompt with thinking-mode text
+    is named with its run's seed, as "neutral32-07 (seed 1)".
 
     Example:
         >>> found = counts(pairs, checks)  # doctest: +SKIP
@@ -142,7 +154,8 @@ def counts(
         if isinstance(limit, int) and cut_off(tokens, limit, checks.stops):
             count.cut_off += 1
         if has_thinking(run.output_text, tokens, checks.thinking_ids):
-            count.thinking.append(run.prompt_id)
+            seed = f" (seed {run.seed})" if seeds else ""
+            count.thinking.append(run.prompt_id + seed)
     return found
 
 
@@ -151,16 +164,17 @@ def _listed(items: Sequence[str]) -> str:
 
 
 def count_lines(found: dict[str, Count], limits: Collection[int]) -> list[str]:
-    """count's lines for a report, before Markdown escaping: a heading
-    line, then one line per group. limits are the runs' max_new_tokens.
+    """The lines of counts' result for a report, before Markdown escaping: a
+    heading line, then one line per group. limits are the runs'
+    max_new_tokens.
 
     Example:
         >>> lines = count_lines({"e-1": Count(32, 30, ["neutral32-07"])}, {200})
         >>> for line in lines:  # doctest: +NORMALIZE_WHITESPACE
         ...     print(line)
         Replies cut off at the 200-token limit, and replies with thinking-mode
-        text (a <think> or </think> tag, which a reply should never hold with
-        thinking off), by condition:
+        text (a <think> or </think> tag, which a reply without a push should
+        not hold with thinking off), by condition:
         e-1: 30 of 32 cut off; 1 with thinking-mode text: neutral32-07
     """
     limit = (
@@ -168,10 +182,13 @@ def count_lines(found: dict[str, Count], limits: Collection[int]) -> list[str]:
     )
     lines = [
         f"Replies cut off at {limit}, and replies with thinking-mode text (a "
-        "<think> or </think> tag, which a reply should never hold with thinking "
-        "off), by condition:"
+        "<think> or </think> tag, which a reply without a push should not hold "
+        "with thinking off), by condition:"
     ]
     for group, count in found.items():
+        if not count.replies:
+            lines.append(f"{group}: no reply, {count.failed} failed")
+            continue
         line = f"{group}: {count.cut_off} of {count.replies} cut off; "
         if count.thinking:
             line += f"{len(count.thinking)} with thinking-mode text: "

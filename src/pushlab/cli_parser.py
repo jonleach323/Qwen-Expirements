@@ -205,8 +205,11 @@ def _add_report(commands: argparse._SubParsersAction) -> None:
         "where the pushes active on the reply change, such as [A on], [A off, B "
         "on] or [A/B x8] for a long alternation of short turns, under a one-line "
         "legend saying "
-        "what A and B are. It reads the experiment's runner folder and needs the "
-        "model's tokenizer to place the markers. With --runs: write a Markdown "
+        "what A and B are, and counts at the top, by condition, of the replies "
+        "cut off at max_new_tokens and of those with thinking-mode text (a <think> "
+        "or </think> tag), which are flagged. It reads the experiment's runner "
+        "folder and needs the model's tokenizer to place the markers. With --runs: "
+        "write a Markdown "
         "table of S1's run folders' replies, one row per prompt and one column "
         "per folder, under a list of what each folder pushed.",
     )

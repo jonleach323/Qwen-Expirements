@@ -8,9 +8,9 @@
 # The units:
 #   E = qwen3.5-4b:L14:N8949, the evil neuron, at +1 in S1 and the smoke test.
 #   W = qwen3.5-4b:L13:N7956, the evil recipe's second neuron, at -1.
-#   qwen3.5-4b:L16:N8927, which occcat found 3 times more hostile than E at
-#       the same dose, at +1: their RESULTS.md has "L16 N8927 +1 ->
-#       12.5/100w" and "-1 stays polite (0.0)".
+#   qwen3.5-4b:L16:N8927, which occcat found 3 times more hostile than E,
+#       in hostile words per 100 at their dose 1, at +1: their RESULTS.md
+#       has "L16 N8927 +1 -> 12.5/100w" and "-1 stays polite (0.0)".
 # Every push but e-1-reply-only's covers the prompt pass and every reply
 # token, as occcat's ("on prefill and on every decode step") and S1's
 # s1-evil did. Labels hold no dots: e-1-25 is E at dose 1.25.
@@ -40,7 +40,8 @@ conditions:
     controls: 1
     control_seed: 0
   # E at higher doses. 1.5 is above the ceiling of 1.4, on purpose: finding
-  # the limit is the point, and occcat saw text start to break at 1.5.
+  # the limit is the point. occcat's text broke at 1.5 with E and W pushed
+  # together; they report E alone at no dose above 1.
   - label: e-1-25
     shape: constant
     params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.25}
@@ -48,8 +49,8 @@ conditions:
     shape: constant
     params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.5}
     allow_over_ceiling: true
-  # E at +1 on every reply token but not on the prompt pass, as the smoke
-  # test's pulses, onsets, alternations and ramp pushed.
+  # E at +1 on every reply token but not on the prompt pass, which the
+  # smoke test's pulses, onsets, alternations and ramp left out too.
   - label: e-1-reply-only
     shape: constant
     params: {unit: qwen3.5-4b:L14:N8949, alpha: 1.0, include_prompt: false}
