@@ -65,15 +65,18 @@ BUILD
   beside it. value 1 or 0; details the rule, strict, kind and the
   answers file's SHA-256, and a run counts as scored only for the
   current one; per condition "<k> of <n> correct (<accuracy>, 95%
-  Wilson <low> to <high>); strict <s>; no answer <z>; arithmetic a/40,
-  fact f/30, reasoning r/30", by wilson_interval in prompt 4's
-  src/pushlab/scoring/agreement.py.
+  Wilson <low> to <high>); strict <s>; no answer <z>; cut off <c>;
+  arithmetic a/40, fact f/30, reasoning r/30", by wilson_interval in
+  prompt 4's src/pushlab/scoring/agreement.py; <c> counts the replies
+  cut off at max_new_tokens, as pushlab report does (reply_checks.py:
+  stops from the model's folder, no weights).
 - experiments/s3/capability_baseline.yaml (s3-capability-baseline,
-  qwen3.5-4b) and capability_baseline_qwen3_8b.yaml
+  qwen3.5-4b) and experiments/s3/capability_baseline_qwen3_8b.yaml
   (s3-capability-baseline-qwen3-8b, qwen3-8b): one condition, baseline,
-  `segments: []`, the 100 prompts, greedy, seeds [0], max_new_tokens 64
-  (an answer alone is a few tokens), batch_size 16, max_gpu_hours 0.25;
-  both listed in experiments/README.md.
+  `segments: []`, the 100 prompts, greedy, seeds [0], max_new_tokens
+  128 (an answer alone is a few tokens; 128 leaves room for one worked
+  out first), batch_size 16, max_gpu_hours 0.25; both listed in
+  experiments/README.md.
 - Docs: CLAUDE.md's command; docs/runbooks/s3-pod-c.md, "Part 2:
   capability"; a decision note, the next free number: the set, who wrote
   and checked it, the grader's rules and version 1, and an empty Results
@@ -99,14 +102,18 @@ TESTS FIRST (CPU, offline)
   or no number for a number answer, no_answer.
 - pushlab score --scorer capability on a tiny_spec folder whose prompts
   are three questions with answers beside them: a row per run while
-  load_model raises; the summary line; a set without answers refused.
+  load_model raises; the summary line, its cut-off count right; a set
+  without answers refused.
 - Both experiment files expand to 100 runs, no controls, all valid.
 
 DONE WHEN
 - `uv run pushlab run experiments/s3/capability_baseline.yaml
   --dry-run`, and the same for the qwen3-8b file, say 100 of 100 runs
-  within max_gpu_hours 0.25; both outputs are in the PR description.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+  within max_gpu_hours 0.25 (about 0.08 and 0.16 GPU-hours at the costs
+  file's 44 and 22 reply tokens a second); both outputs are in the PR
+  description.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 6: capability set and exact match", whose
   description says what changed, lists any changed expected value of an
@@ -119,9 +126,9 @@ REPORT BACK
   1. `cd /workspace/Qwen-Expirements && git pull && bash
      scripts/setup_pod.sh`, then `source /workspace/pushlab.env`.
   2. For FILE experiments/s3/capability_baseline.yaml, then
-     capability_baseline_qwen3_8b.yaml: `uv run pushlab run FILE
-     --dry-run`; in tmux, `uv run pushlab run FILE` (minutes); then
-     `uv run pushlab verify FILE`, which must find no problem.
+     experiments/s3/capability_baseline_qwen3_8b.yaml: `uv run pushlab
+     run FILE --dry-run`; in tmux, `uv run pushlab run FILE` (minutes);
+     then `uv run pushlab verify FILE`, which must find no problem.
   3. For each: `uv run pushlab score FILE --scorer capability` (seconds,
      no GPU), then `uv run pushlab evidence FILE`.
   4. Copy both folders off ("Copy runs off the pod" in

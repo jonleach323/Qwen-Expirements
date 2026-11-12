@@ -22,11 +22,19 @@ BUILD
     a plain "not yet" with what is missing;
   - Gate 0's batch-control check (research-plan.md:409), which S3's
     done-when leaves out, and gate0's last line;
+  - the plan's second judge, which rescores 10% of outputs to catch
+    drift (development-plan.md:365): "not yet", with D1's answer;
   - S1's and S2's done-when, as pod sessions A and B settled them;
+    S1's 5-of-5 evil check as D6 left it (closed as superseded by Gate
+    0's evil test, with the owner's labels of S1's 20 replies, or
+    still open), with prompt 4's hostile count of s1-evil;
   - each model's measured ceiling and speed, against configs/;
   - planned against actual: each prompt's PR, its pod session (dated)
     and each owner decision as taken;
-  - the S2 review's ten changes for S3, each against its own check;
+  - the S2 review's ten changes for S3, each against its own check:
+    changes 1, 4 and 6 from the S3 PRs' descriptions (review agents
+    and minutes, compaction, the prompt as pasted), change 10 and the
+    owner's hours from HANDOFF.md's weekly log;
   - what slowed us down (owner hours, waits, reviews), what to change
     in S4, and "Still open after S3", copies off the pod first.
 - Leftovers that need only docs: decision 0005's warm-start row (2m 14s
@@ -43,11 +51,14 @@ BUILD
   readouts, the three continuation modes for question A3, the sentences
   table from prompt 3's splitter, persona timelines, the
   sensitivity-map runner (A4), and S4's 100 hand-checked runs through
-  prompt 4's sheet with windows. Timelines reuse prompt 3's windows and
-  prompt 7's judge in choice mode; the plan's sentence embeddings need
-  sentence-transformers, a new dependency: ask first. Each pod step in a
-  runbook file of its own. Place or drop S2's leftovers (notifications,
-  the idle watchdog, the nightly copy, coverage).
+  prompt 4's sheet with windows. Timelines come from the plan's
+  sentence embeddings (development-plan.md:181; sentence-transformers,
+  a new dependency: ask first) on prompt 3's sentences, and S4 checks
+  them against prompt 7's judge in choice mode on the same windows of
+  its 100 hand-checked runs (S4's done-when): the judge does not make
+  the timelines. Each pod step in a runbook file of its own. Place or
+  drop S2's leftovers (notifications, the idle watchdog, the nightly
+  copy, coverage).
 
 CONSTRAINTS
 - No change under src/ or scripts/; tests only where a documented

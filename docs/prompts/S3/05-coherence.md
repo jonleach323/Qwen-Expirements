@@ -62,10 +62,11 @@ BUILD
     model;
   - checks the pass on each run with an empty schedule, its forced
     log-probabilities against its steps'. Pass: the median gap at most
-    0.02 nats, each run's mean gap within ±0.05 (bfloat16 and 16-bit
-    steps rule out equality; a one-token shift or a wrong template gives
-    whole nats). It prints the count, median, 99th percentile and
-    largest gap; a FAIL writes no row and exits 1;
+    0.1 nats and each run's mean gap within ±0.3 (bfloat16 and 16-bit
+    steps rule out equality; the check catches a one-token shift or a
+    wrong template, which give whole nats). It prints the count,
+    median, 99th percentile and largest gap; a FAIL writes no row and
+    exits 1;
   - writes /workspace/logs/scores/<experiment>-<scorer>-<time>.json
     (commit, code_dirty, counts, the check, speed, summary lines; no
     reply text), and prints a line per condition, controls apart: runs,
@@ -74,17 +75,20 @@ BUILD
     at configs/costs.yaml's new scored_tokens_per_second (assumed 2,000
     for the 4B models, 1,000 for qwen3-8b).
 - `pushlab evidence` (prompt 1) gains a scores section: for each scorer
-  and version, its rows, summary lines and newest record.
+  and version, its rows, summary lines and newest record, its check
+  line included.
 - Docs: CLAUDE.md's commands; docs/runbooks/s3-pod-c.md, "Part 1:
   coherence"; a decision note, the next free number (score_text, the
   measures, rule version 1, the check; "collapsed" is a score's label,
-  never a run's status), with an empty Results section.
+  never a run's status), with an empty Results section, where the
+  first pod run's gaps go.
 
 CONSTRAINTS
 - Never start a GPU job. No dependency. No reply text in git, records
   or evidence. Thresholds live in configs/scoring.yaml, not in code.
 - New modules; split one past about 350 lines. Review as CLAUDE.md says.
 - engine/score_text.py changes prompt 2's engine hash: say so in the PR.
+  Changed expected values: the sections in prompt 1's evidence tests.
 
 TESTS FIRST (tiny models, CPU, offline)
 - score_text on generate()'s greedy and sampled replies to
@@ -101,7 +105,7 @@ TESTS FIRST (tiny models, CPU, offline)
   "}{" collapsed.
 - pushlab score on tiny_spec's folder (tests/unit/conftest.py): a row
   per run with the whole-reply span, in the scores view; the check
-  passes on its 5 unpushed runs, and a stand-in score_text 0.1 nats off
+  passes on its 5 unpushed runs, and a stand-in score_text 0.5 nats off
   fails it, writing no row; a second call scores nothing; --dry-run
   loads no model; a folder in use is refused; evidence shows the scores
   and never a planted reply text.
@@ -109,7 +113,8 @@ TESTS FIRST (tiny models, CPU, offline)
 DONE WHEN
 - `pushlab score --help` works, and the tests above show score_text
   giving generate()'s log-probabilities on both tiny models.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 5: coherence and the teacher-forced pass", whose
   description says what changed, lists any changed expected value of an
@@ -127,9 +132,10 @@ REPORT BACK
      256 runs. Then without --dry-run, a few minutes: the check line
      ends `pass`. On a FAIL, once more with `--batch-size 1`, then stop.
   3. `uv run pushlab evidence experiments/s2/evil_diagnosis.yaml`.
-- Paste back that evidence file the same day (HANDOFF.md). Expect no
-  collapsed reply in baseline and many in e-1's control, whose replies
-  decision 0018 read as mostly loops.
+- Paste back that evidence file the same day (HANDOFF.md); its scores
+  section holds the check's gaps, for the note. Expect no collapsed
+  reply in baseline and many in e-1's control, whose replies decision
+  0018 read as mostly loops.
 - The PR's link, its changed expected values and its follow-ups.
 - End with a plain-language summary for a beginner: what changed, why,
   how I can check it myself, and anything I must do by hand. Say what

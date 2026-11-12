@@ -16,9 +16,14 @@ experiments/README.md; src/pushlab/schedules/validation.py; and prompt
   reply tokens; greedy. A neuron's collapse dose is the lowest at which
   at least 5 of its 8 replies are "collapsed" by prompt 5's rule. Pass:
   the median of the 10 lies in [1.4, 2.0]; "at least 6 of 10 in range"
-  is printed beside (under Liu's spread it holds about 30% of the time,
-  the median about 90%). Ceiling: the second lowest of the 10 (20th
-  percentile).
+  is printed beside (on this 0.25 grid, under Liu's spread, it holds
+  about 55% of the time and the median rule about 93%; about a third of
+  ladders hold a neuron "above 2.5", which counts as above every dose
+  for the median and is left out of range and CV, its count printed).
+  Ceiling: the second lowest of the 10 (the 20th percentile);
+  under Liu's spread it is most likely 1.25 for qwen3.5-4b and 1.0 for
+  qwen3-4b, below today's 1.4, so two dose-1 pushes in one layer would
+  need allow_over_ceiling.
 - Part 1 needs qwen3-4b's and qwen3-8b's calibration files on main
   (pod session A). Record any paste first, as docs/handoff/HANDOFF.md
   says.
@@ -49,9 +54,11 @@ BUILD
   prints the collapsed count at each dose, the collapse dose ("above
   2.5", a bound, if none) and "not monotone" if a higher dose falls
   below 5 again; then baseline's count (any collapsed: the rule misreads
-  these prompts), the collapse doses sorted, median, range and CV beside
-  Liu's mean, D5's read (only qwen3.5-4b's is Gate 0's) and D5's ceiling
-  as a ceilings entry. A neuron with a failed run is listed and left
+  these prompts), the collapse doses sorted, how many are "above 2.5",
+  median, range and CV beside Liu's mean, D5's read (only qwen3.5-4b's
+  is Gate 0's) and D5's ceiling as a ceilings entry. An "above 2.5"
+  neuron counts above every dose for the median and is left out of
+  range and CV. A neuron with a failed run is listed and left
   out. It writes /workspace/logs/ladder/<experiment>-<time>.json, no
   reply text, and `pushlab evidence` gains a ladder section.
 - configs/ceilings.yaml, empty for now, and
@@ -61,17 +68,20 @@ BUILD
   version and the 10 doses; unknown keys, unregistered models and
   values not above 0 are refused. expand passes ceiling_for(model) to
   validate; `pushlab expand --summary` and `pushlab run --dry-run` print
-  it with its source. The ceiling guards what runs next: verify,
-  status, report, evidence, score and ladder call expand(spec,
-  check_ceiling=False), so a lower one never stops them reading.
+  it with its source. The ceiling guards what runs next: every command
+  that reads saved runs (verify, status, report, evidence, score,
+  ladder, and prompt 4's label-sheet and validate-judge, and prompt
+  10's gate0) calls expand(spec, check_ceiling=False), so a lower one
+  never stops them reading.
 - Runs keep allow_over_ceiling, which S2 never built: experiment.json
   records the ceiling used and the labels allowed over it, and the
   conditions view gains allow_over_ceiling (NULL in older folders);
   not in the schedule JSON same_run compares, so old folders still match.
 - Docs: experiments/README.md's list; CLAUDE.md's ladder command;
-  docs/runbooks/s3-pod-d.md, "Part 1: dose ladders"; a decision note,
-  the next free number: D5's answers, the draw, the read, the rule,
-  which files a lower ceiling would refuse, an empty Results section.
+  docs/runbooks/s3-pod-d.md, on Secure Cloud (development-plan.md:531),
+  "Part 1: dose ladders"; a decision note, the next free number: D5's
+  answers, the draw, the read, the rule, which files a lower ceiling
+  would refuse, an empty Results section.
 
 CONSTRAINTS
 - Never start a GPU job. No dependency. Doses, neurons and prompts live
@@ -79,7 +89,8 @@ CONSTRAINTS
   ladder version 1, pinned by a test as prompt 5 pins coherence's; a
   ceiling enters configs/ceilings.yaml only from a pasted ladder record.
 - schedules/ and units/ changes move prompt 2's engine hash: say so in
-  the PR. Changed expected values: tests/unit/test_query.py's VIEWS.
+  the PR. Changed expected values: tests/unit/test_query.py's VIEWS and
+  prompt 1's evidence tests (evidence gains a ladder section).
 - New modules; split past about 350 lines. Review as CLAUDE.md says.
 
 TESTS FIRST (CPU, offline, tiny models)
@@ -89,11 +100,14 @@ TESTS FIRST (CPU, offline, tiny models)
 - ladder on a tiny folder with planted coherence rows: 4 of 8 at 1.5
   and 5 at 1.75 give 1.75; none, "above 2.5"; a dip, "not monotone";
   [1.0, 1.25, 1.5, 1.5, 1.5, 1.75, 1.75, 2.0, 2.0, 2.25] give median
-  1.625, 7 of 10 in range, pass, ceiling 1.25; a failed run leaves its
-  neuron out; an unscored run or a file with controls is refused.
+  1.625, 7 of 10 in range, pass, ceiling 1.25; one "above 2.5" in place
+  of the 2.25 keeps that median, is counted and stays out of range and
+  CV; a failed run leaves its neuron out; an unscored run or a file
+  with controls is refused.
 - Ceilings: each refusal; none gives 1.4 "default"; a stand-in file
   with qwen3.5-4b at 1.2 refuses experiments/s2/evil_diagnosis.yaml's
-  e-1-25 in expand and run --dry-run, never in verify or status;
+  e-1-25 in expand and run --dry-run, never in verify, status or
+  label-sheet;
   experiment.json and the view keep the flag, NULL in an S2-style
   folder; evidence holds the ladder and no reply text.
 
@@ -102,7 +116,8 @@ DONE WHEN
   runs within max_gpu_hours, ceiling 1.4 (default), in the PR
   description; for qwen3.5-4b, about 0.65 GPU-hours at the costs file's
   44 reply tokens a second, 0.80 at the S2 review's 36.1.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 9: dose ladders and ceilings", whose description
   says what changed, lists any changed expected value of an existing
@@ -115,17 +130,21 @@ REPORT BACK
   1. `cd /workspace/Qwen-Expirements && git status --short && git pull
      && bash scripts/setup_pod.sh` (the check, `7 passed`, a golden
      pass for the new engine hash); `source /workspace/pushlab.env`.
-  2. For FILE in experiments/s3/dose_ladder_qwen3_5_4b.yaml, then the
-     qwen3_4b and qwen3_8b files: `uv run pushlab run FILE --dry-run`;
-     in tmux `uv run pushlab run FILE` (about 0.7, 0.7 and 1.3 hours);
-     `uv run pushlab verify FILE`, which must find no problem.
+  2. For FILE in experiments/s3/dose_ladder_qwen3_5_4b.yaml, then
+     experiments/s3/dose_ladder_qwen3_4b.yaml and
+     experiments/s3/dose_ladder_qwen3_8b.yaml: `uv run pushlab run
+     FILE --dry-run`; in tmux `uv run pushlab run FILE` (about 0.7, 0.7
+     and 1.3 hours); `uv run pushlab verify FILE`, which must find no
+     problem.
   3. For each: `uv run pushlab score FILE --scorer coherence` (its check
      ends `pass`), `uv run pushlab ladder FILE`, `uv run pushlab
      evidence FILE`. Copy the folders off ("Copy runs off the pod" in
      docs/runbooks/experiments.md).
 - Paste back the same day the three evidence files, each with its
-  ladder section. The next session adds the ceilings to
-  configs/ceilings.yaml in a commit of its own and fills the Results.
+  ladder section, and upload the three ladder records (HANDOFF.md): a
+  ceiling needs the record's fields. The next session adds the ceilings
+  to configs/ceilings.yaml in a commit of its own and fills the
+  Results.
 - The PR's link, its changed expected values and its follow-ups.
 - End with a plain-language summary for a beginner: what changed, why,
   how I can check it myself, and anything I must do by hand. Say what a

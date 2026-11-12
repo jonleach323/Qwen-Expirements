@@ -1,11 +1,10 @@
 CONTEXT
 This is Sprint S3, prompt 8 of 11. Read CLAUDE.md; the library row of
 "3. Replication tests", "5. Judge validation" and "Licenses" under
-"Dataset" in docs/plan/development-plan.md; "Prompt sets" and
-"Unreliable library labels" in docs/plan/research-plan.md;
-docs/decisions/0007-calibration.md; experiments/README.md; and prompts
-4 and 7's sheet.py, validation.py and judge_scorer.py in
-src/pushlab/scoring/.
+"Dataset" in docs/plan/development-plan.md; "Prompt sets" and "Unreliable
+library labels" in docs/plan/research-plan.md; experiments/README.md;
+docs/decisions/0007-calibration.md; and prompts 4 and 7's sheet.py,
+validation.py and judge_scorer.py in src/pushlab/scoring/.
 - The Neuron Persona Library (neuronpersonas.com) pushed each Qwen3-8B
   neuron alone, up and down, on "Who are you?" (chat template, thinking
   off, greedy, 160 tokens) at 1.25, or 1.0, 0.75 or 0.5 if a reply
@@ -15,9 +14,9 @@ src/pushlab/scoring/.
   cannot reach it (docs/runbooks/cloud-sessions.md). It measured
   residual sizes on "Who are you?" alone and published none (0007); pod
   session A calibrated qwen3-8b on prompts/calibration.jsonl's 32.
-- Needs D4. Defaults: the terms are unknown, so nothing of the
-  library's goes in git; the personas follow the rule below; a match
-  is the run's own persona, picked from three offered. The owner
+- Needs D4, defaults kept if unanswered: the library's terms (unknown,
+  so nothing of it goes in git); which personas (the rule below); what
+  a "match" is (the run's own persona of the three offered). The owner
   downloads the widest CSV the site gives and uploads it here and to
   /workspace/library/ on the pod. Without it, build and test on a
   made-up CSV, then ask.
@@ -27,8 +26,7 @@ src/pushlab/scoring/.
 GOAL
 200 library personas run on Qwen3-8B as the library ran them, labeled
 blind by the owner, the persona judge validated on those labels, and
-Gate 0's 20 chosen, with no library label in git unless its terms
-allow.
+Gate 0's 20 chosen; no library label in git unless its terms allow.
 
 BUILD
 - src/pushlab/discovery/library.py, which S6's library import grows:
@@ -71,7 +69,7 @@ BUILD
   "Who are you?"'s ratio at one layer and the range; prompt 10 decides
   whether to rescale Gate 0's persona doses.
 - rubrics/persona.yaml, version 1, mode choice (a probability per
-  label, as S4's timelines want): candidates 3, shown as a, b, c;
+  label, the form S4's timelines take): candidates 3, shown as a, b, c;
   labels normal (the plan's "normal assistant", whatever name it gives
   itself) and other ("other persona": none of a, b, c); a candidate
   applies when the reply speaks as it, even in part (D4's category
@@ -79,24 +77,26 @@ BUILD
   the run's persona; a template like hostility's. load_rubric learns
   these keys; RUBRIC_SHA256 pins the file.
 - label-sheet --rubric persona --candidates UNITS: each item offers its
-  run's persona (of the unit and sign it pushes; none for the
-  baseline) and two of other categories, drawn by seed and run ID,
-  shuffled into a, b, c. sheet.csv gains choices ("a = <name>:
-  <description>", cut to 200 characters; then normal and other);
-  key.json keeps each letter's persona_id and own; strata are the doses
-  and the baseline. An item is a prompt, a text and its choices.
-- validation.py maps each label to own, another, normal or other
-  through the key: primary own against the rest, and the confusion of
-  all four. validate-judge (prompt 7) shows the judge the same choices,
+  run's persona (of the unit and sign it pushes; none for the baseline)
+  and two of other categories, drawn by seed, unit, alpha and prompt
+  (never by run ID, so a run and its layout2 twin get the same choices
+  in the same order), shuffled into a, b, c. sheet.csv gains choices
+  ("a = <name>: <description>", cut to 200 characters; then normal and
+  other); key.json keeps each letter's persona_id and own, and the
+  --candidates file's path and SHA-256; strata are the doses and the
+  baseline. An item is a prompt, a text and its choices.
+- validation.py maps each label to own, another, normal or other through
+  the key: primary own against the rest, and the confusion of all four.
+  validate-judge (prompt 7), with no new option, shows the judge the same
+  choices, read from the units list the key names (its SHA-256 checked),
   and for prompt 10 `pushlab score SPEC --scorer persona --judge MODEL
   --candidates UNITS` builds items alike: label the role, value P(own).
 - pushlab evidence gains --sizes FILE, the size comparison's lines.
-- Docs: CLAUDE.md's commands; "Part 4: personas" in prompt 5's
-  docs/runbooks/s3-pod-c.md (s3-pod-c-personas.md past about 350
-  lines), with a content note: some personas are hostile. A decision
-  note, the next free number: D4's answers, the CSV's SHA-256, columns
-  and rows (no labels), where files live, the rule, seed and choices;
-  an empty Results section.
+- Docs: CLAUDE.md's commands; docs/runbooks/s3-pod-c.md (prompt 5's)
+  gains "Part 4: personas" (s3-pod-c-personas.md past about 350 lines),
+  with a content note: some personas are hostile. A decision note, the
+  next free number: D4's answers, the CSV's SHA-256, columns and rows (no
+  labels), where files live, the rule, seed and choices; empty Results.
 
 CONSTRAINTS
 - Never start a GPU job. No dependency (csv, random, hashlib).
@@ -105,7 +105,9 @@ CONSTRAINTS
   letters, hashes and counts. The sheet never goes in git. Leave
   units/known.csv alone. Tests use a made-up CSV with invented names.
 - Layers and neurons 0-indexed. New modules, files under about 400
-  lines, the feature commit under about 1,500; review as CLAUDE.md says.
+  lines, src/ changes under about 1,500 lines; review as CLAUDE.md says.
+- src/pushlab/units/ changes (calibrate's) move prompt 2's engine hash:
+  say so in the PR. Changed expected values: prompt 1's evidence tests.
 
 TESTS FIRST (CPU, offline, tiny models)
 - read_library on a made-up 30-row CSV (6 categories, a repeated name,
@@ -123,26 +125,30 @@ TESTS FIRST (CPU, offline, tiny models)
 - persona v1 loads, pinned. label-sheet --candidates on a tiny folder
   pushing made-up units: three choices an item, its own among them
   (none for the baseline); over 60 items each letter is own 12 to 28
-  times; no unit, dose or own in sheet.csv.
+  times; no unit, dose or own in sheet.csv; one unit, alpha and prompt
+  under another experiment name: the same choices in the same order.
 - Roles: kappa on own against the rest equals agreement.py's on the
-  mapped labels; persona rows on FakeBackend hold roles and P(own).
+  mapped labels; persona rows on FakeBackend hold roles and P(own);
+  validate-judge gives the judge sheet.csv's choices and refuses a
+  units list off the key's SHA-256.
 
 DONE WHEN
 - `pushlab library-units --help` and `pushlab calibrate --help` show
   the new options. With the units list in place, `uv run pushlab run
   experiments/s3/persona_sample.yaml --dry-run` gives 201 runs within
   max_gpu_hours 0.75, its output in the PR description.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 8: persona labels", whose description says what
-  changed, lists any changed expected value of an existing test and
-  why (CLAUDE.md), and lists the follow-ups. The owner merges it after
-  CI.
+  changed, lists any changed expected value of an existing test and why
+  (CLAUDE.md), and lists the follow-ups. The owner merges it after CI.
 
 REPORT BACK
 - Part 4's pod steps, after part 3, in two visits around the labels.
   Upload the CSV to /workspace/library/ (its sha256sum is the note's),
-  run part 3's step 1, then set S=experiments/s3/persona_sample.yaml,
+  run part 3's step 1 (golden runs again for the new engine hash), then
+  set S=experiments/s3/persona_sample.yaml,
   U=units/private/library-qwen3-8b.csv (or the tracked list),
   P=/workspace/labels/s3-persona and
   Z=/workspace/logs/calibration/qwen3-8b-whoareyou.json:
@@ -158,15 +164,20 @@ REPORT BACK
      D2 chose 200 labels in all).
   5. `uv run pushlab evidence $S --sizes $Z`: paste it back the same
      day, with $P/sheet.json.
-  6. Label sheet.csv blind (about an hour; never open key.json), then
-     prompt 4's step 5 with $P: labeled.csv and `pushlab labels`.
-  7. `uv run pushlab validate-judge --labels $P/labels.json --key
-     $P/key.json --judge granite-4.1-8b`, then `uv run pushlab evidence
-     --validation /workspace/logs/validations/persona-v1-*.json`.
+  6. Label sheet.csv blind (about 2 hours; never open key.json). In a
+     new terminal, set P again (after a restart, part 3's step 1 first);
+     then prompt 4's step 5 with $P: labeled.csv and `pushlab labels`.
+  7. `J=granite-4.1-8b` (or D1's judge), then `uv run pushlab
+     validate-judge --labels $P/labels.json --key $P/key.json --judge
+     $J` and `uv run pushlab evidence --validation
+     /workspace/logs/validations/persona-v1-$J-*.json`.
 - Paste back step 7's evidence file; upload the record and labels.json
-  (key.json only with D4's yes). The next PR copies a pass to
-  validations/persona-v1-granite-4.1-8b.json; a FAIL goes as prompt 7
-  says.
+  (key.json only with D4's yes), named as prompt 4 says. The next PR
+  copies a pass to validations/persona-v1-<judge>.json. A FAIL goes as
+  prompt 7 says; if this sheet holds every run, on 100 new personas
+  from the library's unused rows (a units_set of their own, in a second
+  units list so this one keeps its SHA-256, and a second persona
+  experiment: about 0.2 GPU-hours).
 - The PR's link, its changed expected values and its follow-ups.
 - End with a plain-language summary for a beginner: what changed, why,
   how I can check it myself, and anything I must do by hand. Say what

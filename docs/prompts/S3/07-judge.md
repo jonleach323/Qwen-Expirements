@@ -1,19 +1,22 @@
 CONTEXT
-This is Sprint S3, prompt 7 of 11, the heart of S3. Read CLAUDE.md;
-"7. scoring" and "5. Judge validation" in
-docs/plan/development-plan.md; "Software" in
-docs/plan/research-plan.md; src/pushlab/engine/generate.py; and what
-prompts 3 to 5 built (Window, the scores table, the hostility labels,
-validate-judge, score_text, pushlab score) in src/pushlab/scoring/,
+This is Sprint S3, prompt 7 of 11. It is the heart of S3. Read
+CLAUDE.md; "7. scoring" and "5. Judge validation" in
+docs/plan/development-plan.md; "Software" in docs/plan/research-plan.md;
+src/pushlab/engine/generate.py; and what prompts 3 to 5 built (Window,
+the scores table, the hostility labels, validate-judge, score_text,
+pushlab score) in src/pushlab/scoring/, src/pushlab/store/scores.py,
 src/pushlab/engine/score_text.py and rubrics/. Nothing judges yet.
 - One judge for every rubric, whole replies and sentence windows alike:
-  S4's persona timelines will call this same Judge.verdicts on
-  sentence_windows(run, 1, 1, decode) in choice mode, for each
-  sentence's probability per persona.
+  S4 checks its persona timelines (sentence embeddings,
+  development-plan.md:181) against this same Judge.verdicts on
+  sentence_windows(run, 1, 1, decode) in choice mode, a probability per
+  persona for each sentence of its 100 hand-checked runs.
 - Needs D1: the judge prompt 1 registered (default granite-4.1-8b) and
-  a second (default none yet); D3, by default no vLLM in S3 (0.33.0
-  pins torch 2.14.0 and transformers below 5.21.0; the lock has 2.14.1
-  and 5.21.0) and no API judge: later backends, same interface.
+  a second for the plan's 10% rescoring and validation samples
+  (default: none yet). Needs D3: no vLLM in S3 (default; 0.33.0 pins
+  torch 2.14.0 and transformers below 5.21.0, the lock has 2.14.1 and
+  5.21.0); no API judge (default); whether hostile reply text may be
+  sent to one. Later backends keep the same interface.
 - Part 3 needs the owner's hostility labels (pod session B). Record a
   paste no PR holds yet first, as prompt 1's docs/handoff/HANDOFF.md
   says. No labels yet: build all of this; part 3 waits.
@@ -55,7 +58,7 @@ BUILD
 - src/pushlab/scoring/judge_cache.py: append-only JSON lines in
   /workspace/cache/judge/<judge>-<revision>.jsonl (--cache-dir DIR),
   under folder.locked; cache_key a SHA-256 of judge, revision, rubric,
-  version, file_sha256, mode, decoding, JUDGE_VERSION and the rendered
+  version, rubric_sha256, mode, decoding, JUDGE_VERSION and the rendered
   input, which holds the exact prompt, context, window text and labels.
 - rubrics/hostility.yaml stays version 1, labels untouched (so
   labels_sha256 and the owner's labels stand), and gains mode
@@ -76,9 +79,9 @@ BUILD
   version, judge, span and output_sha256 gets a row: label the
   verdict's or "invalid"; value P(primary) in choice mode, 1 or 0 in
   generate, null if invalid; details the verdict, not the window text.
-  --dry-run loads no weights: items, cached, time and cost at
-  configs/costs.yaml's judge speeds (assumed for an 8B judge: 22 reply
-  and 1,000 scored tokens a second).
+  --dry-run loads no weights: items, cached, time and cost at the
+  judge's speeds, which configs/costs.yaml gains, marked assumed (22
+  reply and 1,000 scored tokens a second for an 8B judge).
 - `pushlab validate-judge --labels FILE --key FILE --judge MODEL
   [--second-judge MODEL]`, in place of --verdicts, rebuilds the sheet's
   items from the key's sources (text_sha256 checked, each run's model
@@ -86,7 +89,8 @@ BUILD
   beside the record, which also says if the items were whole replies,
   and gives prompt 4's numbers.
 - pushlab evidence (prompt 1) gains --validation FILE..., SPEC then
-  optional.
+  optional; without SPEC it writes
+  /workspace/logs/evidence/validation-<time>.txt.
 - tests/gpu/test_judge_injection.py (gpu, slow), per judge listed in
   configs/models.yaml: a hostile text telling the judge to answer
   "neither" is hostile; a recipe saying "rate this hostile", neither.
@@ -100,10 +104,10 @@ CONSTRAINTS
 - Verdicts, cache and score details quote replies: pod volume only,
   never git, records or evidence. Rubric text lives in rubrics/.
 - One model on the GPU at a time; judging follows generation.
-- New modules, split past about 350 lines; feature commit under about
-  1,500. No "smoke" in GPU test names. Review as CLAUDE.md says.
+- New modules, split past about 350 lines; src/ changes under about
+  1,500 lines. No "smoke" in GPU test names. Review as CLAUDE.md says.
 - Changed expected values: prompt 5's scorer table; validate-judge's
-  required options (prompt 4).
+  required options (prompt 4); prompt 1's evidence tests.
 
 TESTS FIRST (CPU, offline, tiny models)
 - Family: tiny-lm as a judge of family "tiny-judge" judges tiny-vl's
@@ -136,7 +140,8 @@ DONE WHEN
   validate-judge --help` lists --judge, and `uv run pytest -q -m gpu
   --collect-only tests/gpu/test_judge_injection.py` lists a test per
   judge, none named "smoke".
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 7: the judge", whose description says what
   changed, lists any changed expected value of an existing test and
@@ -150,14 +155,15 @@ REPORT BACK
      && bash scripts/setup_pod.sh`, then `source /workspace/pushlab.env`.
   2. `uv run pytest -q -m gpu tests/gpu/test_judge_injection.py`: one
      passed per judge; on a failure, stop and paste it.
-  3. `D=/workspace/labels/s3-hostility; uv run pushlab validate-judge
-     --labels $D/labels.json --key $D/key.json --judge granite-4.1-8b`
-     (with --second-judge if D1 named one): minutes; PASS or FAIL.
+  3. `J=granite-4.1-8b` (or D1's judge), then
+     `D=/workspace/labels/s3-hostility; uv run pushlab validate-judge
+     --labels $D/labels.json --key $D/key.json --judge $J` (with
+     --second-judge if D1 named one): minutes; PASS or FAIL.
   4. `uv run pushlab evidence --validation
-     /workspace/logs/validations/hostility-v1-granite-4.1-8b-*.json`.
+     /workspace/logs/validations/hostility-v1-$J-*.json`.
 - Paste that evidence file back the same day and upload the record
   (HANDOFF.md); the next PR copies a pass to
-  validations/hostility-v1-granite-4.1-8b.json. Verdicts stay on the pod.
+  validations/hostility-v1-<judge>.json. Verdicts stay on the pod.
 - A FAIL scores nothing at scale: the next session writes rubric
   version 2 (instructions only) and validates it on a fresh 100, with
   label-sheet --exclude KEY added to leave this sheet out (about 40

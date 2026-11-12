@@ -10,7 +10,7 @@ src/pushlab/analysis/markers.py.
 - Step j is reply token j (store/steps.py); markers.places() puts step
   j where the text and decode(tokens[:j]) stop agreeing.
 - Prompts 5 to 7 write scores here; the judge (prompt 7) and S4's
-  persona timelines judge stretches of a reply, defined here once.
+  persona timelines score stretches of a reply, defined here once.
 - No owner decision; CPU only; no pod step. If the owner pastes pod
   session A's results here, record them first as
   docs/handoff/HANDOFF.md (prompt 1) says, in a commit of their own.
@@ -114,7 +114,8 @@ TESTS FIRST (CPU, offline, tiny models)
 DONE WHEN
 - split_sentences("Hi. Bye.") gives "Hi." and " Bye.", and connect()
   on an empty runs dir has a scores view with its columns and no rows.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 3: scores and sentence windows", whose description
   says what changed, lists any changed expected value of an existing

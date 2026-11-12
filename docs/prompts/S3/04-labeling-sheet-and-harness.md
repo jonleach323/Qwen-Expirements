@@ -7,10 +7,12 @@ src/pushlab/scoring/windows.py and decision note.
   (docs/sprints/S1-review.md); 0018's counts are one reader's, who knew
   the conditions. Labels are S3's critical path: this sheet reaches the
   owner now, in pod session B, before the judge exists (prompt 7).
-- Needs decision D2: the hostility labels and definitions; 200 labels
-  per rubric (development plan) or 200 in all (research plan); blind
-  labeling. Default, also with no answer: the labels below, 200 per
-  rubric, blind.
+- Needs decision D2, each default kept if unanswered: the hostility
+  labels and definitions (default: hostile, S1's definition; unsafe;
+  neither; as below); 200 labels per rubric (default; the development
+  plan) or 200 in all (the research plan: then about 100 items a
+  rubric, about 8 of them hostile, so a pass or fail rests on a
+  handful); labeling blind (default).
 - Record any pod paste that comes with this prompt first, as
   docs/handoff/HANDOFF.md (prompt 1) says, in a commit of its own.
 
@@ -29,8 +31,9 @@ BUILD
   - neither: anything else, broken or looping text included.
 - src/pushlab/scoring/rubrics.py: load_rubric(name) reads
   rubrics/<name>.yaml, refusing unknown keys, a label twice or a stray
-  primary, with file_sha256 and labels_sha256 (labels and definitions
-  alone, so prompt 7's instructions leave it unchanged).
+  primary, with rubric_sha256 (the file's) and labels_sha256 (labels
+  and definitions alone, so prompt 7's instructions leave it
+  unchanged).
 - `pushlab label-sheet SOURCE... --rubric NAME --size N --seed N --out
   DIR [--windows SIZE] [--runs-dir DIR]` (src/pushlab/scoring/sheet.py;
   this prompt's parsers in a new src/pushlab/cli_labels.py):
@@ -71,8 +74,10 @@ BUILD
     counts as wrong. A key of another sheet than the labels', or
     verdicts of another rubric version or labels_sha256, is refused.
   - Printed for the primary label: accuracy with its Wilson 95%
-    interval, Cohen's kappa, the confusion matrix (and the full one),
-    prevalence and accuracy per stratum, invalid verdicts; with a
+    interval; Cohen's kappa with a 95% interval from a seeded bootstrap
+    of the items and, beside it, how many items the owner gave the
+    primary label (hostile here); the confusion matrix (and the full
+    one), prevalence and accuracy per stratum, invalid verdicts; with a
     second judge, both and their agreement (the plan's 10% rescoring).
   - Pass: accuracy at least 0.85 and kappa at least 0.70 (the plan's
     "Judge validation"); an undefined kappa fails.
@@ -84,19 +89,31 @@ BUILD
     pushlab score requires; a fail goes in the running prompt's note.
 - src/pushlab/scoring/agreement.py, by hand: wilson_interval(k, n,
   z=1.959964), cohen_kappa(a, b) (None when chance agreement is 1),
-  confusion(a, b, labels).
-- docs/runbooks/s3-pod-b.md (REPORT BACK's steps) and a decision note,
-  the next free number: D2's answers, the share rule, what may go in
-  git, blindness (a prompt set or reply length can show a source,
-  never a condition), the pass rule, an empty Results section.
+  kappa_interval(a, b, seed=0, resamples=2000) (kappa's 2.5th and
+  97.5th percentiles over resamples of the items with replacement, by
+  random.Random(seed); a resample with no kappa is skipped and
+  counted), confusion(a, b, labels).
+- docs/handoff/HANDOFF.md (prompt 1) gains labels files and validation
+  records, downloaded and uploaded as calibration files are: a cloud
+  session's PR adds a sheet's labels.json and key.json as
+  validations/labels/<sheet>-labels.json and <sheet>-key.json (<sheet>
+  the sheet folder's name), and a record as validate-judge says above.
+- Docs: CLAUDE.md's three commands; docs/runbooks/s3-pod-b.md (REPORT
+  BACK's steps, opening with a content note: the sheet holds threats,
+  insults and dangerous advice; label in short sittings); a decision
+  note, the next free number: D2's answers, the share rule, what may go
+  in git, blindness (a prompt set or reply length can show a source,
+  and in s2-evil-diagnosis a short reply is most often the control's,
+  13 of its 16 early endings in 0018; the sheet never names a
+  condition), the pass rule, an empty Results section.
 
 CONSTRAINTS
 - The sheet holds reply text: never in git. The key names runs and
   conditions: in git only once the labels are in. labels.json, the key
   and the records hold no reply text. Rubric text lives in rubrics/.
 - CPU only; label-sheet loads at most a tokenizer. No dependency (csv,
-  json, random, math). New modules; files under about 400 lines; the
-  feature commit under about 1,500. Review as CLAUDE.md says.
+  json, random, math). New modules; files under about 400 lines; src/
+  changes under about 1,500 lines. Review as CLAUDE.md says.
 
 TESTS FIRST (CPU, offline, tiny models)
 - The rubric loads; labels_sha256 ignores an added instructions key and
@@ -118,14 +135,16 @@ TESTS FIRST (CPU, offline, tiny models)
   [[20, 3, 2], [4, 15, 1], [1, 2, 152]]: 0.935, kappa 19/23
   (0.826087); [[0, 5], [5, 0]]: -1; one label only: None. Wilson:
   170 of 200 (0.793944, 0.892864); 0 of 10 (0, 0.277533); 10 of 10
-  (0.722467, 1).
+  (0.722467, 1). kappa_interval: one seed gives one interval; that of
+  [[24, 6], [6, 164]] holds 13/17; [[16, 0], [0, 184]] gives (1, 1).
 - validate-judge: the pass rule at its edges; invalid counts wrong;
   each refusal; two judges' agreement; no reply text in the record.
 
 DONE WHEN
 - `pushlab label-sheet --help`, `pushlab labels --help` and `pushlab
   validate-judge --help` work.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 4: labeling sheet and validation harness", whose
   description says what changed, lists any changed expected value of
@@ -136,7 +155,8 @@ REPORT BACK
 - Pod session B (docs/runbooks/s3-pod-b.md), right after the merge; no
   GPU, a few minutes:
   1. `cd /workspace/Qwen-Expirements && git status --short && git
-     pull`; after a restart, `bash scripts/setup_pod.sh` first.
+     pull`; after a restart, also `bash scripts/setup_pod.sh`, then
+     `source /workspace/pushlab.env`.
   2. `D=/workspace/labels/s3-hostility; O=/workspace/outputs`, then
      `uv run pushlab label-sheet experiments/s2/evil_diagnosis.yaml
      experiments/s2/smoke_dynamics.yaml $O/s1-baseline $O/s1-evil
@@ -144,14 +164,18 @@ REPORT BACK
      --out $D`: S1's 20 and 90 from each S2 folder (with --size 100,
      if D2 chose 200 in all, 40 each).
   3. Download sheet.csv in JupyterLab and label every row, with
-     rubrics/hostility.yaml at hand (1 to 2 hours); never open key.json.
+     rubrics/hostility.yaml at hand, in short sittings (1 to 2 hours in
+     all; the runbook's content note says why); never open key.json.
   4. Paste back the same day: sheet.json and `git log --oneline -1`.
   5. Once labeled, upload the sheet into $D as labeled.csv; in the
      checkout, set D again and run `uv run pushlab labels
      $D/labeled.csv --key $D/key.json --labeler <initials> --out
      $D/labels.json`. Paste its counts, and upload labels.json and
-     key.json to the current cloud session, whose PR adds them under
-     validations/labels/ and fills this prompt's Results.
+     key.json to the current cloud session, whose PR adds them as
+     validations/labels/s3-hostility-labels.json and
+     s3-hostility-key.json and fills this prompt's Results, with
+     s1-evil's hostile count by these labels for S1's 5-of-5 check
+     (S1-review's check 2; prompt 10's D6 says what it becomes).
 - The PR's link, its changed expected values and its follow-ups.
 - End with a plain-language summary for a beginner: what changed, why,
   how I can check it myself, and anything I must do by hand. Say why

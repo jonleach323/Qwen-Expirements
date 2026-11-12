@@ -1,22 +1,24 @@
 CONTEXT
 This is Sprint S3, prompt 1 of 11. Read CLAUDE.md; "1. models" in
 docs/plan/development-plan.md; "Software" in docs/plan/research-plan.md
-(the judge's family rule); docs/decisions/0003-pod-setup.md,
-0005-s0-baseline.md and 0011-s1-engine-check.md; src/pushlab/models/,
-scripts/setup_pod.sh, tests/unit/test_setup_pod.py,
-src/pushlab/runs/status_command.py and verify.py; and "If something
-goes wrong" in docs/runbooks/pod.md.
-- The registry pins qwen3.5-4b. qwen3-8b is still on "main"
-  (src/pushlab/models/registry.py:35), never downloaded; Qwen3-4B, for
-  Liu's language-router test, is not registered; configs/models.yaml
-  lists only qwen3.5-4b. There is no judge model.
+(the judge's family rule); decisions 0003, 0005 and 0011 in
+docs/decisions/; src/pushlab/models/, scripts/setup_pod.sh,
+tests/unit/test_setup_pod.py, src/pushlab/runs/status_command.py and
+verify.py; and "If something goes wrong" in docs/runbooks/pod.md.
+- Only qwen3.5-4b is pinned: qwen3-8b is on "main" (registry.py:35), never
+  downloaded; Qwen3-4B, for Liu's language-router test, is not registered;
+  configs/models.yaml lists only qwen3.5-4b; there is no judge.
 - Setup never runs git status (stale tracked files stopped step 7 on
   2026-11-12); S2's done-when has no GPU evidence; docs/handoff/HANDOFF.md
   exists on no branch (S1-review "Still open" item 9).
-- Needs decision D1: the judge (default granite-4.1-8b); a second judge
-  for the 10% rescoring and validation samples (an API judge or a second
-  local model); whether CLAUDE.md takes the rules below. Unanswered: the
-  default, no second judge yet, the rules in a commit the owner may drop.
+- Needs decision D1, each default kept if unanswered: the judge (default
+  granite-4.1-8b); a second judge for the plan's 10% rescoring and
+  validation samples (default: none yet; the S3 review reports the
+  rescoring as "not yet"); whether CLAUDE.md takes the rules below
+  (default: yes, in a commit the owner may drop in the PR); whether to
+  declare huggingface-hub (default: no, a comment in pyproject.toml);
+  the GPUs that may stand in for the RTX 4090 (default, proposed in
+  prompt 2's note: L40S or RTX 6000 Ada, then RTX A6000 or A40).
 
 GOAL
 Every model S3 runs is registered, pinned and downloaded by setup, the
@@ -51,9 +53,10 @@ BUILD
   - ModelSpec.family: "qwen" for every Qwen and tiny test model, else
     the judge's own ("granite", "olmo", "mistral"). Prompt 7's judge
     refuses to score a run whose model has its family.
-- configs/models.yaml lists qwen3.5-4b, qwen3-8b, qwen3-4b and the
-  judge, each commit in a comment, as decision 0005 did.
-  configs/costs.yaml gains a qwen3-4b speed, marked assumed.
+- configs/models.yaml lists qwen3.5-4b, qwen3-8b, qwen3-4b and D1's
+  judges, each commit in a comment, as decision 0005 did.
+  configs/costs.yaml gains a qwen3-4b speed of 44, as qwen3.5-4b's,
+  marked assumed; experiments/README.md's model row names qwen3-4b too.
 - tests/gpu/test_model_shapes.py, gpu and slow: a test per model in
   configs/models.yaml (load_model, bfloat16, freed before the next, no
   shared fixture) checks the registry's shape and the pinned commit.
@@ -79,51 +82,59 @@ BUILD
   a cloud session's PR adds them (`git add -f`) and records the evidence
   in the note of the prompt whose pod step made it. The pod never pushes,
   and in the checkout writes only ignored calibration files; a changed
-  tracked file: save the patch for a PR, restore it, rerun setup.
+  tracked file: save the patch for a PR, restore it, rerun setup. Last, a
+  "Weekly log": one line a week of the owner's hours, GPU-hours and spend
+  (development-plan.md:533), which the owner gives and the next PR adds.
 - CLAUDE.md: "Current sprint: S3 (Scoring v1 and Gate 0)."; the shape
   test's and evidence's commands; unless D1 says no, the S2-review rules:
   - Reviews sized to the change: one reviewer, 20 minutes, under about
     500 added lines or for docs, prompts and experiment files; else at
     most three reviewers and three skeptics, 60 minutes. A fix check (one
     agent, 20 minutes) only after a confirmed high; lows and nits go on
-    the PR's follow-up list. Feature commits stay under about 1,500 lines.
+    the PR's follow-up list. A prompt's src/ changes stay under about
+    1,500 lines, tests and docs apart (S2's prompts 4 and 5 had 1,855 and
+    2,194); past that the PR says so, and nothing in BUILD is dropped.
   - One PR per prompt, opened by the session from a new branch off main,
     titled "S3 prompt N: ..."; the owner merges after CI and the fixes.
+    Each PR's description gives its review's agents and minutes, whether
+    the session's context was compacted, and whether the pasted prompt
+    matched its file.
   - A fresh cloud session per prompt. No "smoke" in a new GPU test's
     file, test or parameter name (setup's step 7 runs `-m gpu -k
     smoke`). Split a file once it passes about 350 lines.
-- docs/sprints/S1-review.md, "Still open" item 6: the comments in
-  .gitignore and tests/unit/test_calibration_file.py, pod.md's "Measure
-  the residual sizes" (on a new pod, calibrating qwen3.5-4b now stops:
-  its file is in git) and decision 0007 call the tracked calibration
-  file ignored. Correct them; 0007 gets a line saying 0011 changed it.
-- Its item 5: ask whether to declare huggingface-hub, which download.py
-  imports: yes, `uv add "huggingface-hub>=2.3"` (uv.lock: a new hash, the
-  same versions); no, a pyproject.toml comment: transformers brings it.
+- S1-review's "Still open" item 6 (leave the review as it is): the
+  comments in .gitignore and tests/unit/test_calibration_file.py, pod.md's
+  "Measure the residual sizes" (on a new pod, calibrating qwen3.5-4b now
+  stops: its file is in git) and decision 0007 call the tracked
+  calibration file ignored. Correct them; 0007 notes that 0011 changed it.
+- Its item 5, huggingface-hub (download.py imports it), as D1 says: no,
+  a pyproject.toml comment that transformers brings it; yes,
+  `uv add "huggingface-hub>=2.3"` (uv.lock: a new hash, same versions).
 - A decision note, the next free number: the models and pins (and why
-  before the download), D1's judges, the family rule, disk (with granite
-  about 42 GB more, 16.4 + 8.0 + 17.6: 51 GB of models on the 100 GB
-  volume), one model on the GPU at a time; the check, evidence and
-  HANDOFF.md; an empty Results section.
-- docs/runbooks/s3-pod-a.md, "Part 1: models and S2's evidence": REPORT
-  BACK's steps and the check's restore steps. Prompt 2 adds part 2.
+  before the download), D1's judges, the family rule, disk (16.4 + 8.0 +
+  17.6 GB, 42 GB more with granite: 51 GB on the 100 GB volume), one model
+  on the GPU at a time; the check, evidence and HANDOFF.md; empty Results.
+- docs/runbooks/s3-pod-a.md, on Secure Cloud (development-plan.md:531),
+  "Part 1: models and S2's evidence": REPORT BACK's steps and the check's
+  restore steps. Prompt 2 adds part 2.
 
 CONSTRAINTS
 - Never start a GPU job. No test touches Hugging Face. No reply text in
-  git or evidence. No dependency unless the owner says yes above.
-- Leave Liu's L25 N347 out of units/known.csv: its sign is D6's.
+  git or evidence. No dependency unless D1 says yes.
+- Leave Liu's L25 N347 out of units/known.csv: its sign is not known
+  yet; prompt 10's note records it.
 - Changed expected values for the PR: test_the_pod_downloads_qwen3_5_4b
   (the models list), a family in the ModelSpecs of tests/conftest.py
   and tests/unit/test_schedule_validation.py:183, and any tool-call list
   in tests/unit/test_setup_pod.py that the check's git call joins.
-- New code in new modules; files under about 400 lines; the feature
-  commit under about 1,500. Review as the rules above size it.
+- New code in new modules; files under about 400 lines; src/ changes
+  under about 1,500 lines, as the rules above say. Review as they size it.
 
 TESTS FIRST (CPU, offline, tiny models)
-- PUBLISHED in tests/unit/test_model_registry.py gains qwen3-4b and the
-  judge; every entry not of kind "test" is pinned to a 40-hex commit.
+- PUBLISHED in tests/unit/test_model_registry.py gains qwen3-4b and D1's
+  judges; every entry not of kind "test" is pinned to a 40-hex commit.
 - Every entry has a family; Qwen IDs have "qwen", the judge another.
-- configs/models.yaml lists exactly the three Qwen models and the judge.
+- configs/models.yaml lists exactly the three Qwen models and D1's judges.
 - tests/unit/test_model_discovery.py builds qwen3-4b's and the judge's
   real classes at full size on the meta device, as for qwen3-8b, and
   finds the registry's shape (all four shapes above check out today).
@@ -140,7 +151,8 @@ DONE WHEN
   lists one test per model in configs/models.yaml, none named "smoke".
 - `pushlab evidence --help` works; `bash scripts/setup_pod.sh --dry-run`
   names the check, then the eight steps.
-- `uv run pytest -q` and `uv run pre-commit run --all-files` pass.
+- `uv run pytest -q` and `uv run pre-commit run --all-files` pass; say
+  how long pytest took against the plan's two minutes.
 - One pull request, opened by the session from a new branch off main,
   titled "S3 prompt 1: models, process and pod evidence", whose
   description says what changed, lists any changed expected value of an
@@ -163,12 +175,15 @@ REPORT BACK
      calibration/qwen3-8b-*.json calibration/qwen3-4b-*.json`.
   6. `uv run pushlab evidence experiments/s2/smoke_dynamics.yaml
      --report /workspace/reports/s2-smoke-*.md`, and the same for
-     evil_diagnosis.yaml with s2-evil-*.md (--report if they exist).
+     evil_diagnosis.yaml with each of its reports that exists
+     (s2-evil-*.md, or /workspace/outputs/evil-diagnosis.md).
+  7. The evidence files give S2's missing done-when evidence (for the S2
+     review): the kill and resume in the smoke run's sessions and index;
+     per-row isolation in the step-7 line and isolation file. No kill, or
+     no setup log's step 7 ending `7 passed`: follow the fallback in
+     "Closing S2 on the pod" (docs/sprints/S2-review.md) in this visit.
 - Paste back the same day, as HANDOFF.md says: both evidence files, the
   shape test's last line, command 5's output and both calibration files.
-  The evidence files give S2's missing done-when evidence (for the S2
-  review): the smoke run's sessions and index show the kill and resume;
-  the step-7 line and isolation file, per-row isolation on the GPU.
 - The PR's link, its changed expected values and its follow-ups.
 - End with a plain-language summary for a beginner: what changed, why,
   how I can check it myself, and anything I must do by hand. Say what
