@@ -31,7 +31,9 @@ class Source:
     """One source of candidates: its name, home page, licence and credit line.
 
     folder is its folder in the data folder; url is where its files are
-    served from.
+    served from. credit is how the source asks to be credited, which a fetch
+    record of its unchanged files carries; adapted, if any, says what a list
+    made from them changes, as CC BY 4.0 asks of adapted material.
     """
 
     name: str
@@ -40,15 +42,33 @@ class Source:
     url: str
     licence: str
     credit: str
+    adapted: str = ""
+
+    @property
+    def list_credit(self) -> str:
+        """The credit a candidate list made from the source gives it.
+
+        Example:
+            >>> LIBRARY.list_credit == LIBRARY.credit
+            True
+            >>> MAYNER.list_credit.endswith(MAYNER.adapted)
+            True
+        """
+        return f"{self.credit}; {self.adapted}" if self.adapted else self.credit
 
 
+# The library's own citation, from its "Cite this" section.
 LIBRARY = Source(
     name="library",
     title="Neuron Persona Library",
     folder="library/qwen",
     url="https://neuronpersonas.com/data/qwen",
     licence="none stated; the library asks to be cited",
-    credit="Neuron Persona Library (Qwen3-8B), neuronpersonas.com",
+    credit=(
+        "Fonseca Rivera, J. (2026). Neuron Persona Library: What Language Models "
+        "Say They Are When One Neuron Is Pushed. https://neuronpersonas.com "
+        "(Qwen3-8B files)"
+    ),
 )
 MAYNER = Source(
     name="mayner",
@@ -58,7 +78,12 @@ MAYNER = Source(
     licence="CC BY 4.0",
     credit=(
         "Will Mayner, persona-neurons (Qwen3-8B), "
-        "huggingface.co/datasets/wmayner/persona-neurons, CC BY 4.0"
+        "huggingface.co/datasets/wmayner/persona-neurons, CC BY 4.0 "
+        "(https://creativecommons.org/licenses/by/4.0/)"
+    ),
+    adapted=(
+        "adapted by pushlab: each role's top 10 and top 50 neurons as sets "
+        "sized 4 x |v_r| from his vectors, with his judge's in-role share"
     ),
 )
 SOURCES = {source.name: source for source in (LIBRARY, MAYNER)}

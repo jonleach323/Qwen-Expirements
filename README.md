@@ -95,13 +95,15 @@ data is in this repository.
   [huggingface.co/datasets/wmayner/persona-neurons](https://huggingface.co/datasets/wmayner/persona-neurons)
   under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). A
   NeuronSet made from it pushes exactly his top-neuron steering at dose 1
-  (decision 0019), and a candidate list made from it credits his data on
-  each of its rows. `tests/unit/mayner_reference.py` is an unchanged copy of
-  a few of his functions, under his MIT notice.
-- **The Neuron Persona Library** for Qwen3-8B,
-  [neuronpersonas.com](https://neuronpersonas.com). It states no licence and
-  asks to be cited, so its data, and the candidate lists made from it, stay
-  out of git.
+  (decision 0019), and a candidate list made from it (`pushlab candidates`)
+  credits his data, and says how it adapts it, on each of its rows.
+  `tests/unit/mayner_reference.py` copies a few of his functions under his
+  MIT notice, unchanged but for one renamed function.
+- **The Neuron Persona Library** for Qwen3-8B: Fonseca Rivera, J. (2026).
+  *Neuron Persona Library: What Language Models Say They Are When One Neuron
+  Is Pushed.* [neuronpersonas.com](https://neuronpersonas.com). It states no
+  licence and asks to be cited, as above, so its data, and the candidate
+  lists made from it, stay out of git.
 
 ## License
 

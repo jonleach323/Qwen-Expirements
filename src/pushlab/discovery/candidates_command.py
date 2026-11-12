@@ -160,17 +160,51 @@ def tally_lines(tallies: Mapping[str, Tally]) -> list[str]:
 
 
 def credit_lines(credited: Iterable[Source]) -> list[str]:
-    """Each source's licence and credit, one line each.
+    """Each source's licence and the credit a list made from it gives it.
 
     Example:
-        >>> print(credit_lines([MAYNER])[0])  # doctest: +NORMALIZE_WHITESPACE
-        mayner: licence: CC BY 4.0. Credit: Will Mayner, persona-neurons (Qwen3-8B),
-        huggingface.co/datasets/wmayner/persona-neurons, CC BY 4.0
+        >>> print(credit_lines([MAYNER])[0])  # doctest: +ELLIPSIS
+        mayner: licence: CC BY 4.0. Credit: Will Mayner, ...; adapted by pushlab: ...
     """
     return [
-        f"{source.name}: licence: {source.licence}. Credit: {source.credit}"
+        f"{source.name}: licence: {source.licence}. Credit: {source.list_credit}"
         for source in credited
     ]
+
+
+def data_warnings(candidates: Sequence[Candidate]) -> list[str]:
+    """What the user should know about the data the candidates came from.
+
+    A source whose candidates have no download time has no FETCHED.json, or
+    one that no longer matches its files, as after a failed fetch; Mayner's
+    sets sized from the split's shares lack his role vectors, which give
+    exactly his strength.
+
+    Example:
+        >>> data_warnings([])
+        []
+    """
+    warnings = []
+    for source in SOURCES.values():
+        mine = [
+            candidate for candidate in candidates if candidate.source == source.name
+        ]
+        if undated := sum(not candidate.downloaded_at for candidate in mine):
+            warnings.append(
+                f"{undated:,} of {len(mine):,} {source.name} candidates have no "
+                f"download time: the record of where {source.title}'s files came "
+                "from is missing or does not match them, as after a failed or "
+                f"unfinished fetch. Run `uv run pushlab fetch {source.name}` on the "
+                "GPU pod until it finishes, then make the list again"
+            )
+    shares = sum(candidate.size_from == "split shares" for candidate in candidates)
+    if shares:
+        warnings.append(
+            f"{shares:,} of Mayner's sets are sized from the split's shares, 0.1 to "
+            "0.2% off his strength, as their role vectors are missing; run `uv run "
+            "pushlab fetch mayner` on the GPU pod to get them"
+        )
+    return warnings
 
 
 def run_candidates(
@@ -212,7 +246,7 @@ def run_candidates(
     for source, importer in ((LIBRARY, import_library), (MAYNER, import_mayner)):
         try:
             found += importer(source_dir(source, root), model)
-        except (OSError, ValueError) as error:  # each says how to put it right
+        except (OSError, ValueError) as error:  # each names the file and the fault
             problems.append(str(error))
     if not problems and (wrong := check_units(found, model)):
         problems = [f"a unit is not one of {model}'s: {line}" for line in wrong]
@@ -223,6 +257,8 @@ def run_candidates(
         for problem in problems:
             _refuse(problem)
         return 1
+    for warning in data_warnings(found):
+        print(f"pushlab candidates: warning: {warning}", file=sys.stderr)
     kept, tallies = clean(found, include_sensitive)
     try:
         write_candidates(out, kept)

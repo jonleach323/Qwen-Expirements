@@ -92,18 +92,21 @@ def add_fetch(commands: argparse._SubParsersAction) -> None:
     mayner = sources.add_parser(
         "mayner",
         help="Will Mayner's persona-neurons data, with his own download script, "
-        "about 110 MB",
+        "about 105 MB",
         description=f"Download Will Mayner's persona-neurons data ({MAYNER.url}) "
         "into DATA_DIR/mayner with his own download script. His code is checked "
         "out with git, at a pinned commit, into DATA_DIR/mayner/code; then his "
         "download_data.py copies the files of his bundle that `pushlab "
-        "candidates` reads, about 110 MB (with --all his whole bundle, about 1 "
-        "GB), into DATA_DIR/mayner/bundle, checking each against his MANIFEST "
+        "candidates` reads, 279 files of about 105 MB (with --all his whole "
+        "bundle, 638 files of about 1 GB), into DATA_DIR/mayner/bundle, checking "
+        "each against his MANIFEST "
         "and skipping those already there. FETCHED.json in DATA_DIR/mayner "
         "records where they came from and when, with the commit and the command "
         f"that ran. His data is under {MAYNER.licence}: credit him wherever it is "
         "used, as `pushlab candidates` does on each row of its list. Run it on "
-        "the GPU pod; it needs git and access to github.com and huggingface.co.",
+        "the GPU pod; it needs git and access to github.com, huggingface.co and "
+        "Hugging Face's file servers (hosts under hf.co, such as "
+        "us.aws.cdn.hf.co).",
     )
     add_data_dir(mayner)
     mayner.add_argument(

@@ -143,10 +143,10 @@ def test_every_row_credits_its_source_and_the_credits_are_printed(
     credits = {(row["source"], row["licence"], row["credit"]) for row in rows}
     assert credits == {
         ("library", LIBRARY.licence, LIBRARY.credit),
-        ("mayner", "CC BY 4.0", MAYNER.credit),
+        ("mayner", "CC BY 4.0", MAYNER.list_credit),
     }
     lines = capsys.readouterr().out.splitlines()
-    assert f"  mayner: licence: CC BY 4.0. Credit: {MAYNER.credit}" in lines
+    assert f"  mayner: licence: CC BY 4.0. Credit: {MAYNER.list_credit}" in lines
     assert f"  library: licence: {LIBRARY.licence}. Credit: {LIBRARY.credit}" in lines
     assert lines[-1] == (
         f"The library states no licence, so keep the list out of git (git ignores "

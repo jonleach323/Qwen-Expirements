@@ -119,7 +119,7 @@ class Candidate:
             raise ValueError(f"persona must be a name, not {self.persona!r}")
         if not is_unit(self.unit):
             raise ValueError(f"unit must be a NeuronUnit or a NeuronSet: {self.unit!r}")
-        if self.direction not in (1, -1) or isinstance(self.direction, bool):
+        if type(self.direction) is not int or self.direction not in (1, -1):
             raise ValueError(f"direction must be +1 or -1, not {self.direction!r}")
         strength = self.strength
         if isinstance(strength, bool) or not isinstance(strength, int | float):
@@ -138,8 +138,8 @@ class Candidate:
         if isinstance(self.unit, NeuronSet) and self.source_ref != self.unit.source:
             raise ValueError("a set's source_ref must be the set's own source")
         tags = tuple(self.tags)
-        if not all(isinstance(tag, str) and tag for tag in tags):
-            raise ValueError(f"tags must be words, not {self.tags!r}")
+        if not all(isinstance(tag, str) and tag and ";" not in tag for tag in tags):
+            raise ValueError(f"tags must be words with no ';', not {self.tags!r}")
         object.__setattr__(self, "tags", tags)
         _optional(self.coherence, int, "coherence")
         _optional(self.weirdness, int, "weirdness")
@@ -168,7 +168,7 @@ def same_name(name: str) -> str:
     """A persona's name as duplicates are found: case and spacing ignored.
 
     Example:
-        >>> same_name("  Lord   God ") == same_name("lord god")
+        >>> same_name("  Brass   Owl ") == same_name("brass owl")
         True
     """
     return re.sub(r"\s+", " ", name).strip().casefold()
@@ -220,14 +220,14 @@ def drop_duplicates(candidates: Iterable[Candidate]) -> list[Candidate]:
         ['library/L9N2+']
     """
     candidates = list(candidates)
-    best: dict[tuple, Candidate] = {}
-    for candidate in candidates:
+    best: dict[tuple, int] = {}  # each name's best, by its place in candidates
+    for place, candidate in enumerate(candidates):
         size = len(candidate.unit.entries) if candidate.kind == "set" else 1
         key = (candidate.source, same_name(candidate.persona), size)
-        if key not in best or _rank(candidate) < _rank(best[key]):
-            best[key] = candidate
-    kept = {id(candidate) for candidate in best.values()}
-    return [candidate for candidate in candidates if id(candidate) in kept]
+        if key not in best or _rank(candidate) < _rank(candidates[best[key]]):
+            best[key] = place
+    kept = set(best.values())
+    return [candidate for place, candidate in enumerate(candidates) if place in kept]
 
 
 def count_by_source(candidates: Iterable[Candidate]) -> dict[str, int]:
@@ -270,20 +270,28 @@ def to_row(candidate: Candidate) -> dict[str, str]:
         if is_set
         else "",
         "licence": source.licence,
-        "credit": source.credit,
+        "credit": source.list_credit,
     }
     return {column: _text(values[column]) for column in COLUMNS}
 
 
 def write_candidates(path: Path, candidates: Sequence[Candidate]) -> Path:
-    """Write candidates to path as CSV, in one step; return the path."""
+    """Write candidates to path as CSV, in one step; return the path.
+
+    The rows go to path.part first, which is renamed to path once whole and
+    deleted if writing stops, so no part of a list is left behind.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".part")
-    with partial.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=COLUMNS, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(to_row(candidate) for candidate in candidates)
-    partial.replace(path)
+    try:
+        with partial.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=COLUMNS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(to_row(candidate) for candidate in candidates)
+        partial.replace(path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
     return path
 
 
@@ -302,9 +310,8 @@ def from_row(row: dict[str, str]) -> Candidate:
     if row["kind"] == "set":
         model, _, name = unit_id.partition(":set:")
         entries = [tuple(entry) for entry in json.loads(row["entries"])]
-        unit: Unit = NeuronSet(
-            model, name, entries, row["source_ref"], float(row["size"])
-        )
+        size = float(row["size"]) if row["size"] else None
+        unit: Unit = NeuronSet(model, name, entries, row["source_ref"], size)
     else:
         unit = NeuronUnit.parse(unit_id)
     return Candidate(

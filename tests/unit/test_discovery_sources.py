@@ -40,6 +40,20 @@ def test_each_source_has_its_own_folder(tmp_path: Path) -> None:
 def test_mayners_data_is_credited_with_its_licence() -> None:
     assert MAYNER.licence == "CC BY 4.0"
     assert "Will Mayner" in MAYNER.credit and "CC BY 4.0" in MAYNER.credit
+    assert "https://creativecommons.org/licenses/by/4.0/" in MAYNER.credit
+    # A list made from his data says it adapts it; the record of the
+    # unchanged download does not.
+    assert MAYNER.list_credit == f"{MAYNER.credit}; {MAYNER.adapted}"
+    assert MAYNER.adapted.startswith("adapted by pushlab")
+
+
+def test_the_library_is_cited_as_it_asks() -> None:
+    assert LIBRARY.credit.startswith("Fonseca Rivera, J. (2026). Neuron Persona")
+    assert "https://neuronpersonas.com" in LIBRARY.credit
+    assert LIBRARY.list_credit == LIBRARY.credit and LIBRARY.adapted == ""
+
+
+def test_the_sources_addresses_and_mayners_pinned_code() -> None:
     assert MAYNER.url == "https://huggingface.co/datasets/wmayner/persona-neurons"
     assert LIBRARY.url == "https://neuronpersonas.com/data/qwen"
     assert len(MAYNER_COMMIT) == 40 and int(MAYNER_COMMIT, 16) >= 0

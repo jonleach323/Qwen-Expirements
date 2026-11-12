@@ -21,7 +21,7 @@ Date: 2026-11-12 · Sprint: S3 · Status: accepted
 - **The Neuron Persona Library** (neuronpersonas.com) serves Qwen3-8B's
   files under `https://neuronpersonas.com/data/qwen/`. On 2026-11-12:
   `library.json` (23.9 MB), `combos.json` (2.0 MB), `sensitive.json`
-  (7.4 KB), and one file of replies per layer under `layers/` (about 1 MB
+  (7.4 KB), and one file of replies per layer under `layers/` (1 to 2.5 MB
   each), which nothing here needs.
   - `library.json` is a table: `fields` names the columns of each of its
     `rows` (`L`, `n`, `s`: layer, neuron and direction; `persona`, the
@@ -36,16 +36,21 @@ Date: 2026-11-12 · Sprint: S3 · Status: accepted
     candidates here.
   - `sensitive.json` lists the sensitive neurons as `"L:n:s"` (344 on
     2026-11-12, none in the pool) and sensitive combinations, by the rule
-    its `rule` names ("site/sensitive.js and Detoxify").
+    its `rule` names ("site/sensitive.js and Detoxify"). Its `from` stamp
+    gives the byte counts of the `library.json` and `combos.json` it was
+    made from. The site also screens a persona's full reply with
+    `sensitive.js` when it shows one, which the list does not cover.
   - The site states no licence; it asks to be cited.
 - **Mayner's persona-neurons data** (huggingface.co/datasets/wmayner/
-  persona-neurons, CC BY 4.0) is a 1.02 GB bundle of 637 files listed with
+  persona-neurons, CC BY 4.0) is a 1.02 GB bundle of 638 files listed with
   their sha256 in a MANIFEST. His `download_data.py` (MIT, at commit
   `64c9d36`) copies it into `$PN_DATA_DIR`, checks every file against the
   MANIFEST, skips a file already there with the right checksum, and takes
   `--only` path prefixes. It needs only the standard library and his
-  two-line `persona_neurons/config.py`, and parses as Python 3.11, so
-  pushlab's own Python can run it. The importer needs about 110 MB of it:
+  `persona_neurons/config.py`, which imports only `os` and `pathlib`, and
+  parses as Python 3.11, so pushlab's own Python can run it. It saves each
+  file in place before checking it, and opens its URLs with no timeout. The
+  importer needs 279 of its files, about 105 MB:
   `split/top_neurons.parquet` (each of 275 roles' top 1,000 neurons),
   `vectors/without/` (the role vectors, for the exact |v_r| of decision
   0019), and two files of his scores, `role_steering_sizes/
@@ -87,8 +92,8 @@ uses his own download script, as asked:
   since the bundle is served from the dataset's main branch;
 - it runs his `download_data.py` with pushlab's Python in isolated mode, on
   the dataset's page, with `PN_DATA_DIR` set to `mayner/bundle/` and
-  `--only` the four prefixes the importer needs (about 110 MB; `--all`
-  takes the whole 1 GB bundle). His script checks every file against the
+  `--only` the four prefixes the importer needs (279 files, about 105 MB;
+  `--all` takes the whole 1 GB bundle). His script checks every file against the
   MANIFEST and skips one already there with the right checksum;
 - a failed run leaves no record, and the files that matched are kept for
   the next run. The command warns if a prefix found no file, which his
@@ -108,7 +113,8 @@ library's strength (`a`), the name, tags, coherence and weirdness, whether
 whether "L:n:s" is in `sensitive.json`, for that direction only. A row
 repeated for the same neuron and direction counts once, the first; a pool
 row whose `verified` is false is not in the pool; a row outside Qwen3-8B's
-shape refuses the whole file, as another model's.
+shape refuses the whole file, as another model's. The sensitive flag is
+`sensitive.json`'s list only, not the site's wider screen of full replies.
 
 **Mayner's candidates** (`discovery/mayner_import.py`) are, for every role
 in `split/top_neurons.parquet`, in name order, two NeuronSets: its top 10
@@ -121,8 +127,9 @@ there, else from the split's shares, and the candidate says which
 set and the share it scored 2 or 3 (his `in_role_summary`), from
 `role_steering_sizes/judged_replies.parquet` (kind "neurons", draw 0, that
 k); and `mayner_share`, the % of |v_r| the set contributes, from
-`split/concentration_neurons.parquet`. Strength 1.0, direction +1. His data
-flags no role as sensitive, so none is.
+`split/concentration_neurons.parquet`. Strength 1.0, direction +1, and
+category "role", pushlab's label, since his data has none. His data flags
+no role as sensitive, so none is.
 
 **`pushlab candidates`** (`discovery/candidates_command.py`) runs both
 importers, checks every unit against Qwen3-8B's shape, drops the sensitive
@@ -133,24 +140,34 @@ coherent, the weirdest, the strongest, then by key), and writes the CSV
 (`candidates.write_candidates`). Sensitive ones go first, so a name that a
 sensitive persona shares with a safe one keeps the safe one. It prints, per
 source, how many were read, dropped as sensitive, dropped as duplicates and
-kept, and each source's licence and credit. It refuses an existing `--out`
+kept, and each source's licence and credit. It warns, on stderr, when a
+source's candidates have no download time (its FETCHED.json is missing or
+no longer matches its files, as after a failed fetch) and when Mayner's sets
+are sized from the split's shares; the list is still written. It refuses an
+existing `--out`
 without `--overwrite` before reading anything, and a missing source names
 the fetch to run; refusals exit 1, as every pushlab command's do.
 
 **The CSV** has one row per candidate (`candidates.COLUMNS`): its key
 (`library/L12N4410-`, `mayner/pirate-top10`), source, persona, unit and
 kind, the number of neurons, direction, strength, the sensitive flag, the
-library's category, tags, coherence, weirdness and pool flag, a set's size,
+category (the library's, or "role" for Mayner's), tags, coherence,
+weirdness and pool flag, a set's size,
 where the size came from and its entries, Mayner's scores, and where it
 came from: the file in the data folder, the place in it, the file's URL,
-the download time, and the source's licence and credit. Every row of
-Mayner's data carries his CC BY 4.0 credit. `read_candidates` reads the
-file back, units and all.
+the download time, and the source's licence and credit. The library's
+credit is the citation its "Cite this" section asks for (Fonseca Rivera,
+2026). Every row of Mayner's data carries his CC BY 4.0 credit with the
+licence's address and says how pushlab adapted it (each role's top 10 and
+top 50 neurons, sized from his vectors, with his judge's in-role share); the
+record of his unchanged download carries the credit alone.
+`read_candidates` reads the file back, units and all.
 
 **Out of git.** No data of either source is in the repository: the tests
 use made-up rows in each format (`tests/fixtures/library/qwen/`, and the
 `mayner_data` fixture in `tests/unit/conftest.py`). Candidate lists,
-`units/candidates_*.csv`, are ignored by git: the library states no licence,
+`units/candidates_*.csv`, and a partly written `.csv.part`, are ignored by
+git: the library states no licence,
 and an ignored file never blocks a `git pull` on the pod. Committing one
 waits for the owner's decision on the library's terms (D4 in the S2
 review). README's "Data and credits" credits both sources.
@@ -164,7 +181,7 @@ review). README's "Data and credits" credits both sources.
   each file against his MANIFEST and skips good ones, and pinning his
   commit keeps the script from changing under us. pushlab's own Python runs
   it, since it needs only the standard library.
-- **Only the files the importer needs,** about 110 MB of the 1 GB bundle,
+- **Only the files the importer needs,** about 105 MB of the 1 GB bundle,
   with `--all` for the rest.
 - **Persona rows only.** The library's other categories (the default and
   altered assistant, incoherent replies, other) are not personas; the
@@ -189,7 +206,8 @@ review). README's "Data and credits" credits both sources.
 - Mayner's sets of 100 neurons have their scores in another of his files,
   which is not fetched; only 10 and 50 are built.
 - The fetch commands need git, and network access to github.com,
-  huggingface.co and neuronpersonas.com, on the pod.
+  huggingface.co, Hugging Face's file servers (hosts under hf.co, such as
+  us.aws.cdn.hf.co) and neuronpersonas.com, on the pod.
 
 ## Results
 
