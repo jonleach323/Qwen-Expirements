@@ -4,7 +4,8 @@ and whether the reply was cut off at max_new_tokens.
 Thinking-mode text. With thinking off, Qwen's chat template ends the prompt
 with an empty thinking block, `<think>\\n\\n</think>\\n\\n`
 (pushlab.models.chat), so a reply is the answer alone. A reply that writes
-<think> or </think> has thinking-mode text. Without a push, that says
+<think> or </think>, or a tag spelled like one, such as <|/think>, has
+thinking-mode text. Without a push, that says
 thinking is not off. Under a push, it more likely says the push is breaking
 the reply's format: S1's random control at dose 1 ended each repeat of a
 loop with a stray end-of-thinking tag (decision 0011), and occcat's 4-bit
@@ -26,6 +27,7 @@ counts and count_lines give, by condition, how many replies were cut off
 and which have thinking-mode text, for the top of the report.
 """
 
+import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +36,10 @@ from typing import Any
 from pushlab.store.records import RunRecord
 
 THINKING_TAGS = ("<think>", "</think>")
+# A thinking tag in a reply's text, as Qwen writes it or as a pushed model
+# misspells it: <think>, </think>, <|/think>, <think|>, <|think|> and the
+# like, in any case; not <thinking>, and not the word "think".
+THINKING_TEXT = re.compile(r"<[|/]{0,2}think[|/]{0,2}>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -92,16 +98,19 @@ def reply_stops(tokenizer: Any, folder: Path) -> frozenset[int]:
 
 
 def has_thinking(text: str, tokens: Sequence[int], ids: Collection[int]) -> bool:
-    """Whether a reply holds thinking-mode text: a thinking tag in its text,
-    or the token of one, by ids (thinking_ids), among its tokens.
+    """Whether a reply holds thinking-mode text: a thinking tag in its text
+    (THINKING_TEXT), or the token of one, by ids (thinking_ids), among its
+    tokens.
 
     Example:
         >>> has_thinking("Sure. <think>", [1, 2], set())
         True
+        >>> has_thinking("loops <|/think> again", [1], set())
+        True
         >>> has_thinking("Hi", [7], {7}), has_thinking("I think so.", [1, 2], {7})
         (True, False)
     """
-    return any(tag in text for tag in THINKING_TAGS) or any(t in ids for t in tokens)
+    return bool(THINKING_TEXT.search(text)) or any(t in ids for t in tokens)
 
 
 def cut_off(tokens: Sequence[int], max_new_tokens: int, stops: Collection[int]) -> bool:
@@ -173,8 +182,8 @@ def count_lines(found: dict[str, Count], limits: Collection[int]) -> list[str]:
         >>> for line in lines:  # doctest: +NORMALIZE_WHITESPACE
         ...     print(line)
         Replies cut off at the 200-token limit, and replies with thinking-mode
-        text (a <think> or </think> tag, which a reply without a push should
-        not hold with thinking off), by condition:
+        text (a thinking tag such as <think>, </think> or <|/think>, which a
+        reply without a push should not hold with thinking off), by condition:
         e-1: 30 of 32 cut off; 1 with thinking-mode text: neutral32-07
     """
     limit = (
@@ -182,8 +191,8 @@ def count_lines(found: dict[str, Count], limits: Collection[int]) -> list[str]:
     )
     lines = [
         f"Replies cut off at {limit}, and replies with thinking-mode text (a "
-        "<think> or </think> tag, which a reply without a push should not hold "
-        "with thinking off), by condition:"
+        "thinking tag such as <think>, </think> or <|/think>, which a reply "
+        "without a push should not hold with thinking off), by condition:"
     ]
     for group, count in found.items():
         if not count.replies:

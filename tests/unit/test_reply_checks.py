@@ -88,11 +88,32 @@ def test_thinking_ids_are_the_tags_tokens(
     assert thinking_ids(Plain()) == frozenset()
 
 
-def test_a_thinking_tag_counts_in_the_text_or_as_its_token() -> None:
-    assert has_thinking("Fine. <think>", [1, 2], set())
-    assert has_thinking("so </think> then", [1], set())
+# A pushed model writes the tags as Qwen spells them and misspelled too:
+# S2's evil diagnosis had "<|/think>" in a reply of its random control.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Fine. <think>",
+        "so </think> then",
+        "loops <|/think> again",
+        "<think|>",
+        "<|think|>",
+        "</THINK>",
+    ],
+)
+def test_a_thinking_tag_counts_in_the_text_however_spelled(text: str) -> None:
+    assert has_thinking(text, [1, 2], set())
+
+
+@pytest.mark.parametrize(
+    "text", ["I think so.", "a <thinking> cap", "think>", "<thinks>", "< think >"]
+)
+def test_words_and_other_tags_are_not_thinking_tags(text: str) -> None:
+    assert not has_thinking(text, [1, 2], {7})
+
+
+def test_a_thinking_tag_counts_as_its_token_too() -> None:
     assert has_thinking("Fine.", [1, 7, 2], {7})  # hidden from the text
-    assert not has_thinking("I think so. <thinking>", [1, 2], {7})
 
 
 @pytest.mark.parametrize(
@@ -179,7 +200,8 @@ def test_count_lines_say_each_group_s_counts_in_words() -> None:
     }
     heading, *lines = count_lines(found, {16})
     assert heading.startswith("Replies cut off at the 16-token limit, and replies")
-    assert "<think> or </think> tag, which a reply without a push" in heading
+    assert "(a thinking tag such as <think>, </think> or <|/think>, which" in heading
+    assert "which a reply without a push should not hold" in heading
     assert lines == [
         "none: 2 of 2 cut off; none with thinking-mode text",
         "pulse: 1 of 3 cut off; 3 with thinking-mode text: p-1, p-2 and p-3; "
@@ -197,7 +219,8 @@ def planted(
     """generate() as it is, but with the two unpushed replies changed:
     - the one to "Say hi." gets <think> as its fourth token, and its text no
       tag, as from a tokenizer whose decoding hides the tags;
-    - the one to "Count to three." spells <think> in plain byte tokens, so
+    - the one to "Count to three." spells <|/think> in plain byte tokens, as
+      S2's evil diagnosis saw a control write it, so
       only its text shows it, and ends its turn on its last allowed token
       with <|endoftext|>, tiny-vl's own end token, not the tokenizer's;
     and the pulse's own reply to "Count to three." ends on its last allowed
@@ -205,7 +228,7 @@ def planted(
     real = generate_module.generate
     tags = [tiny_tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>")]
     vocabulary = tiny_tokenizer.get_vocab()
-    spelled = [vocabulary[character] for character in "<think>"]
+    spelled = [vocabulary[character] for character in "<|/think>"]
     plain = vocabulary["a"]
 
     def planting(model, tokenizer, prompts, *args, schedules=None, **kwargs):  # type: ignore[no-untyped-def]
@@ -219,7 +242,7 @@ def planted(
                 text = text.replace("<think>", "").replace("</think>", "")
             elif not schedule.segments and prompt == "Count to three.":
                 tokens = [plain if t in tags else t for t in tokens]
-                tokens[2:9] = spelled
+                tokens[2:11] = spelled
                 tokens[-1] = tokenizer.convert_tokens_to_ids("<|endoftext|>")
                 text = tokenizer.decode(tokens, skip_special_tokens=True)
             elif prompt == "Count to three." and str(schedule.segments[0].unit) == A:
@@ -283,8 +306,7 @@ def test_the_report_flags_thinking_text_and_counts_cut_off_replies(
             r.prompt_id
             for r in records
             if tags & set(r.output_tokens)
-            or "<think>" in r.output_text
-            or "</think>" in r.output_text
+            or re.search(r"<[|/]{0,2}think[|/]{0,2}>", r.output_text, re.I)
         ]
         thinking = "none with thinking-mode text"
         if flagged:  # two prompts: one or both
@@ -293,7 +315,8 @@ def test_the_report_flags_thinking_text_and_counts_cut_off_replies(
         lines.append(f"- {group}: {cut} of {len(records)} cut off; {thinking}")
     assert [_plain(line) for line in head.split("\n") if line.startswith("- ")] == lines
     # The heading is escaped, so a Markdown viewer shows the tags as text.
-    assert "(a &lt;think&gt; or &lt;/think&gt; tag" in head
+    assert "(a thinking tag such as &lt;think&gt;, &lt;/think&gt; or" in head
+    assert "&lt;\\|/think&gt;" in head
     assert "<think>" not in head and "</think>" not in head
     # The planted replies: the first flagged by its tokens alone, the second
     # by its text alone, and not cut off, as it ends with tiny-vl's own end.

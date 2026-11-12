@@ -69,9 +69,9 @@ experiment file", explains each step at more length.
    Add `--overwrite` to replace a report you wrote before.
 6. **Read them,** top first. The top of each report counts, by condition,
    with e-1's control on a line of its own, the replies cut off at the
-   200-token limit and the replies with thinking-mode text: a `<think>` or
-   `</think>` tag. Each such reply shows **(thinking-mode text)** before
-   its text. Then:
+   200-token limit and the replies with thinking-mode text: a thinking
+   tag such as `<think>`, `</think>` or a misspelled `<|/think>`. Each
+   such reply shows **(thinking-mode text)** before its text. Then:
    - A tag in baseline is a setup problem: thinking is not off. A tag in
      a pushed condition, with baseline clean, means the push is breaking
      the reply's format, as S1's random control did at dose 1.
