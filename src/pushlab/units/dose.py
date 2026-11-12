@@ -30,12 +30,14 @@ from pushlab.units.neuron_set import NeuronSet, Unit
 
 
 def _is_finite_number(value: object) -> bool:
-    """True for a finite int or float, such as 2 or 10.5; False for True or nan."""
-    return (
-        isinstance(value, numbers.Real)
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    """True for a finite int or float, such as 2 or 10.5; False for True or nan,
+    and for an int too large for a float."""
+    if not isinstance(value, numbers.Real) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        return False
 
 
 @dataclass(frozen=True)
@@ -78,8 +80,13 @@ class PerPromptNorms:
                         f"not {norm!r}"
                     )
             rows.append(tuple(float(norm) for norm in row))
-        if len({len(row) for row in rows}) != 1:
-            raise ValueError("every prompt's row needs the same number of layers")
+        for i, row in enumerate(rows):
+            if len(row) != len(rows[0]):
+                raise ValueError(
+                    f"rows[{i}] has {len(row)} sizes but rows[0] has "
+                    f"{len(rows[0])}; every prompt's row needs the same number "
+                    "of layers, one size per layer of the model, from layer 0"
+                )
         # A frozen dataclass sets its fields through object.__setattr__.
         object.__setattr__(self, "rows", tuple(rows))
 

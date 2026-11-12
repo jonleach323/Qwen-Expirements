@@ -6,7 +6,10 @@ the model's cache. Before every pass it sets the StepState the hooks read,
 so each push lands exactly on the passes its schedule names. Each prompt can
 follow its own schedule: they are compiled into one DoseTable, and each row
 of a batch adds only its own amounts (pushlab.engine.hooks). S1's list of
-pushes, the same for every prompt, runs as the schedule it makes.
+pushes, the same for every prompt, runs as the schedule it makes. A push or
+a schedule may push a NeuronSet as well as a neuron (decision 0019), and
+each prompt may take its own residual sizes (the per_prompt calibration
+mode); the loop itself is the same for all of them.
 
 Prompts of different lengths are padded on the left, with an attention
 mask, and each row's positions count from its own first token, as in
@@ -30,6 +33,7 @@ from pushlab.models.chat import chat_prompt_ids, stop_token_ids
 from pushlab.schedules.compile import DoseTable, UnitAmount
 from pushlab.schedules.compile import compile as compile_schedules
 from pushlab.schedules.model import Schedule, Segment
+from pushlab.units.dose import PerPromptNorms
 
 STOP_REASONS = ("end_of_turn", "max_new_tokens")
 
@@ -52,9 +56,11 @@ class Generation:
     prompt pass is no reply token, though a push on it changes token 0.
 
     amounts[j] lists the units pushed on the pass that chose token j, each
-    with the amount added to its neuron: the prompt pass for token 0, and
-    the pass that read token j - 1 for token j (decision 0008). So there is
-    one entry per token, and an empty one where nothing was pushed.
+    with the amount added to its neuron, or for a NeuronSet the amount per
+    unit of coefficient, which its neuron i gets times c_i (decision 0019):
+    the prompt pass for token 0, and the pass that read token j - 1 for
+    token j (decision 0008). So there is one entry per token, and an empty
+    one where nothing was pushed.
     logprobs[j] is token j's log-probability on that same pass, from the
     model's scores before temperature or top-p (decoding.chosen_logprobs).
 
@@ -241,7 +247,7 @@ def generate(
     prompts: Sequence[str],
     pushes: Sequence[Push] | None,
     decoding: Decoding,
-    norms: Sequence[float] | None = None,
+    norms: Sequence[float] | PerPromptNorms | None = None,
     *,
     schedules: Sequence[Schedule] | None = None,
     group_by_length: bool = False,
@@ -253,14 +259,18 @@ def generate(
     own end-of-text token, which it keeps, or after decoding.max_new_tokens
     tokens. norms are each layer's residual sizes from the model's
     calibration, which turn doses into amounts; they are needed only when
-    something is pushed.
+    something is pushed. They may instead be a PerPromptNorms, one row of
+    sizes per prompt, in the same order (the per_prompt calibration mode,
+    pushlab.units.calibration_mode.per_prompt_norms): then prompt i's doses
+    take its own sizes, rows[i].
 
     pushes is S1's form: a list of Push that every prompt gets. schedules,
     the other form, gives each prompt its own Schedule, one per prompt and
-    in the same order, with pushes left empty ([] or None). Either way the pushes are
-    compiled into one DoseTable (pushlab.schedules.compile), checked against
-    the model, and each row adds only its own amounts. Each reply records
-    the units and amounts behind every token (Generation.amounts).
+    in the same order, with pushes left empty ([] or None). Either may push
+    neurons and NeuronSets. Either way the pushes are compiled into one
+    DoseTable (pushlab.schedules.compile), checked against the model, and
+    each row adds only its own amounts. Each reply records the units and
+    amounts behind every token (Generation.amounts).
 
     All prompts run as one batch, padded on the left, unless group_by_length
     is True: then prompts of the same token length run together, so none is

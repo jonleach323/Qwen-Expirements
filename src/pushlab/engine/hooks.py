@@ -9,6 +9,10 @@ such as a left-padded prompt position or a row that has finished. A pass on
 which no row pushes anything in the layer leaves down_proj's input as it
 was, as S1's hook does.
 
+The table holds one amount per pushed neuron, a NeuronSet's neurons among
+them, each already its share of the set's push (decision 0019), so a set
+across layers is pushed by the hook of each of its layers.
+
 Rows never touch each other: a row's values change only by its own amounts,
 and a value that row does not push keeps every bit, so in one batch layout a
 row's numbers depend on its own prompt and schedule alone.
@@ -35,8 +39,9 @@ def _reach(passes: int) -> str:
 def _table_hook(
     table: LayerTable, state: StepState
 ) -> Callable[[nn.Module, tuple], tuple | None]:
-    """A forward pre-hook that adds the current pass's amounts, row by row."""
-    neurons = torch.tensor([unit.index for unit in table.units])
+    """A forward pre-hook that adds the current pass's amounts, row by row, to
+    the table's pushed neurons."""
+    neurons = torch.tensor([neuron.index for neuron in table.units])
     # The table moved to the activations' device and add type, once.
     moved: dict[tuple[torch.device, torch.dtype], tuple] = {}
 
@@ -80,8 +85,9 @@ def doses_active(
     Each pushed layer gets one forward pre-hook on its down_proj, which reads
     state on every pass; a table that pushes nothing installs none. The hooks
     are removed when the block ends, even after an error. The table must
-    have been compiled for this model (compile checks its units against
-    it), and a pass must have as many rows as the table.
+    have been compiled for this model (compile checks its units, neurons
+    and NeuronSets, against it), and a pass must have as many rows as the
+    table.
 
     Example:
         >>> from transformers import Qwen3Config, Qwen3ForCausalLM

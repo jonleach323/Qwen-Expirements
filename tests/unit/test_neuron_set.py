@@ -269,6 +269,12 @@ def test_a_set_still_needs_good_norms(tiny_model: Qwen3ForCausalLM) -> None:
         amount(_set(), 1.0, tiny_model, [7.0, math.nan])
 
 
+def test_a_dose_too_large_for_a_float_is_refused(tiny_model: Qwen3ForCausalLM) -> None:
+    for unit in (_set(), NeuronUnit("tiny", 1, 5)):
+        with pytest.raises(ValueError, match="alpha must be a finite number"):
+            amount(unit, 10**400, tiny_model, NORMS)
+
+
 def test_amount_refuses_what_is_not_a_unit(tiny_model: Qwen3ForCausalLM) -> None:
     with pytest.raises(ValueError, match="a NeuronUnit or a NeuronSet"):
         amount("tiny:L1:N5", 1.0, tiny_model, NORMS)  # type: ignore[arg-type]

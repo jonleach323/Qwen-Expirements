@@ -1,7 +1,8 @@
 """validate(): whether a schedule suits a model and a reply length.
 
 It refuses, listing every problem at once:
-- units unknown to the model, and layers or neurons out of its range;
+- units unknown to the model, and layers or neurons out of its range, every
+  entry of a NeuronSet's too;
 - a reply segment that ends before it starts, or covers no reply token;
 - a prompt segment with a start or end, or that ramps or repeats (the
   prompt pass is one pass); a ramp with no end, of a single reply token, or
@@ -9,25 +10,29 @@ It refuses, listing every problem at once:
 - any pass where the combined push in one layer is above the ceiling,
   unless the schedule sets allow_over_ceiling, which lifts that rule alone.
 
-The combined push in a layer is the square root of the summed squares of its
-units' doses on that pass (research plan, "Dosing rules"), each unit's dose
-being the sum of its segments there, as the engine adds them. Every pass is
-checked: the prompt pass and every reply token, however long the reply, so
-the verdict does not depend on max_new_tokens. Only the warnings do: a
-segment that no pass reaches, that runs past max_new_tokens, or whose ramp
-ends on a token no pass reads, is warned about but accepted. Nothing here
-needs model weights, so a dry run in a cloud session can use it.
+The combined push in a layer is the square root of the summed squares of the
+doses of the units that push it on that pass (research plan, "Dosing rules"),
+each unit's dose being the sum of its segments there, as the engine adds
+them. A neuron pushes its own layer, and a NeuronSet every layer it has a
+neuron in, each with its whole dose (decision 0019): so a set of one neuron
+counts as that neuron, a set at 1.5 is refused in each of its layers, and a
+set at 1 beside a neuron at 1 in one of its layers makes 1.414 there. Every
+pass is checked: the prompt pass and every reply token, however long the
+reply, so the verdict does not depend on max_new_tokens. Only the warnings
+do: a segment that no pass reaches, that runs past max_new_tokens, or whose
+ramp ends on a token no pass reads, is warned about but accepted. Nothing
+here needs model weights, so a dry run in a cloud session can use it.
 """
 
 import math
 import numbers
 import warnings
-from collections.abc import Mapping
 
 from pushlab.models.discovery import ModelInfo
 from pushlab.models.registry import REGISTRY, ModelSpec
 from pushlab.schedules.model import Schedule, Segment, describe_pass, dose_text
-from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron import NeuronUnit  # noqa: F401 (the examples use it)
+from pushlab.units.neuron_set import NeuronSet, Unit, unit_layers
 
 # The low end of the collapse range Liu (2026) measured in Qwen and Llama
 # models, 1.4 to 1.7 times the residual size (1.65 for Qwen3.5-4B): research
@@ -52,29 +57,33 @@ def _shape(model_info: object) -> tuple[str | None, ModelInfo]:
     )
 
 
-def _unit_problem(unit: NeuronUnit, name: str | None, shape: ModelInfo) -> str | None:
-    """Why the unit is unknown to the model or out of its range, or None."""
+def _unit_problems(unit: Unit, name: str | None, shape: ModelInfo) -> list[str]:
+    """Why the unit is unknown to the model or out of its range: for a set,
+    every entry out of range, each worded as NeuronSet.validate words one."""
     if name is not None and unit.model_name != name:
-        return (
-            f"unknown unit {unit}: it is a neuron of {unit.model_name}, not of {name}"
-        )
+        kind = "a set of neurons" if isinstance(unit, NeuronSet) else "a neuron"
+        return [
+            f"unknown unit {unit}: it is {kind} of {unit.model_name}, not of {name}"
+        ]
     if name is None:
         spec = REGISTRY.get(unit.model_name)  # the registry may have changed since
         if spec is None:
-            return (
+            return [
                 f"unknown unit {unit}: {unit.model_name} is not in the model registry"
-            )
+            ]
         registered = ModelInfo(spec.layers, spec.hidden_size, spec.mlp_size)
         if registered != shape:
-            return (
+            return [
                 f"unknown unit {unit}: {unit.model_name} is shaped {registered}, "
                 f"but the model is shaped {shape}"
-            )
-    try:
-        unit.validate(shape)
-    except ValueError as error:
-        return str(error)
-    return None
+            ]
+    problems = []
+    for neuron in unit.neurons() if isinstance(unit, NeuronSet) else (unit,):
+        try:
+            neuron.validate(shape)
+        except ValueError as error:
+            problems.append(str(error) if neuron is unit else f"{unit}: {error}")
+    return problems
 
 
 def _window_problems(segment: Segment) -> list[str]:
@@ -175,21 +184,31 @@ def _layer_passes(segments: list[Segment], layer: int) -> list[int | None]:
     return [None, *sorted(tokens)]
 
 
-def _combined(doses: Mapping[NeuronUnit, float], layer: int) -> float:
-    return math.hypot(*(dose for unit, dose in doses.items() if unit.layer == layer))
+def _peak(segments: list[Segment], layer: int) -> tuple[float, int | None] | None:
+    """The largest push of segments that all push one layer, and its first pass."""
+    own, peak = Schedule("layer", segments), None
+    for reply_token in _layer_passes(segments, layer):
+        if doses := own.doses_at(reply_token):
+            push = math.hypot(*doses.values())
+            if peak is None or push > peak[0]:
+                peak = (push, reply_token)
+    return peak
 
 
 def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
     """For each pushed layer, its largest combined push and the first pass with it.
 
-    The combined push on a pass is the square root of the summed squares of
-    the layer's units' doses there; a pass is a reply token, or None for the
+    The combined push in a layer on a pass is the square root of the summed
+    squares of the doses there of the units that push it: a neuron pushes its
+    own layer, and a NeuronSet every layer it has a neuron in, each with its
+    whole dose (decision 0019). A pass is a reply token, or None for the
     prompt pass, which comes first. Each segment must be valid on its own
-    terms (validate checks them first). Each layer is worked on its own,
-    and one whose repeating segments would need more than MOST_PASSES
-    passes is refused with TooManyPasses, a ValueError. The peak is exact
-    up to rounding: a dose inside a ramp is worked by a formula, and can
-    differ from its straight line in the last of its 16 digits.
+    terms (validate checks them first). Each layer is worked on its own
+    (layers that the same segments push, such as one set's, once), and one
+    whose repeating segments would need more than MOST_PASSES passes is
+    refused with TooManyPasses, a ValueError. The peak is exact up to
+    rounding: a dose inside a ramp is worked by a formula, and can differ
+    from its straight line in the last of its 16 digits.
 
     Example:
         >>> from pushlab.schedules.shapes import constant
@@ -199,18 +218,23 @@ def layer_peaks(schedule: Schedule) -> dict[int, tuple[float, int | None]]:
         >>> peak, where = layer_peaks(both)[14]
         >>> round(peak, 3), where
         (1.414, None)
+        >>> wide = NeuronSet("qwen3.5-4b", "w", [(13, 7, 1.0), (14, 9, 2.0)], "x", 9.0)
+        >>> peaks = layer_peaks(Schedule("y", [Segment(wide, 1, 1), Segment(a, 1, 1)]))
+        >>> round(peaks[13][0], 3), round(peaks[14][0], 3)  # a set pushes both
+        (1.0, 1.414)
     """
+    pushing: dict[int, list[int]] = {}  # each layer's segments, by index
+    for i, segment in enumerate(schedule.segments):
+        for layer in unit_layers(segment.unit):
+            pushing.setdefault(layer, []).append(i)
     peaks: dict[int, tuple[float, int | None]] = {}
-    for layer in sorted({segment.unit.layer for segment in schedule.segments}):
-        own = Schedule(
-            schedule.name, [s for s in schedule.segments if s.unit.layer == layer]
-        )
-        for reply_token in _layer_passes(list(own.segments), layer):
-            doses = own.doses_at(reply_token)
-            if doses:
-                push = _combined(doses, layer)
-                if layer not in peaks or push > peaks[layer][0]:
-                    peaks[layer] = (push, reply_token)
+    worked: dict[tuple[int, ...], tuple[float, int | None] | None] = {}
+    for layer, indexes in sorted(pushing.items()):
+        key = tuple(indexes)  # layers that the same segments push peak alike
+        if key not in worked:
+            worked[key] = _peak([schedule.segments[i] for i in key], layer)
+        if (peak := worked[key]) is not None:
+            peaks[layer] = peak
     return peaks
 
 
@@ -282,13 +306,14 @@ def validate(
     """Refuse a schedule that cannot run on the model; return its warnings.
 
     model_info is the model's registry entry, such as REGISTRY["qwen3.5-4b"]:
-    then every unit must be one of its neurons. A ModelInfo, which has no
-    name, checks only that each unit's model has this shape. ceiling bounds
-    the combined push in one layer on any pass (see the module's docstring);
-    None checks no ceiling, as compile does, since the engine pushes what it
-    is given. Every problem found is listed in one ValueError. Otherwise each warning
-    is issued as a ScheduleWarning and returned, so a command can print them
-    in its own words and ignore ScheduleWarning.
+    then every unit must be one of its neurons, or a set of them. A
+    ModelInfo, which has no name, checks only that each unit's model has
+    this shape. ceiling bounds the combined push in one layer on any pass,
+    a set counting in each of its layers (see the module's docstring); None
+    checks no ceiling, as compile does, since the engine pushes what it is
+    given. Every problem found is listed in one ValueError. Otherwise each
+    warning is issued as a ScheduleWarning and returned, so a command can
+    print them in its own words and ignore ScheduleWarning.
 
     Example:
         >>> from pushlab.schedules.shapes import constant, pulse
@@ -332,9 +357,7 @@ def validate(
     good = []
     for i, segment in enumerate(schedule.segments):
         where = f"segments[{i}] ({segment.describe()})"
-        found = _window_problems(segment)
-        if problem := _unit_problem(segment.unit, name, shape):
-            found.insert(0, problem)
+        found = _unit_problems(segment.unit, name, shape) + _window_problems(segment)
         problems.extend(f"{where}: {problem}" for problem in found)
         if not found:
             good.append(segment)
@@ -352,7 +375,7 @@ def validate(
                 units = ", ".join(
                     f"{unit} at {dose_text(dose)}"
                     for unit, dose in doses.items()
-                    if unit.layer == layer
+                    if layer in unit_layers(unit)
                 )
                 shown = f"{peak:.4g}"
                 if float(shown) <= ceiling:  # just over: show every digit

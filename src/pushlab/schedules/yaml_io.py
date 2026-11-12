@@ -24,6 +24,11 @@ ceiling. Unknown keys, params, shapes and units are refused with a message that
 names them. Schedules are always written out as segments, so reading one back
 gives an equal schedule, every dose bit for bit.
 
+Units in files are neurons. Sets of neurons (decision 0019) come to files in a
+later step: until then a set's ID, such as qwen3-8b:set:pirate-top50, is
+refused, and so is writing a schedule that pushes a set, which could not be
+read back.
+
 The text is read with pushlab.schedules.yaml_text.load_yaml, which refuses a
 key given twice and reads numbers and true/false as YAML 1.2 does, and written
 with its dump_yaml, so writing then reading changes nothing. An experiment file
@@ -33,6 +38,7 @@ that holds a schedule should be read with load_yaml too.
 import inspect
 import math
 import numbers
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -41,6 +47,7 @@ from pushlab.schedules.model import Schedule, Segment
 from pushlab.schedules.shapes import SHAPES
 from pushlab.schedules.yaml_text import dump_yaml, load_yaml
 from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron_set import NeuronSet
 
 SCHEDULE_KEYS = ("name", "allow_over_ceiling", "segments", "shape", "params")
 SEGMENT_KEYS = (
@@ -56,6 +63,8 @@ SEGMENT_KEYS = (
 )
 # The shapes' params that name a unit, as text such as qwen3.5-4b:L14:N8949.
 UNIT_PARAMS = ("unit", "a", "b")
+# How a set's ID starts (model:set:), which no neuron's ID can.
+_SET_ID = re.compile(r"[^:\s]+:set:")
 
 
 def _keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
@@ -90,6 +99,12 @@ def _dose(where: str, key: str, value: object) -> None:
 
 
 def _unit(where: str, text: object) -> NeuronUnit:
+    if isinstance(text, str) and _SET_ID.match(text):
+        raise ValueError(
+            f"{where}: {text!r} names a set of neurons, and sets cannot be read "
+            "from schedule files yet; give a neuron's ID, such as "
+            "qwen3.5-4b:L14:N8949, or build a schedule with a set in Python"
+        )
     try:
         return NeuronUnit.parse(text)  # type: ignore[arg-type]
     except ValueError as error:
@@ -234,7 +249,8 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
 
     A constant segment gets alpha, a ramp alpha_start and alpha_end. Every
     segment gets its start, end and region, and one that repeats its on_for
-    and off_for.
+    and off_for. A schedule that pushes a set of neurons is refused, since
+    files name neurons only so far (see the module's docstring).
 
     Example:
         >>> from pushlab.schedules.shapes import onset
@@ -245,9 +261,21 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
         >>> mapping["segments"]  # doctest: +NORMALIZE_WHITESPACE
         [{'unit': 'qwen3.5-4b:L14:N8949', 'alpha': 1.0, 'start': 50, 'end': None,
           'region': 'reply'}]
+        >>> pair = NeuronSet("qwen3-8b", "pair", [(14, 1, 1.0), (14, 2, -0.5)], "x")
+        >>> to_mapping(onset(pair, 1.0, 50))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: segments[0] (qwen3-8b:set:pair at +1 from ...) pushes the set ...
     """
     segments = []
-    for segment in _check_schedule(schedule).segments:
+    for i, segment in enumerate(_check_schedule(schedule).segments):
+        if isinstance(segment.unit, NeuronSet):
+            raise ValueError(
+                f"segments[{i}] ({segment.describe()}) pushes the set of neurons "
+                f"{segment.unit}, and sets cannot be written to schedule files "
+                "yet, since from_yaml could not read them back; keep a schedule "
+                "with a set in Python"
+            )
         start, end = segment.alpha_start, segment.alpha_end
         # The same bits, so a dose of 0.0 next to -0.0 keeps both signs.
         doses = (
