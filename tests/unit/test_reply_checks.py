@@ -89,7 +89,9 @@ def test_thinking_ids_are_the_tags_tokens(
 
 
 # A pushed model writes the tags as Qwen spells them and misspelled too:
-# S2's evil diagnosis had "<|/think>" in a reply of its random control.
+# S2's evil diagnosis had "<|/think>" in a reply of its random control. Any
+# pipes, slashes, backslashes or whitespace may stand around "think", in any
+# case.
 @pytest.mark.parametrize(
     "text",
     [
@@ -101,13 +103,18 @@ def test_thinking_ids_are_the_tags_tokens(
         "</THINK>",
         "</|think>",
         "<|/think|/>",
+        "<|/ think>",
         "<think/>",
         "</think >",
+        "< think >",
         "< /think>",
         "<\\think>",
+        "<think\\>",
+        "<\tthink>",
+        "</\nthink>",
     ],
 )
-def test_a_thinking_tag_counts_with_pipes_slashes_or_spaces_around_think(
+def test_a_thinking_tag_counts_with_marks_or_whitespace_around_think(
     text: str,
 ) -> None:
     assert has_thinking(text, [1, 2], set())
@@ -122,6 +129,8 @@ def test_a_thinking_tag_counts_with_pipes_slashes_or_spaces_around_think(
         "a <thinking> cap",
         "think>",
         "<thinks>",
+        "<rethink>",
+        "<!-- think -->",
         "<|think_end|>",
         "</think",
     ],

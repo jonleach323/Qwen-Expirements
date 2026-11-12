@@ -16,10 +16,11 @@ experiment file", explains each step at more length.
    ```
 
    The experiment file has been on main since PR 17. The report's check
-   for thinking tags was widened after the run, to find misspelled tags
-   such as `<|/think>` (decision 0018, Results): a report written before
-   that change reached main misses them, so write it again, with
-   `--overwrite`, once the change is on main and pulled.
+   for thinking tags was widened after the first run, on 2026-11-12, to
+   find misspelled tags such as `<|/think>` (decision 0018, Results): a
+   report written before that change reached main misses them, so write
+   it again, with `--overwrite`, once the change is on main and pulled,
+   and copy the reports off again (step 7).
    In setup's step 7, pytest's last line must start `7 passed` (a `1
    warning` after it is explained in `docs/runbooks/pod.md`): those GPU
    tests include the check that each row of a batch gets only its own
