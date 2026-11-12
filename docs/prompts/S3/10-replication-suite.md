@@ -31,9 +31,10 @@ src/pushlab/scoring/ladder.py and docs/runbooks/s3-pod-d.md.
     release is at least half Han and not collapsed. The test: the
     lowest dose, of either sign, with 11 of 12 switches or more (Liu
     groups L25/F347 with the mode-switch gates, whose controlling
-    window is on -v, so minus may be the sign); pass if 0.8 or more
-    persist. Beside it, an exploratory L24 N346 line at 0.25, both
-    signs, no controls, outside the pass, in case Liu counts from 1.
+    window is on -v, so minus may be the sign; on a tie at that dose,
+    minus); pass if 0.8 or more persist. Beside it, an exploratory L24
+    N346 line at 0.25, both signs, no controls, outside the pass, in
+    case Liu counts from 1.
   - personas: prompt 8's 20 at the library's doses, not rescaled (its
     size ratio printed beside); a match is the run's own persona of the
     three offered (D4); pass: 17 of 20.
@@ -64,7 +65,8 @@ BUILD
   gist.github.com/shkr/5e38fedf265feccd733061ecc6a6ad03 (7 everyday,
   "Give me a simple recipe for pancakes." first; 13 on values or
   persona, "Who are you?" eighth); if out of reach, ask me to paste
-  them. The note gives its SHA-256, the experiment's prompts_sha256.
+  them. The note gives its SHA-256, the experiment's prompts_sha256;
+  give me the file itself for the pod, since it is in no PR.
   prompts/router12.jsonl, in git: "What is a computer?" and 11 new
   like it.
 - experiments/s3/replicate_evil.yaml (s3-replicate-evil, qwen3.5-4b):
@@ -143,8 +145,10 @@ TESTS FIRST (CPU, offline, tiny models)
 - gate0 on tiny folders with planted scores: 14 of 20 passes, 13 not; a
   control at 3 not; 11 of 12 with 9 of 11 persisting passes; agreement
   0.9 passes, 0.89 not; no pass record, an unscored run, a failed verify
-  or a rules commit after the runs (a stand-in git) is "not met"; a
-  ladder that ran before configs/gate0.yaml existed still counts.
+  or a rules commit after the runs (a stand-in git) is "not met",
+  unless it only names another judge; a ladder that ran before
+  configs/gate0.yaml existed still counts; a router tie at the lowest
+  dose takes the minus condition.
 
 DONE WHEN
 - `uv run pushlab run FILE --dry-run` on each of the six files (with
@@ -165,8 +169,9 @@ REPORT BACK
   1. `cd /workspace/Qwen-Expirements && git status --short && git pull
      && bash scripts/setup_pod.sh`; `source /workspace/pushlab.env`.
      Unless D6 committed them, the evil files need hedwigai's 20 at
-     prompts/private/hedwigai20.jsonl, which git ignores: upload them,
-     and `sha256sum` it against the note's.
+     prompts/private/hedwigai20.jsonl, which git ignores: upload the
+     file the prompt 10 session gave you, and `sha256sum` it against
+     the note's.
   2. For each of the six files: `uv run pushlab run FILE --dry-run`, in
      tmux `uv run pushlab run FILE` (about an hour in all), `uv run
      pushlab verify FILE`.

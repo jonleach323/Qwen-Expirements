@@ -22,8 +22,10 @@ experiments/README.md; src/pushlab/schedules/validation.py; and prompt
   for the median and is left out of range and CV, its count printed).
   Ceiling: the second lowest of the 10 (the 20th percentile);
   under Liu's spread it is most likely 1.25 for qwen3.5-4b and 1.0 for
-  qwen3-4b, below today's 1.4, so two dose-1 pushes in one layer would
-  need allow_over_ceiling.
+  qwen3-4b, below today's 1.4, so a combined push in one layer between
+  it and 1.4 (one push of 1.3, or doses 1 and 0.8 together: 1.28) would
+  newly need allow_over_ceiling; two dose-1 pushes in one layer (1.41)
+  need it already.
 - Part 1 needs qwen3-4b's and qwen3-8b's calibration files on main
   (pod session A). Record any paste first, as docs/handoff/HANDOFF.md
   says.
@@ -77,7 +79,9 @@ BUILD
   records the ceiling used and the labels allowed over it, and the
   conditions view gains allow_over_ceiling (NULL in older folders);
   not in the schedule JSON same_run compares, so old folders still match.
-- Docs: experiments/README.md's list; CLAUDE.md's ladder command;
+- Docs: HANDOFF.md (prompt 1) gains ladder records, uploaded as
+  calibration files are; experiments/README.md's list; CLAUDE.md's
+  ladder command;
   docs/runbooks/s3-pod-d.md, on Secure Cloud (development-plan.md:531),
   "Part 1: dose ladders"; a decision note, the next free number: D5's
   answers, the draw, the read, the rule, which files a lower ceiling
@@ -87,7 +91,8 @@ CONSTRAINTS
 - Never start a GPU job. No dependency. Doses, neurons and prompts live
   in experiments/ and prompts/; D5's numbers in configs/scoring.yaml as
   ladder version 1, pinned by a test as prompt 5 pins coherence's; a
-  ceiling enters configs/ceilings.yaml only from a pasted ladder record.
+  ceiling enters configs/ceilings.yaml only from a pasted or uploaded
+  ladder record.
 - schedules/ and units/ changes move prompt 2's engine hash: say so in
   the PR. Changed expected values: tests/unit/test_query.py's VIEWS and
   prompt 1's evidence tests (evidence gains a ladder section).

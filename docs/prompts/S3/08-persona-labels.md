@@ -155,8 +155,9 @@ REPORT BACK
   1. Unless the list is in git: `uv run pushlab library-units --library
      /workspace/library/<file>.csv --seed 0 --out $U`; the SHA-256 it
      prints for $U must be the experiment's units_sha256.
-  2. `uv run pushlab run $S --dry-run`; `uv run pushlab run $S` in tmux
-     (about 25 minutes); `uv run pushlab verify $S`.
+  2. `uv run pushlab run $S --dry-run`; in tmux, `uv run pushlab run
+     experiments/s3/persona_sample.yaml` (about 25 minutes); `uv run
+     pushlab verify $S`.
   3. `uv run pushlab calibrate --model qwen3-8b --prompts
      prompts/whoareyou.jsonl --out $Z`.
   4. `uv run pushlab label-sheet $S --rubric persona --candidates $U

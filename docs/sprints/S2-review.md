@@ -307,7 +307,7 @@ writes 1, 3 and 4 into CLAUDE.md in a commit the owner may drop (D1).
    8, D after 9 and 10. A prompt builds without an earlier session's paste and
    only its pod part waits for it, so the owner keeps this order. Check: the
    S3 review dates each session.
-8. **Gate 0's evil target, decided before the replication prompt** (D6),
+8. **Gate 0's evil target, decided before the replication runs** (D6),
    in a decision note. Check: the note predates prompt 10's runs.
 9. **The owner's labels, budgeted and blind:** 400 or 200 (D2), 2.8 to
    4.7 h for 400, the hostility sheet right after prompt 4. Check: each
@@ -384,16 +384,16 @@ must score sentence windows too: S4 checks its persona timelines against it.
 | D2 | Prompt 4 | The hostility labels and definitions (default: hostile, S1's definition; unsafe; neither); 200 labels per rubric (default, the development plan) or 200 in all (the research plan: then about 100 items a rubric, about 8 of them hostile, so a pass or fail rests on a handful); labeling blind (default) |
 | D3 | Prompt 7 | No vLLM in S3 (default: vLLM 0.33.0 pins torch 2.14.0 and transformers below 5.21.0; the lock has 2.14.1 and 5.21.0); no API judge (default); whether hostile reply text may be sent to one |
 | D4 | Prompt 8 | The persona library's terms (default: nothing of it in git); which personas; what a "match" is (default: the run's own persona of the three offered) |
-| D5 | Prompt 9 | The ladder's neurons, grid, prompts and collapse rule; how "most collapse between 1.4 and 2.0" is read (default: the median of the 10 in [1.4, 2.0], which on prompt 9's 0.25 grid, under Liu's spread, holds about 93% of the time, "at least 6 of 10" about 55%; prompt 9 says how a neuron "above 2.5" counts); how a ceiling follows (default: the second lowest of the 10, the 20th percentile; under Liu's spread most likely 1.25 for qwen3.5-4b and 1.0 for qwen3-4b, below today's 1.4, so two dose-1 pushes in one layer would need `allow_over_ceiling`) |
+| D5 | Prompt 9 | The ladder's neurons, grid, prompts and collapse rule; how "most collapse between 1.4 and 2.0" is read (default: the median of the 10 in [1.4, 2.0], which on prompt 9's 0.25 grid, under Liu's spread, holds about 93% of the time, "at least 6 of 10" about 55%; prompt 9 says how a neuron "above 2.5" counts); how a ceiling follows (default: the second lowest of the 10, the 20th percentile; under Liu's spread most likely 1.25 for qwen3.5-4b and 1.0 for qwen3-4b, below today's 1.4, so a combined push in one layer between it and 1.4, such as 1.3, would newly need `allow_over_ceiling`; two dose-1 pushes in one layer, 1.41, need it already) |
 | D6 | Prompt 10's runs | Written in prompt 10's decision note, the pre-registration (also at `docs/prereg/p0-gate0.md`, `development-plan.md:125`): Gate 0's evil target (default: keep L14 N8949 at 14 of 20 with 5 matched random controls, each at most 2 of 20; no L16 N8927 arm); whether the evil test counts "unsafe" with "hostile" (default: hostile only, S1's narrow reading); whether hedwigai's 20 prompts, from a gist that states no licence, may be committed (default: not until the owner says yes); the router protocol; what S1's 5-of-5 check becomes (default: closed as superseded by Gate 0's evil test, with the owner's labels of S1's 20 replies recorded); how strict gate0's guard is (default: a later change to `configs/gate0.yaml`'s files or D6 numbers voids a run; naming the judge later does not). Prompt 10 gives each default in full |
 
-**Time:** about 10 to 17 owner hours, by estimate: 1 to 1.5 to read and
+**Time:** about 10 to 18 owner hours, by estimate: 1 to 1.5 to read and
 decide; 2.75 to 3.7 for eleven prompts and PRs; 3 to 5.75 for five to eleven
 pod visits (A to D's 2.75 to 4, and 15 min of setup each past four); 2.8 to
 4.7 for 400 labels, the personas' 1.7 to 2.5 at 30 to 45 s an item (1.4 to 2.4
-for 200); 0.25 to 0.5 to read prompt 6's 60 answers; up to 0.7 for a fresh 100
-labels after a FAIL; 0.25 for the weekly log and copies. S3 will not fit one
-calendar week: the top end passes the plan's 12 to 15 hours a week
+for 200); 0.25 to 0.5 to read prompt 6's 60 answers; up to 1.25 for a
+fresh 100 labels after a FAIL; 0.25 for the weekly log and copies. S3 will not
+fit one calendar week: the top end passes the plan's 12 to 15 hours a week
 (`development-plan.md:22`), and label rounds, PRs and pod visits follow one
-another (S2 ran 118.5 h). **GPU:** about 6 to 9 GPU-hours, $2 to $7, by the
-prompts' figures: well inside Phase 0's 20 (`docs/plan/research-plan.md:481`).
+another (S2 ran 118.5 h). **GPU:** about 6 to 9 GPU-hours, $4 to $7 (A and D
+on Secure Cloud): well inside Phase 0's 20 (`docs/plan/research-plan.md:481`).

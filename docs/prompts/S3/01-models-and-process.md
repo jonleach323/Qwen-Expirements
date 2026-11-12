@@ -127,8 +127,8 @@ CONSTRAINTS
   (the models list), a family in the ModelSpecs of tests/conftest.py
   and tests/unit/test_schedule_validation.py:183, and any tool-call list
   in tests/unit/test_setup_pod.py that the check's git call joins.
-- New code in new modules; files under about 400 lines; src/ changes
-  under about 1,500 lines, as the rules above say. Review as they size it.
+- New code in new modules; files under about 400 lines; sized,
+  reviewed and described in the PR as the rules above say.
 
 TESTS FIRST (CPU, offline, tiny models)
 - PUBLISHED in tests/unit/test_model_registry.py gains qwen3-4b and D1's
