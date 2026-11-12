@@ -6,6 +6,10 @@
 # Files from `pushlab calibrate`, one per model revision. The pod writes them
 # in its clone of the repository; ignored, they never block a `git pull`.
 /calibration/
+# Candidate lists from `pushlab candidates`, made on the pod from the persona
+# sources' data (decision 0020). The Neuron Persona Library states no licence,
+# so its data stays out of git; ignored, a list never blocks a `git pull`.
+/units/candidates_*.csv
 
 # Secrets, such as a filled-in copy of scripts/pod.env.example
 .env

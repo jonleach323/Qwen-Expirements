@@ -83,6 +83,26 @@ manifest (`manifest.json`) in a new folder. Never use
 Where things go: see "Repository layout and conventions" in
 `docs/plan/development-plan.md`. Design decisions live in `docs/decisions/`.
 
+## Data and credits
+
+pushlab reads persona candidates for Qwen3-8B from two sources, which
+`pushlab fetch` downloads on the GPU pod (decision 0020). Neither source's
+data is in this repository.
+
+- **persona-neurons**, by Will Mayner: code at
+  [github.com/wmayner/persona-neurons](https://github.com/wmayner/persona-neurons)
+  (MIT), data at
+  [huggingface.co/datasets/wmayner/persona-neurons](https://huggingface.co/datasets/wmayner/persona-neurons)
+  under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). A
+  NeuronSet made from it pushes exactly his top-neuron steering at dose 1
+  (decision 0019), and a candidate list made from it credits his data on
+  each of its rows. `tests/unit/mayner_reference.py` is an unchanged copy of
+  a few of his functions, under his MIT notice.
+- **The Neuron Persona Library** for Qwen3-8B,
+  [neuronpersonas.com](https://neuronpersonas.com). It states no licence and
+  asks to be cited, so its data, and the candidate lists made from it, stay
+  out of git.
+
 ## License
 
 Apache-2.0. See `LICENSE`.

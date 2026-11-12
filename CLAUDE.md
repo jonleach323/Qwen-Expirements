@@ -47,6 +47,11 @@ be a NeuronSet, a few neurons pushed as one unit
 - Query every experiment's runs and steps in /workspace/runs (DuckDB views
   runs, steps and conditions; runs nothing):
   uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
+- Download the persona candidates' two sources into /workspace/data (on the
+  pod; the library about 26 MB, Mayner's files about 110 MB):
+  uv run pushlab fetch library, then uv run pushlab fetch mayner
+- One candidate list from both sources, sensitive personas dropped (loads
+  no model): uv run pushlab candidates --model qwen3-8b --out units/candidates_qwen3-8b.csv
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 
