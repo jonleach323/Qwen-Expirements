@@ -85,6 +85,7 @@ def test_a_set_without_a_size_must_sit_in_one_layer() -> None:
         ({"size": -2.0}, "size must be None or a finite number above 0"),
         ({"size": math.inf}, "size must be None or a finite number above 0"),
         ({"size": True}, "size must be None or a finite number above 0"),
+        ({"size": 10**400}, "size must be None or a finite number above 0"),
     ],
 )
 def test_bad_fields_are_refused(fields: dict, problem: str) -> None:
@@ -106,6 +107,7 @@ def test_bad_fields_are_refused(fields: dict, problem: str) -> None:
         ([(1, 5, 0.0)], "coefficient must be a finite number other than 0"),
         ([(1, 5, math.nan)], "coefficient must be a finite number other than 0"),
         ([(1, 5, "1")], "coefficient must be a finite number other than 0"),
+        ([(1, 5, 10**400)], "coefficient must be a finite number other than 0"),
         ([(1, 5, 1.0), (0, 3, 1.0), (1, 5, -1.0)], "entries\\[2\\] repeats layer 1"),
         ("tiny:L1:N5", "non-empty list"),
     ],
@@ -163,6 +165,21 @@ def test_one_neuron_with_coefficient_1_gives_exactly_its_column(
     assert torch.equal(
         one.write_direction(tiny_model), unit.write_direction(tiny_model)
     )
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_one_neuron_keeps_every_bit_of_its_column_signed_zeros_too(
+    tiny_model: Qwen3ForCausalLM, dtype: torch.dtype
+) -> None:
+    model = tiny_model.to(dtype)
+    with torch.no_grad():
+        model.model.layers[1].mlp.down_proj.weight[[3, 7], 5] = -0.0
+    one = NeuronSet("tiny", "one", [(1, 5, 1.0)], "test")
+    ours = one.write_direction(model)
+    theirs = NeuronUnit("tiny", 1, 5).write_direction(model)
+    assert torch.equal(ours, theirs)
+    assert torch.equal(torch.signbit(ours), torch.signbit(theirs))
+    assert bool(torch.signbit(ours[3])) and bool(torch.signbit(ours[7]))
 
 
 def test_the_write_direction_is_a_copy_in_float32(tiny_model: Qwen3ForCausalLM) -> None:

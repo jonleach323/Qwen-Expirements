@@ -21,7 +21,9 @@ The engine reads the table one layer at a time. A LayerTable
 every pass and row, the amount added to each and whether it is pushed at
 all: a segment at dose 0 is pushed, with 0. Its size grows with the passes,
 the rows and the neurons pushed, never with the model's layers times its
-neurons.
+neurons. Every row has a column for every neuron any row pushes, so rows
+that push different sets make it grow with the rows times all their sets'
+neurons, most of it zeros (decision 0019).
 """
 
 import warnings
@@ -234,6 +236,8 @@ class DoseTable:
                 or not 0 <= row < self.rows
             ):
                 raise ValueError(f"each row must be 0 to {self.rows - 1}, not {row!r}")
+        if rows == list(range(self.rows)):
+            return self  # every row, in order: the table itself, with no copy
         return DoseTable(
             tuple(self.schedules[row] for row in rows),
             self.max_new_tokens,

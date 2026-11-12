@@ -3,7 +3,8 @@
 A fixture in his data format, seeded deltas and p of two roles on the tiny
 model's 2 x 128 neurons, is written as his steps write sets.parquet and
 top_neurons.parquet, and read back. Our sets from those tables are checked
-against what his code, copied below unchanged, builds from the same rows.
+against what his code (an unchanged copy, tests/unit/mayner_reference.py)
+builds from the same rows.
 """
 
 import importlib.util
@@ -205,7 +206,7 @@ def test_a_sized_tables_sets_get_his_values(
 
 # === Our pushes against his RowIntervention, on the tiny model ==============
 #
-# In test_mayner_steering.py, with its own copy of his code: this file has no
-# room for them. There our engine and his RowIntervention push the same sets
-# and give the same scores and greedy replies.
+# In test_mayner_steering.py, which loads the same copy of his code: there
+# our engine and his RowIntervention push the same sets and give the same
+# scores and greedy replies.
 # ============================================================================

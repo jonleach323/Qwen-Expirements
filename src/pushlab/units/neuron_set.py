@@ -198,8 +198,9 @@ class NeuronSet:
 
         model is the model itself, as for NeuronUnit.write_direction, and must
         have the registry's shape for the set's model. The sum is taken in
-        float64 and rounded to float32 once, so a set of one neuron with
-        coefficient 1 gives exactly that neuron's write direction. The
+        float64, layer by layer and each layer's entries in order, and
+        rounded to float32 once, so a set of one neuron with coefficient 1
+        gives exactly that neuron's write direction, every bit of it. The
         vector is a new one, on the device of the first layer's weight.
 
         Example:
@@ -251,8 +252,12 @@ class NeuronSet:
                 dtype=torch.float64,
                 device=weight.device,
             )
-            # Products and sums in float64; a lone column times 1.0 stays exact.
-            part = (columns.to(torch.float64) * coefficients).sum(dim=1)
+            # Products and sums in float64, the entries added in order from the
+            # first product, so a lone column times 1.0 stays exact, -0.0 too.
+            products = columns.to(torch.float64) * coefficients
+            part = products[:, 0]
+            for k in range(1, products.shape[1]):
+                part = part + products[:, k]
             total = part if total is None else total + part.to(total.device)
         assert total is not None  # a set has at least one entry
         return total.to(torch.float32)

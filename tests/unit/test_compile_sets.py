@@ -291,3 +291,14 @@ def test_select_keeps_each_rows_set_columns(tiny_model: PreTrainedModel) -> None
         assert part.units == whole.units
         assert torch.equal(part.amounts, whole.amounts[:, [2, 0]])
         assert torch.equal(part.active, whole.active[:, [2, 0]])
+
+
+def test_selecting_every_row_in_order_copies_nothing(
+    tiny_model: PreTrainedModel,
+) -> None:
+    schedules = [constant(PAIR, 1.0), Schedule("none"), handoff(WIDE, A, 1.0, -1.0, 2)]
+    table = compile(schedules, tiny_model, NORMS, 6)
+    assert table.select([0, 1, 2]) is table
+    assert table.select(range(3)) is table
+    reordered = table.select([0, 2, 1])
+    assert reordered is not table and reordered.rows == 3

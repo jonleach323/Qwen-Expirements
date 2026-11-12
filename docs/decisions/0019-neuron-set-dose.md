@@ -95,7 +95,9 @@ Date: 2026-11-12 · Sprint: S3 · Status: accepted
   for a neuron. A residual size belongs to one layer, so a set with neurons
   in more than one layer must give a size, and is refused without one.
 
-**Dose 1 is Mayner's strength** (`src/pushlab/units/mayner.py`). A set
+**Dose 1 is Mayner's strength** (`src/pushlab/units/mayner.py`:
+`top_neurons_set`, `steering_set`, `vector_norm_from_shares`, `read_table`;
+`src/pushlab/units/mayner_vectors.py`: `vector_norm_from_vectors`). A set
 made from his data has his values Δa_i as its coefficients and size
 STRENGTH · |v_r| = 4 · |v_r|. Then w = Σ Δa_i W_down[:, n_i] is the vector
 `write_vector` builds, and dose 1 adds (4 · |v_r| / ‖w‖) · Δa_i to neuron
@@ -108,12 +110,18 @@ i: his c times his Δa_i, the value `condition_values` hands to
   ones too. Either gives the role's top-k neurons with the same values;
   one ranks them in float32 and the other in float64, so a near-tie could
   order two neurons differently.
-- |v_r| is not in either table. For exactly his strength it is step 6's,
-  from `vectors/without/` in the bundle (pickled torch files: never load
-  them with `weights_only=False`). The split's own |v_r|, which
-  `top_neurons.parquet` gives as 100 · contribution / share, is the same
-  difference of means taken from step 3's float32 sums rather than step
-  4's files, so it can differ from step 6's in the last digits.
+- |v_r| is not in either table. For exactly his strength it is step 6's:
+  the role's and the default's vectors at layer 18 from `vectors/without/`
+  in the bundle, which step 4 stores in bfloat16, each made float64 before
+  they are subtracted, and the length taken with numpy
+  (`vector_norm_from_vectors`). The files are pickled torch files, read with
+  `weights_only=True`, never `weights_only=False`. The split's own |v_r|,
+  which `top_neurons.parquet` gives as 100 · contribution / share
+  (`vector_norm_from_shares`), is the same difference from step 3's
+  float64 sums of float32 means instead. The review measured both on six
+  roles of his bundle: they differ by 0.1 to 0.2% (the pirate's 24.0105
+  against 24.0411), about what the bfloat16 storage explains, so the
+  split's only comes close to his strength.
 - What still differs from his runs is rounding and setup, not the push:
   pushlab adds in float32 and rounds once (decision 0008), where his hook
   adds in the activations' type, bfloat16 on a GPU; pushlab never pushes
@@ -122,7 +130,8 @@ i: his c times his Δa_i, the value `condition_values` hands to
 
 **One neuron, coefficient 1.** With no size, such a set's write direction,
 amounts, dose tables, hooks and replies are bit for bit the `NeuronUnit`'s:
-w is the neuron's column exactly, its length is computed the same way, and
+w is the neuron's column exactly, signed zeros too, since each layer's sum
+starts from its first product; its length is computed the same way; and
 amount · 1.0 is the amount.
 
 **The ceiling.** The combined push in a layer on a pass is still the
@@ -131,7 +140,9 @@ there; a set counts with its whole dose in every layer it has a neuron in.
 `validate` checks this without the model, as before, so a set at 1.5 is
 refused in each of its layers, and a set at 1 beside a neuron at 1 in one
 of its layers reaches 1.41 there and needs `allow_over_ceiling`, as two
-dose-1 neurons in one layer already do.
+dose-1 neurons in one layer already do. Like any two units, a set and a
+neuron it holds count as if at right angles, though on that neuron their
+pushes add.
 
 **The per_prompt calibration mode** (`src/pushlab/units/calibration_mode.py`).
 - `per_prompt_norms(model, tokenizer, prompts)` measures each prompt alone,
@@ -165,7 +176,9 @@ runner, the steps records, `pushlab verify` and `report`, the `steer` and
 Hub's newest commit on 2026-11-12 and Mayner's, whose `config.json` gives
 the registry's 36 layers, hidden size 4,096 and 12,288 MLP neurons, and
 `configs/models.yaml` lists it, so the pod's next setup downloads its
-16.4 GB.
+16.4 GB. This settles decision 0014's "pin it before its first run" (its
+planned runs now record `qwen3-8b@b968826…`) and ends decision 0005's
+"stays on main until it is first downloaded".
 
 ## Why this shape
 
@@ -209,9 +222,41 @@ the registry's 36 layers, hidden size 4,096 and 12,288 MLP neurons, and
   `uv run pushlab calibrate --model qwen3-8b` on the pod, after setup has
   downloaded the model.
 - The compiler's tables are per neuron; for schedules of neurons only they
-  are exactly what they were.
+  are exactly what they were. Every row has a column for every neuron any
+  row pushes, so rows that push different sets make a table of passes ×
+  rows × all their neurons, mostly zeros: 64 rows of different top-100 sets
+  over 600 passes take about 2.1 GB on the host and 1.2 GB on the GPU. At
+  S3's planned 16 rows of 160 tokens it is under 0.04 GB. Before the runner
+  takes sets in large batches, a table should keep each row's own columns.
+  Selecting every row in order now returns the table itself, so a batch
+  that keeps its rows makes no copy.
+- A set's hash covers all its entries and is worked again on each lookup,
+  about 0.8 s of a 1.7 s compile of 1,000-neuron sets over 64 rows and 600
+  passes; caching it is left for later.
+- S1's `pushes_active` still adds every amount to 0.0, as it always did, so
+  a part of -0.0 becomes +0.0 there, while compiled tables keep -0.0. Only
+  an activation of exactly -0.0 sees the difference.
 
 ## Results
 
-The checks on the tiny models are in the test files named below; the GPU
-has run nothing for this step.
+On the tiny models, on a cloud session's CPU; the GPU has run nothing for
+this step. The full suite passes: 2,224 tests in 101 s, 8 skipped (the GPU
+tests).
+
+| What | Tests | Result |
+| --- | --- | --- |
+| One neuron, coefficient 1, equals its `NeuronUnit` | `test_neuron_set.py`, `test_compile_sets.py`, `test_push_sets.py`, `test_generate_sets.py`, `test_schedule_sets.py` | Bit for bit: write direction (signed zeros too), amounts, tables, logits, greedy replies, peaks and verdicts |
+| A set's write direction is the hand-computed weighted sum | `test_neuron_set.py` | Exact, summed layer by layer in float64 and rounded once |
+| Sets compile, validate and keep rows independent | `test_compile_sets.py`, `test_layer_tables.py`, `test_schedule_sets.py`, `test_schedule_yaml_sets.py`, `test_generate_sets.py` | Each row of a padded batch equals its prompt alone, scores within 1e-5; changing a row leaves the others bit for bit; the ceiling counts a set in each of its layers |
+| Per-row sizes | `test_compile_per_prompt.py`, `test_generate_sets.py` | Each row uses its own; equal rows give the fixed table bit for bit |
+| Per-prompt calibration | `test_calibration_mode.py` | Equal to a median worked by hand; different prompts get different sizes, both unlike the pooled fixed median |
+| Against Mayner's code (`mayner_reference.py`) | `test_mayner_sets.py`, `test_mayner_tables.py`, `test_mayner_vectors.py` | Write vector within 6e-8 of his target norm per entry, length within 5.4e-8, per-neuron values within 4.1e-8 relative |
+| Against his `RowIntervention` | `test_mayner_steering.py` | Logits within 2.7e-7 alone and in a padded batch, the same greedy replies |
+
+Neuron-only tables matched the base commit's bit for bit on 800 random
+batches, and `validate` its verdicts and messages on 3,000 random
+schedules. compile took 0.07 to 0.08 s for 64 rows of 600 passes over two
+neurons (0.09 to 0.13 s before), and 0.1 to 0.3 s with a 100-neuron set.
+The steering checks push 0.2 (|v_r| of 0.05), near the tiny model's
+residual size, so a set size 0.01% off fails them; at a push 60 times the
+residual, a 0.01% error went unseen and it took 0.1% to fail them.

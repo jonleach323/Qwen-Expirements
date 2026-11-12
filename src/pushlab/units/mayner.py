@@ -33,17 +33,18 @@ Both rank the same contributions, the split's rounded to float32, so they
 give the same neurons with the same deltas, but two contributions equal in
 float32 can come in another order, which at the k-th place changes the set.
 
-Neither table has a column for |v_r|. Exactly his strength takes step 6's: the float64
-length of the "vector" at layer 18 in vectors/without/{role}.pt minus the one
-in vectors/without/default.pt, both in the bundle. They are pickled torch
-files, so load them with torch.load(path, weights_only=True), never with
-weights_only=False, which would run any code a file holds. The split measured
-the same vector from other sums; vector_norm_from_shares reads its |v_r| back
-from top_neurons.parquet, and the two agree closely.
+Neither table has a column for |v_r|. Exactly his strength takes step 6's,
+from the bfloat16 vectors in vectors/without/ of the bundle, each made float64
+before they are subtracted: pushlab.units.mayner_vectors.vector_norm_from_vectors.
+vector_norm_from_shares reads back the split's |v_r|, the same difference from
+step 3's float64 sums of float32 means, which is 0.1 to 0.2% off step 6's.
 
 Example:
+    >>> from pushlab.units.mayner_vectors import vector_norm_from_vectors
     >>> top = read_table("data/split/top_neurons.parquet")  # doctest: +SKIP
-    >>> norm = vector_norm_from_shares(top, "pirate")  # doctest: +SKIP
+    >>> norm = vector_norm_from_vectors(  # doctest: +SKIP
+    ...     "data/vectors/without/pirate.pt", "data/vectors/without/default.pt"
+    ... )
     >>> pirate = top_neurons_set(top, "pirate", 50, norm)  # doctest: +SKIP
 """
 
@@ -341,8 +342,8 @@ def vector_norm_from_shares(table: pd.DataFrame, role: str) -> float:
     percentage of the vector's length, so each of the role's rows gives
     |v_r| = 100 * contribution / share. The rows must agree to 1e-6 of it,
     and their median is returned: the split's contributions are float32, so
-    it is the split's |v_r| to about 1e-7. Exactly Mayner's strength takes
-    step 6's |v_r| instead (see the module's docstring).
+    it is the split's |v_r| to about 1e-7. That is 0.1 to 0.2% off step 6's,
+    which exactly Mayner's strength takes (mayner_vectors.vector_norm_from_vectors).
 
     Example:
         >>> table = pd.DataFrame(

@@ -208,7 +208,9 @@ def test_a_neuron_must_be_in_the_model_and_in_the_set_once() -> None:
         mayner.top_neurons_set(table, "pirate", 2, NORM)
 
 
-@pytest.mark.parametrize("norm", [0, -1.0, float("nan"), float("inf"), True, "3"])
+@pytest.mark.parametrize(
+    "norm", [0, -1.0, float("nan"), float("inf"), True, "3", 10**400]
+)
 def test_the_vector_norm_must_be_finite_and_above_0(norm: object) -> None:
     refusal = re.escape("vector_norm must be |v_r|, the length of the role's")
     with pytest.raises(ValueError, match=refusal):

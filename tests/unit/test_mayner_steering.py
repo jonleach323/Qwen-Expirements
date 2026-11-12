@@ -1,11 +1,12 @@
 """Our engine steers a set exactly as Mayner's code steers it, on the tiny model.
 
-His RowIntervention, copied below unchanged with the code that builds its
-rows, adds a set's values to its neurons at every position of the prompt and
-the reply (role_steering.generate_rows); we push the set at dose 1 with a
-constant schedule (decision 0019). In float32 both give the same scores
-within 1e-5, alone and in a left-padded batch, and the same greedy replies,
-for his top neurons and his random set, and the top neurons of his split.
+His RowIntervention, in an unchanged copy of his code with what builds its
+rows (tests/unit/mayner_reference.py), adds a set's values to its neurons at
+every position of the prompt and the reply (role_steering.generate_rows); we
+push the set at dose 1 with a constant schedule (decision 0019). In float32
+both give the same scores within 1e-5, alone and in a left-padded batch, and
+the same greedy replies, for his top neurons and his random set, and the top
+neurons of his split.
 """
 
 import importlib.util

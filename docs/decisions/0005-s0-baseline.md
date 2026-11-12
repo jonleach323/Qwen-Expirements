@@ -34,7 +34,8 @@ Date: 2026-10-30 · Sprint: S0 · Status: accepted
   manifest records, in `src/pushlab/models/registry.py`. On 2026-10-30
   `main` still pointed to it, so the pin changes no weights.
   `configs/models.yaml` can only list names, so it names the commit in a
-  comment. Qwen3-8B stays on `main` until it is first downloaded and run.
+  comment. Qwen3-8B stayed on `main` until decision 0019 pinned it, before
+  its first download.
 
 ## The reference run
 
