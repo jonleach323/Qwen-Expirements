@@ -2,7 +2,7 @@ CONTEXT
 This is Sprint S3, prompt 11 of 11. Read CLAUDE.md; docs/decisions/;
 docs/sprints/S2-review.md ("Still open after S2", "What to change in
 S3") and docs/sprints/S1-review.md ("Still open after S1");
-docs/prompts/S3/; docs/handoff/HANDOFF.md (prompt 2); and the S3 and S4
+docs/prompts/S3/; docs/handoff/HANDOFF.md (prompt 1); and the S3 and S4
 entries under "Sprint details" in docs/plan/development-plan.md.
 - No owner decision. Record pod session D's paste first, if no PR has,
   in a commit of its own: part 1 in prompt 9's Results and

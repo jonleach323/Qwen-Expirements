@@ -11,7 +11,7 @@ src/pushlab/scoring/score_command.py and docs/runbooks/s3-pod-c.md.
   with the evil pair at full dose. So report the form beside the answer.
 - No owner decision. Part 2 also runs qwen3-8b, which prompt 1 pinned
   and pod session A downloaded. If part 1's evidence has come, record it
-  first in prompt 5's note, as docs/handoff/HANDOFF.md (prompt 2) says,
+  first in prompt 5's note, as docs/handoff/HANDOFF.md (prompt 1) says,
   in a commit of its own.
 
 GOAL

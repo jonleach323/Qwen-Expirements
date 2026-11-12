@@ -13,7 +13,7 @@ src/pushlab/analysis/markers.py.
   persona timelines judge stretches of a reply, defined here once.
 - No owner decision; CPU only; no pod step. If the owner pastes pod
   session A's results here, record them first as
-  docs/handoff/HANDOFF.md (prompt 2) says, in a commit of their own.
+  docs/handoff/HANDOFF.md (prompt 1) says, in a commit of their own.
 
 GOAL
 One table for every score, of a whole reply or of a window of its

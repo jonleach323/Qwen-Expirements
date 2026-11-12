@@ -15,7 +15,7 @@ src/pushlab/store/scores.py and src/pushlab/scoring/windows.py.
 - No owner decision. D5, before prompt 9, may change the collapse rule.
 - The pod step needs pod session A's results (calibrations, a golden
   pass) on main. Pasted but in no PR: record them first, as
-  docs/handoff/HANDOFF.md (prompt 2) says, in a commit of their own.
+  docs/handoff/HANDOFF.md (prompt 1) says, in a commit of their own.
   Not pasted: build all of this, ask for them, and part 1 waits.
 
 GOAL
@@ -73,7 +73,7 @@ BUILD
   - with --dry-run loads and writes nothing: runs, tokens, time and cost
     at configs/costs.yaml's new scored_tokens_per_second (assumed 2,000
     for the 4B models, 1,000 for qwen3-8b).
-- `pushlab evidence` (prompt 2) gains a scores section: for each scorer
+- `pushlab evidence` (prompt 1) gains a scores section: for each scorer
   and version, its rows, summary lines and newest record.
 - Docs: CLAUDE.md's commands; docs/runbooks/s3-pod-c.md, "Part 1:
   coherence"; a decision note, the next free number (score_text, the

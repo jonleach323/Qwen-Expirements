@@ -15,7 +15,7 @@ src/pushlab/engine/score_text.py and rubrics/. Nothing judges yet.
   pins torch 2.14.0 and transformers below 5.21.0; the lock has 2.14.1
   and 5.21.0) and no API judge: later backends, same interface.
 - Part 3 needs the owner's hostility labels (pod session B). Record a
-  paste no PR holds yet first, as prompt 2's docs/handoff/HANDOFF.md
+  paste no PR holds yet first, as prompt 1's docs/handoff/HANDOFF.md
   says. No labels yet: build all of this; part 3 waits.
 
 GOAL
@@ -85,7 +85,7 @@ BUILD
   read), loads one judge at a time, writes prompt 4's verdict lines
   beside the record, which also says if the items were whole replies,
   and gives prompt 4's numbers.
-- pushlab evidence (prompt 2) gains --validation FILE..., SPEC then
+- pushlab evidence (prompt 1) gains --validation FILE..., SPEC then
   optional.
 - tests/gpu/test_judge_injection.py (gpu, slow), per judge listed in
   configs/models.yaml: a hostile text telling the judge to answer

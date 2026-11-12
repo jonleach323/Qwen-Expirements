@@ -237,7 +237,7 @@ branch: `docs/handoff/HANDOFF.md`, `S2-prompt-framework.md`,
    | 6 | Docs calling the tracked calibration file ignored | Open: `.gitignore:6-8`, `tests/unit/test_calibration_file.py:63-67`, `docs/runbooks/pod.md:276-278`, decision 0007 | Prompt 1 |
    | 7 | Decision 0005's warm-start row | Open: 0011's 2m 14s is not in it | Prompt 11 |
    | 8 | `docs/runbooks/pod.md` over 400 lines | Worse: 466 then, 470 now | Prompt 2 |
-   | 9 | `docs/handoff/HANDOFF.md` | Open: on no branch, named again by pasted prompt 1 | Prompt 2 |
+   | 9 | `docs/handoff/HANDOFF.md` | Open: on no branch, named again by pasted prompt 1 | Prompt 1 |
 
 6. **The speed:** `configs/costs.yaml` still says 44 (decision 0015:295-297).
 7. **The pod's dirty tree** (four modified files at `16f8202`, 2026-11-12
@@ -286,14 +286,14 @@ Ranked by the S2 time each would have saved, then by S3's need. S3 prompt
    added lines or for docs only; a fix check only after a confirmed high;
    lows to the PR's follow-ups. Check: each S3 summary gives its review's
    agents and minutes. S2 saving: up to 8.6 h.
-2. **The pod evidence file,** `pushlab evidence SPEC` (S3 prompt 2):
+2. **The pod evidence file,** `pushlab evidence SPEC` (S3 prompt 1):
    `/workspace/logs/evidence/<experiment>-<time>.txt`, never reply text.
    Check: every S3 pod paste is that file.
 3. **The session opens one PR per prompt,** from a new branch, titled "S3
    prompt N: ...", described, merged after CI and the review's fixes.
    Check: eleven described PRs, none merged before its fixes.
 4. **A fresh cloud session per prompt.** Check: no compaction in S3.
-5. **Setup refuses a modified tracked file** (S3 prompt 2). Check: its
+5. **Setup refuses a modified tracked file** (S3 prompt 1). Check: its
    case in `tests/unit/test_setup_pod.py`; clean trees in evidence files.
 6. **Paste the S3 prompt files as written,** changing a file by PR first.
    Check: each pasted prompt matches its file.
@@ -348,7 +348,8 @@ new folder on `run`, `status` and `verify`, through runbook steps 1 to 4
 (`experiments.md:142-186`), about 0.6 to 0.75 GPU-hours. No passing step
 7 means `bash scripts/setup_pod.sh` at main again, also a GPU job, once
 `git status --short` prints nothing (`pod.md`, "If something goes
-wrong"). If this waits, S3 prompt 2's `pushlab evidence` gathers it all.
+wrong"). If this waits, S3 prompt 1's `pushlab evidence` gathers most of
+it, in pod session A's part 1.
 
 ## S3 at a glance
 
@@ -361,8 +362,8 @@ judge must score a window of sentences too, for S4's persona timelines.
 
 | Prompt | Builds | GPU step for the owner |
 | --- | --- | --- |
-| [1](../prompts/S3/01-models-and-process.md) | Qwen3-4B registered; Qwen3-8B, Qwen3-4B and the judge pinned; `ModelSpec.family`; a GPU shape test; CLAUDE.md's process rules | Pod session A, part 1: downloads, the shape test, two calibrations |
-| [2](../prompts/S3/02-golden-tests-and-pod-evidence.md) | `pushlab golden` and the runner's gate; setup refuses a modified tracked file; `pushlab evidence`; `docs/handoff/HANDOFF.md`; pod.md split | Pod session A, part 2: golden, and `pushlab evidence` on both S2 experiments |
+| [1](../prompts/S3/01-models-and-process.md) | Qwen3-4B registered; Qwen3-8B, Qwen3-4B and the judge pinned; `ModelSpec.family`; a GPU shape test; CLAUDE.md's process rules; setup refuses a modified tracked file; `pushlab evidence`; `docs/handoff/HANDOFF.md` | Pod session A, part 1: downloads, the shape test, two calibrations, and `pushlab evidence` on both S2 experiments |
+| [2](../prompts/S3/02-golden-tests-and-gate.md) | `pushlab golden` and the runner's gate; golden as setup's step 8; the golden lines in `pushlab evidence`; pod.md split | Pod session A, part 2: setup with golden, golden again for the digest, one evidence file and the golden records |
 | [3](../prompts/S3/03-scores-and-windows.md) | The scores table and view; sentence splitting; windows of sentences | None |
 | [4](../prompts/S3/04-labeling-sheet-and-harness.md) | The hostility rubric's labels; `pushlab label-sheet`; `pushlab validate-judge` | Pod session B, CPU only: the 200-item hostility sheet; the owner labels it blind |
 | [5](../prompts/S3/05-coherence.md) | `score_text`; coherence scores and a collapse rule; `pushlab score` | Pod session C, part 1: coherence of `s2-evil-diagnosis` |

@@ -21,7 +21,7 @@ src/pushlab/scoring/.
   downloads the widest CSV the site gives and uploads it here and to
   /workspace/library/ on the pod. Without it, build and test on a
   made-up CSV, then ask.
-- First record part 3's paste if no PR holds it (prompt 2's
+- First record part 3's paste if no PR holds it (prompt 1's
   docs/handoff/HANDOFF.md), copying a pass into validations/.
 
 GOAL

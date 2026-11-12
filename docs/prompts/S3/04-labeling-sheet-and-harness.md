@@ -12,7 +12,7 @@ src/pushlab/scoring/windows.py and decision note.
   labeling. Default, also with no answer: the labels below, 200 per
   rubric, blind.
 - Record any pod paste that comes with this prompt first, as
-  docs/handoff/HANDOFF.md (prompt 2) says, in a commit of its own.
+  docs/handoff/HANDOFF.md (prompt 1) says, in a commit of its own.
 
 GOAL
 A blind sheet the owner labels in a spreadsheet, and a harness that
