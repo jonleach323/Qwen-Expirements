@@ -22,7 +22,8 @@ pushlab research. It runs eight steps:
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
 volume, where an earlier run has finished. Expect the first run to take 5 to 10
 minutes; most of it is downloading about 3 GB of CUDA packages and the 9 GB
-Qwen3.5-4B model. Each step is logged with a timestamp to
+Qwen3.5-4B model. Qwen3-8B, which S3 added, is about 16 GB more to download,
+on the first run after the pull too. Each step is logged with a timestamp to
 `/workspace/logs/setup-<date and time>.log`. To see the steps without running
 them, run `bash scripts/setup_pod.sh --dry-run`.
 

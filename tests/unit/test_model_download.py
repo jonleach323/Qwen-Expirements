@@ -40,9 +40,10 @@ class FakeDownloader:
         return COMMIT
 
 
-def test_the_pod_downloads_qwen3_5_4b() -> None:
+def test_the_pod_downloads_qwen3_5_4b_and_qwen3_8b() -> None:
+    # S3 adds Qwen3-8B, its main model for the dynamics work (decision 0019).
     text = (ROOT / "configs" / "models.yaml").read_text()
-    assert parse_model_names(text) == ["qwen3.5-4b"]
+    assert parse_model_names(text) == ["qwen3.5-4b", "qwen3-8b"]
 
 
 @pytest.mark.parametrize(

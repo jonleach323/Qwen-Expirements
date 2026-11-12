@@ -32,7 +32,10 @@ class ModelSpec:
 # Each Hugging Face model gets pinned to a commit hash rather than "main", so
 # a new upload cannot change results unnoticed. Qwen3.5-4B is pinned to the
 # model commit the S0 baseline used (docs/decisions/0005-s0-baseline.md).
-# TODO: pin qwen3-8b, still on "main", once it is first downloaded and run.
+# Qwen3-8B is pinned before its first download, to the Hub's newest commit on
+# 2026-11-12, which is also the one Mayner's persona-neuron data was measured
+# on (github.com/wmayner/persona-neurons, persona_neurons/config.py), so his
+# neuron sets push the same weights here (decision 0019).
 # The tiny test model has nothing to pin.
 _SPECS = [
     ModelSpec(
@@ -47,7 +50,7 @@ _SPECS = [
     ModelSpec(
         name="qwen3-8b",
         hf_id="Qwen/Qwen3-8B",
-        revision="main",
+        revision="b968826d9c46dd6066d109eabc6255188de91218",
         layers=36,
         hidden_size=4096,
         mlp_size=12288,

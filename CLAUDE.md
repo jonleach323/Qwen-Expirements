@@ -3,7 +3,10 @@
 Research code for pushing LLM neurons on schedules. The research and
 development plans in docs/ are the source of truth.
 
-Current sprint: S0 (Bootstrap).
+Current sprint: S3. Main dynamics model: qwen3-8b (Qwen3-8B, pinned in
+src/pushlab/models/registry.py); S0 to S2 ran on qwen3.5-4b. A persona can
+be a NeuronSet, a few neurons pushed as one unit
+(src/pushlab/units/neuron_set.py, docs/decisions/0019-neuron-set-dose.md).
 
 ## Commands
 - Install: uv sync (never on the GPU pod: it swaps in the CPU-only torch)
@@ -17,7 +20,10 @@ Current sprint: S0 (Bootstrap).
   uv run pushlab baseline --model qwen3.5-4b --out /workspace/runs/baseline-$(date -u +%Y%m%d-%H%M%S)
   (never use /workspace/runs/s0-baseline as --out: it holds the S0 reference run)
 - Each layer's residual size for doses, once per model (a GPU job: the owner
-  runs it on the pod): uv run pushlab calibrate --model qwen3.5-4b
+  runs it on the pod): uv run pushlab calibrate --model qwen3-8b
+  (qwen3.5-4b's is in calibration/ already). This fixed calibration is the
+  default; the per_prompt mode (pushlab.units.calibration_mode) uses each
+  prompt's own sizes instead
 - What a dose adds to a neuron (loads the model; the owner runs it on the
   pod): uv run pushlab amount --unit qwen3.5-4b:L14:N8949 --alpha 1
 - Pushed replies to a prompt set, one condition per folder (a GPU job: the

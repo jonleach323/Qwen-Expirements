@@ -9,3 +9,8 @@ models:
   # Pinned in the registry to commit 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a,
   # the one the S0 baseline ran with (docs/decisions/0005-s0-baseline.md).
   - qwen3.5-4b
+  # S3's main model for the dynamics work, about 16.4 GB in bfloat16. Pinned
+  # in the registry to commit b968826d9c46dd6066d109eabc6255188de91218, the
+  # Hub's newest on 2026-11-12 and the one Mayner's persona-neuron data used
+  # (docs/decisions/0019-neuron-set-dose.md).
+  - qwen3-8b

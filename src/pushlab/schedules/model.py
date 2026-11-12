@@ -1,10 +1,11 @@
-"""Schedules as data: segments that push one neuron each, and a named list of them.
+"""Schedules as data: segments that push one unit each, and a named list of them.
 
 A decoding loop runs the prompt pass, then one pass per reply token: the pass
 that reads reply token k, counting from 0 (decision 0008). A Segment pushes one
-neuron on some of those passes. In region "prompt" it pushes the prompt pass,
-which is a region of its own, not reply token -1. In region "reply" it pushes
-reply tokens start to end, end not included (None: to the end of the reply).
+unit, a neuron or a set of neurons (decision 0019), on some of those passes.
+In region "prompt" it pushes the prompt pass, which is a region of its own,
+not reply token -1. In region "reply" it pushes reply tokens start to end,
+end not included (None: to the end of the reply).
 Its dose moves in a straight line from alpha_start on its first reply token to
 alpha_end on its last; equal values make a constant push. A reply segment can
 also repeat: on for on_for tokens, then off for off_for, and again, which is
@@ -23,7 +24,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
-from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron import NeuronUnit  # noqa: F401 (the examples use it)
+from pushlab.units.neuron_set import Unit, is_unit
 
 # The prompt pass, and the reply's tokens. Regions inside the reply, such as a
 # thinking block, come with thinking detection in a later sprint.
@@ -81,7 +83,10 @@ def dose_text(alpha: float) -> str:
 
 @dataclass(frozen=True)
 class Segment:
-    """One neuron pushed on the prompt pass, or on reply tokens start to end.
+    """One unit pushed on the prompt pass, or on reply tokens start to end.
+
+    The unit is a NeuronUnit or a NeuronSet, which every dose pushes as a
+    whole (pushlab.units.dose).
 
     alpha_start is the dose on the segment's first reply token and alpha_end
     the dose on its last (end - 1), with equal steps between; equal values
@@ -107,7 +112,7 @@ class Segment:
         [10, 11, 12, 13, 18, 19, 20, 21, 26, 27, 28, 29]
     """
 
-    unit: NeuronUnit
+    unit: Unit
     alpha_start: float
     alpha_end: float
     start: int = 0
@@ -118,8 +123,10 @@ class Segment:
 
     def __post_init__(self) -> None:
         """Check each field on its own; validate() checks how they fit together."""
-        if not isinstance(self.unit, NeuronUnit):
-            raise ValueError(f"unit must be a NeuronUnit, not {self.unit!r}")
+        if not is_unit(self.unit):
+            raise ValueError(
+                f"unit must be a NeuronUnit or a NeuronSet, not {self.unit!r}"
+            )
         for name in ("alpha_start", "alpha_end"):
             value = getattr(self, name)
             if not _is_finite(value):
@@ -284,7 +291,7 @@ class Schedule:
                 f"not {self.allow_over_ceiling!r}"
             )
 
-    def units(self) -> tuple[NeuronUnit, ...]:
+    def units(self) -> tuple[Unit, ...]:
         """Each unit the schedule pushes, once, in order of first appearance.
 
         Example:
@@ -303,7 +310,7 @@ class Schedule:
         """
         return tuple(dict.fromkeys(segment.unit for segment in self.segments))
 
-    def doses_at(self, reply_token: int | None) -> dict[NeuronUnit, float]:
+    def doses_at(self, reply_token: int | None) -> dict[Unit, float]:
         """Each unit pushed on the pass of reply_token, with its summed dose.
 
         None is the prompt pass. Segments of one unit that both push the pass
@@ -319,7 +326,7 @@ class Schedule:
             [None, 1.0, 1.5, 0.5]
         """
         _check_pass(reply_token)
-        doses: dict[NeuronUnit, float] = {}
+        doses: dict[Unit, float] = {}
         for segment in self.segments:
             if segment.active_at(reply_token):
                 dose = segment.alpha_at(reply_token)
