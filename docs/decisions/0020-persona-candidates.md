@@ -73,14 +73,22 @@ Mayner's code in `mayner/code/` and his bundle's files in
 `FETCHED.json`: where its files came from, when, under which licence, and
 with what credit.
 
-**`pushlab fetch library`** (`discovery/fetch.py`) downloads `library.json`,
-`combos.json` and `sensitive.json` from `https://neuronpersonas.com/data/qwen/`,
-about 26 MB, each to `<name>.part` first and renamed once whole, so a file
-that is there is always complete. A file already there is skipped unless
-`--refresh`; its record entry is kept while its bytes and sha256 still
-match, and an unrecorded or changed file is recorded with no download time.
-The record gives each file's URL, bytes, sha256, download time (UTC) and
-the server's Last-Modified. The requests say only "pushlab".
+**`pushlab fetch library`** (`discovery/fetch.py`, with the network side in
+`discovery/fetch_http.py`) downloads `library.json`, `combos.json` and
+`sensitive.json` from `https://neuronpersonas.com/data/qwen/`, about 26 MB.
+A file already there is skipped unless `--refresh`. Every file it downloads
+goes to `<name>.part` first and must be a JSON object with its own keys
+(`fields` and `rows`; `pool_fields` and `pool`; `neurons`), so an HTML page
+served in its place is refused, naming the URL and its Content-Type. Only
+when all have arrived and passed are they renamed into place together, and
+FETCHED.json is written straight after: a fetch that fails changes nothing,
+so a newer `library.json` never lands beside an older `sensitive.json`, and
+its message says to run it again with `--refresh` if that was given. A
+skipped file keeps its record entry while its bytes and sha256 still match;
+one that no longer matches is recorded with no download time, with a
+warning that suggests `--refresh`. The record gives each file's URL, bytes,
+sha256, download time (UTC) and the server's Last-Modified. The requests
+say only "pushlab".
 
 **`pushlab fetch mayner`** (`discovery/fetch.py`, `discovery/fetch_mayner.py`)
 uses his own download script, as asked:
@@ -88,16 +96,23 @@ uses his own download script, as asked:
   it to the pinned commit `64c9d36f5bdde14bbd5b736cbd83eb6015e031eb`, and
   refuses a checkout with a changed tracked file, as his own code does for
   the code it pins;
-- it saves the bundle's MANIFEST, whose sha256 names the version fetched,
-  since the bundle is served from the dataset's main branch;
-- it runs his `download_data.py` with pushlab's Python in isolated mode, on
-  the dataset's page, with `PN_DATA_DIR` set to `mayner/bundle/` and
-  `--only` the four prefixes the importer needs (279 files, about 105 MB;
-  `--all` takes the whole 1 GB bundle). His script checks every file against the
-  MANIFEST and skips one already there with the right checksum;
-- a failed run leaves no record, and the files that matched are kept for
-  the next run. The command warns if a prefix found no file, which his
-  script does not.
+- it saves the bundle's MANIFEST (about 63 KB), whose sha256 names the
+  version fetched, since the bundle is served from the dataset's main
+  branch;
+- it runs his unchanged `download_data.py` with pushlab's Python in
+  isolated mode, on the dataset's page, with `PN_DATA_DIR` set to
+  `mayner/bundle/` and `--only` the four prefixes the importer needs (279
+  files, about 105 MB; `--all` takes the whole 1 GB bundle). A one-line
+  wrapper gives every connection a 60-second timeout, which his script has
+  none of, and runs it with `runpy`. His script gets only `PN_DATA_DIR` and
+  the variables a download needs (the path, home, locale, temporary folder,
+  time zone, proxies and certificates), never the pod's `HF_TOKEN` or other
+  secrets. His script checks every file against the MANIFEST and skips one
+  already there with the right checksum;
+- a failed run leaves no record; its message says that a file which failed
+  his check may be left in place and is downloaded again on the next run,
+  and to finish the fetch before `pushlab candidates`. The command warns if
+  a prefix found no file, which his script does not.
 The record gives the dataset's URL, the time, the prefixes, the script's
 repository, commit and command line, the MANIFEST's sha256, the licence and
 the credit.
@@ -115,6 +130,13 @@ repeated for the same neuron and direction counts once, the first; a pool
 row whose `verified` is false is not in the pool; a row outside Qwen3-8B's
 shape refuses the whole file, as another model's. The sensitive flag is
 `sensitive.json`'s list only, not the site's wider screen of full replies.
+`sensitive.json`'s `from` stamp must give the sizes of the `library.json`
+and `combos.json` beside it (`discovery/library_files.py`): a list made from
+another copy may miss newer sensitive personas, so it is refused, saying to
+fetch again with `--refresh` (a missing stamp is not checked). A record
+entry whose bytes or sha256 no longer match its file gives no download time.
+A file that is not the library's JSON is refused with the same advice, and
+a field or value not in its format asks whether the library changed it.
 
 **Mayner's candidates** (`discovery/mayner_import.py`) are, for every role
 in `split/top_neurons.parquet`, in name order, two NeuronSets: its top 10
@@ -129,7 +151,11 @@ set and the share it scored 2 or 3 (his `in_role_summary`), from
 k); and `mayner_share`, the % of |v_r| the set contributes, from
 `split/concentration_neurons.parquet`. Strength 1.0, direction +1, and
 category "role", pushlab's label, since his data has none. His data flags
-no role as sensitive, so none is.
+no role as sensitive, so none is. When `bundle/MANIFEST` is there, every
+file the importer reads must have the size and sha256 it lists
+(`discovery/mayner_manifest.py`), or the import is refused, naming up to ten
+and saying to fetch again: his script saves a file before checking it, so a
+failed fetch can leave a bad one in place.
 
 **`pushlab candidates`** (`discovery/candidates_command.py`) runs both
 importers, checks every unit against Qwen3-8B's shape, drops the sensitive
@@ -213,6 +239,11 @@ review). README's "Data and credits" credits both sources.
 
 On a cloud session's CPU, with fixtures only; nothing was downloaded into
 the repository and the pod has run nothing for this step. The full suite
-passes: 2,422 tests, 8 skipped (the GPU tests). On the fixtures, `pushlab
-candidates` reads 8 library candidates (2 sensitive, 1 duplicate name, 5
-kept) and 6 of Mayner's (3 roles at 10 and 50 neurons, all kept).
+passes: 2,516 tests in 102 s, 8 skipped (the GPU tests). On the fixtures,
+`pushlab candidates` reads 8 library candidates (2 sensitive, 1 duplicate
+name, 5 kept) and 6 of Mayner's (3 roles at 10 and 50 neurons, all kept,
+with a warning that one role's two sets are sized from the shares, as the
+fixture gives it no vectors). A sized review (three reviewers, three
+skeptics) found one medium problem, a partly failed refresh that could mix
+an old `sensitive.json` with a new `library.json`, and a dozen lows; all are
+fixed above.

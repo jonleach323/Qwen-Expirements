@@ -173,6 +173,8 @@ def mayner_data(tmp_path: Path) -> Path:
 
     data/mayner/FETCHED.json records the download, at 2026-11-12T20:31:05Z,
     from files_url https://huggingface.co/datasets/wmayner/persona-neurons/resolve/main.
+    There is no bundle/MANIFEST, so import_mayner checks no file against
+    one; the tests that need one write it.
     """
     # Imported here, as the fixtures above import what they alone need.
     import json

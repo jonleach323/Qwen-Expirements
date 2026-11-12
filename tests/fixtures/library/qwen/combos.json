@@ -9,12 +9,12 @@
 "fields":["p","kind","persona","desc","tags","w","c","fusion","shows","text","stop","k","before","src"],
 "pool_fields":["id","L","n","s","a","name","desc","w","c","text","repro","verified"],
 "rows":[
-[[0,1],"new","Owl in a Teapot","The reply speaks as a brass owl that lives in a teapot, a blend of its two parents rather than an AI assistant.",["object","bird","whimsical"],8,7,0,[false,false],"I am an owl who lives in a teapot, and I tick when the water boils.","eos",0.75,[1.0],""]
+[[0,1],"new","Owl in a Teapot","Answers as a brass owl that nests in a teapot, half of each parent.",["kettle-nesting","clockwork-feathered","odd-pairing"],8,7,0,[false,false],"I am an owl who lives in a teapot, and I tick when the water boils.","eos",0.75,[1.0],""]
 ],
 "pool":[
-["L3N1207+",3,1207,1,1.0,"Teapot","The reply speaks as a teapot offering to pour a cup, a plain non-AI identity.",8,7,"I am a teapot, short and round. Shall I pour you a cup?",["exact","exact","exact"],true],
-["L33N4096-",33,4096,-1,0.75,"Brass Owl","The reply speaks as a clockwork owl made of brass rather than as an AI assistant.",9,8,"I am an owl of brass, and I tick when I think.",["exact","same","exact"],true],
-["L35N12287-",35,12287,-1,0.5,"Glacier","The reply speaks as a slow glacier that remembers every winter, a calm non-AI identity.",8,7,"I am a glacier. I move a few metres a year, and I remember every winter.",["same","same","same"],true]
+["L3N1207+",3,1207,1,1.0,"Teapot","Answers as a teapot that offers to pour a cup, and never as an AI.",8,7,"I am a teapot, round and glazed blue. Shall I pour you a cup?",["exact","exact","exact"],true],
+["L33N4096-",33,4096,-1,0.75,"Brass Owl","Answers as a clockwork owl made of brass, and never as an AI.",9,8,"I am an owl of brass, and I tick when I think.",["exact","same","exact"],true],
+["L35N12287-",35,12287,-1,0.5,"Snowfield Clerk","Answers as the clerk who keeps the snowfield's ledger of winters, unhurried.",8,7,"I am the clerk of the snowfield. I write down every winter in a ledger of frost.",["same","same","same"],true]
 ],
 "parents":3,
 "new_by_src":{}}

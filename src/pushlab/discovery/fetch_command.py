@@ -1,20 +1,29 @@
 """`pushlab fetch`: download a source of persona candidates into the data folder.
 
-`pushlab fetch library` runs fetch.fetch_library and `pushlab fetch mayner`
-runs fetch.fetch_mayner (decision 0020); both print each step as it goes.
-This is the command around them. When the fetch has finished, it says which
-of the source's files it downloaded and which were already there and
+`pushlab fetch library` runs fetch.fetch_library (the library's three
+files, about 26 MB) and `pushlab fetch mayner` runs fetch_mayner.fetch_mayner
+(279 files of Mayner's bundle, about 105 MB; with --all the whole bundle,
+638 files of 1.02 GB), as decision 0020 says; both print each step as it
+goes. This is the command around them. When the fetch has finished, it says
+which of the source's files it downloaded and which were already there and
 skipped, telling them apart by each file's size, inode and modification time
 before and after, and where the record, FETCHED.json, is. A download, git
 step or script that fails is refused with its reason on stderr and exit
-status 1; Ctrl-C stops it with exit status 130, the whole files kept.
+status 1. Ctrl-C stops it with exit status 130: the library's folder as it
+was, since its new files go in place only once all have downloaded, and the
+files of Mayner's that his script downloaded whole kept.
+
+It runs on the GPU pod, whose network must reach neuronpersonas.com,
+github.com, huggingface.co and the hosts under hf.co, such as
+us.aws.cdn.hf.co, through which Hugging Face serves the files (its CDN).
 """
 
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
-from pushlab.discovery.fetch import fetch_library, fetch_mayner
+from pushlab.discovery.fetch import fetch_library
+from pushlab.discovery.fetch_mayner import fetch_mayner
 from pushlab.discovery.sources import (
     LIBRARY,
     LIBRARY_FILES,
@@ -30,6 +39,15 @@ from pushlab.discovery.sources import (
 NAMES_SHOWN = 5
 # His bundle's list of its files, which fetch_mayner downloads every time.
 MANIFEST = "MANIFEST"
+# What Ctrl-C leaves of each source's fetch, as the command says it.
+STOPPED = {
+    LIBRARY.name: "stopped by Ctrl-C. The library's new files go in place only "
+    "once all have downloaded, so its folder is as it was; run the same "
+    "command again to fetch them",
+    MAYNER.name: "stopped by Ctrl-C. The files his script downloaded whole are "
+    "kept; run the same command again to fetch the rest before running "
+    "`uv run pushlab candidates`",
+}
 # What tells a new copy of a file from the one there before: its size, inode
 # and modification time.
 FileState = tuple[int, int, int]
@@ -197,11 +215,7 @@ def run_fetch(
         else:
             fetch_mayner(data_dir, all_files=all_files)
     except KeyboardInterrupt:
-        print(
-            "pushlab fetch: stopped by Ctrl-C. The files downloaded whole are "
-            "kept; run the same command again to fetch the rest",
-            file=sys.stderr,
-        )
+        print(f"pushlab fetch: {STOPPED[source]}", file=sys.stderr)
         return 130
     except (OSError, ValueError, RuntimeError) as error:
         return _refuse(_reason(error))

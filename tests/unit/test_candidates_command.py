@@ -156,6 +156,21 @@ def test_every_row_credits_its_source_and_the_credits_are_printed(
     assert f"/{IGNORED}" in (PROJECT_ROOT / ".gitignore").read_text().splitlines()
 
 
+def _restamp(folder: Path) -> None:
+    """Give sensitive.json's "from" stamp the sizes of the library's files as
+    they are now, as the library's own copy would after an edit."""
+    path = folder / "sensitive.json"
+    sensitive = json.loads(path.read_text(encoding="utf-8"))
+    parts = sensitive["from"].split("|")
+    for i, part in enumerate(parts):
+        name, _, rest = part.partition(":")
+        if name in ("library.json", "combos.json"):
+            _, _, modified = rest.partition(":")
+            parts[i] = f"{name}:{(folder / name).stat().st_size}:{modified}"
+    sensitive["from"] = "|".join(parts)
+    path.write_text(json.dumps(sensitive), encoding="utf-8")
+
+
 def test_duplicate_names_go_within_a_source_but_not_across_them(
     data: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -167,6 +182,7 @@ def test_duplicate_names_go_within_a_source_but_not_across_them(
     for row in library["rows"]:
         row[persona] = "Pirate" if row[persona] == "Rain Cloud" else row[persona]
     path.write_text(json.dumps(library), encoding="utf-8")
+    _restamp(path.parent)
     top = data / "mayner" / "bundle" / "split" / "top_neurons.parquet"
     table = pd.read_parquet(top)
     pirate = table[table["role"] == "pirate"].assign(role="Pirate")

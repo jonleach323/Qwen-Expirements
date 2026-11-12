@@ -17,30 +17,41 @@ of where and when it got each (decision 0020):
   running them again ("pool_fields" names their values), and combinations of
   two of them, which are not candidates here.
 - sensitive.json, whose "neurons" lists the sensitive neurons, each with its
-  direction, as "L:n:s", such as "18:2468:-1".
+  direction, as "L:n:s", such as "18:2468:-1", and whose "from" stamp gives
+  the size of each file it was computed from (library_files.stamped_sizes).
 
 import_library reads each value by the name its file gives it, not by its
 place, so a file whose columns move still reads right. Its candidates are
 the rows of category "persona" and the verified pool's personas, and each
 says where it came from: the file inside the data folder, the place in it
 (L12 N4410 s-1 for a row of library.json, pool L33N4096- for a pool
-persona), the file's URL and when it was downloaded.
+persona), the file's URL and when it was downloaded, unknown ("") for a file
+whose bytes or SHA-256 are not those its record gives. It refuses a
+sensitive.json computed from a library.json or combos.json of another size
+than the one beside it, as its flags may then miss that file's personas.
+Those steps, which read the files as files, are in library_files.py.
 """
 
-import json
 import math
-import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from pushlab.discovery.candidates import Candidate
-from pushlab.discovery.sources import LIBRARY, LIBRARY_FILES, RECORD_FILE, read_record
+from pushlab.discovery.library_files import (
+    COMBOS_FILE,
+    FETCH_AGAIN,
+    LIBRARY_FILE,
+    NEW_FORMAT,
+    SENSITIVE_FILE,
+    load_json,
+    provenance,
+    sensitive_neurons,
+)
+from pushlab.discovery.sources import LIBRARY, LIBRARY_FILES
 from pushlab.models.discovery import ModelInfo
 from pushlab.models.registry import REGISTRY
 from pushlab.units.neuron import NeuronUnit
 
-# The three files, as sources.LIBRARY_FILES names them.
-LIBRARY_FILE, COMBOS_FILE, SENSITIVE_FILE = LIBRARY_FILES
 # The category of library.json's rows that are candidates.
 PERSONA = "persona"
 # The values read, by the names that library.json's "fields" and combos.json's
@@ -49,8 +60,6 @@ ROW_FIELDS = ("L", "n", "s", "persona", "cat", "w", "c", "tags", "a")
 POOL_FIELDS = ("id", "L", "n", "s", "a", "name", "w", "c", "verified")
 # The library scores weirdness and coherence from 0 to this.
 TOP_SCORE = 10
-# One of sensitive.json's neurons: its layer, neuron and direction.
-SENSITIVE_NEURON = re.compile(r"([0-9]+):([0-9]+):([+-]?1)")
 
 
 class _Persona(NamedTuple):
@@ -79,14 +88,6 @@ def _is_whole(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _load(path: Path) -> Any:
-    """The JSON in path, refused with the file's name if it is not JSON."""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"{path} is not valid JSON: {error}") from None
-
-
 def _table(
     path: Path, data: Any, names_key: str, rows_key: str, needed: tuple[str, ...]
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -97,22 +98,23 @@ def _table(
     """
     if not isinstance(data, dict):
         raise ValueError(
-            f"{path} must hold a JSON object with {names_key!r} and {rows_key!r}"
+            f"{path} must hold a JSON object with {names_key!r} and {rows_key!r}; "
+            f"{FETCH_AGAIN}"
         )
     names, rows = data.get(names_key), data.get(rows_key)
     if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
         raise ValueError(
             f"{path} lacks {names_key!r}, the list that names the values of each "
-            f"of its {rows_key!r}"
+            f"of its {rows_key!r}; {NEW_FORMAT}"
         )
     if missing := [name for name in needed if name not in names]:
         raise ValueError(
             f"{path} lacks the field{'s' if len(missing) > 1 else ''} "
-            f"{', '.join(missing)}: its {names_key!r} are {', '.join(names)}; has "
-            "the library changed its format?"
+            f"{', '.join(missing)}: its {names_key!r} are {', '.join(names)}; "
+            f"{NEW_FORMAT}"
         )
     if not isinstance(rows, list):
-        raise ValueError(f"{path} lacks {rows_key!r}, a list of rows")
+        raise ValueError(f"{path} lacks {rows_key!r}, a list of rows; {NEW_FORMAT}")
     columns = {name: names.index(name) for name in needed}
     table = []
     for i, row in enumerate(rows):
@@ -120,7 +122,7 @@ def _table(
         if not isinstance(row, list) or len(row) != len(names):
             raise ValueError(
                 f"{where} must be a list of {len(names)} values, one for each "
-                f"name in {names_key!r}"
+                f"name in {names_key!r}; {NEW_FORMAT}"
             )
         table.append((where, {name: row[at] for name, at in columns.items()}))
     return table
@@ -134,10 +136,13 @@ def _neuron(
     for what, value in (("L, the layer,", layer), ("n, the neuron,", index)):
         if not _is_whole(value) or value < 0:
             raise ValueError(
-                f"{where}: {what} must be a whole number from 0, not {value!r}"
+                f"{where}: {what} must be a whole number from 0, not {value!r}; "
+                f"{NEW_FORMAT}"
             )
     if not _is_whole(sign) or sign not in (1, -1):
-        raise ValueError(f"{where}: s, the direction, must be 1 or -1, not {sign!r}")
+        raise ValueError(
+            f"{where}: s, the direction, must be 1 or -1, not {sign!r}; {NEW_FORMAT}"
+        )
     try:
         NeuronUnit(model, layer, index).validate(shape)
     except ValueError as error:
@@ -151,7 +156,8 @@ def _score(where: str, what: str, value: object) -> int:
         if 0 <= value <= TOP_SCORE:
             return value
     raise ValueError(
-        f"{where}: {what} must be a whole number from 0 to {TOP_SCORE}, not {value!r}"
+        f"{where}: {what} must be a whole number from 0 to {TOP_SCORE}, not "
+        f"{value!r}; {NEW_FORMAT}"
     )
 
 
@@ -164,7 +170,8 @@ def _strength(where: str, value: object) -> float:
         except OverflowError:  # an int too large for a float
             pass
     raise ValueError(
-        f"{where}: a, the library's strength, must be a number above 0, not {value!r}"
+        f"{where}: a, the library's strength, must be a number above 0, not "
+        f"{value!r}; {NEW_FORMAT}"
     )
 
 
@@ -172,7 +179,8 @@ def _name(where: str, field: str, value: object) -> str:
     """The persona's name, which must be text that is not blank."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(
-            f"{where}: {field}, the persona's name, must be text, not {value!r}"
+            f"{where}: {field}, the persona's name, must be text, not {value!r}; "
+            f"{NEW_FORMAT}"
         )
     return value
 
@@ -190,10 +198,12 @@ def _row(
     if not _is_whole(cat) or not 0 <= cat < len(categories):
         raise ValueError(
             f"{where}: cat must be the index of one of 'categories', 0 to "
-            f"{len(categories) - 1}, not {cat!r}"
+            f"{len(categories) - 1}, not {cat!r}; {NEW_FORMAT}"
         )
     if not isinstance(tags, list) or not all(isinstance(t, str) and t for t in tags):
-        raise ValueError(f"{where}: tags must be a list of words, not {tags!r}")
+        raise ValueError(
+            f"{where}: tags must be a list of words, not {tags!r}; {NEW_FORMAT}"
+        )
     return _Persona(
         layer,
         index,
@@ -210,7 +220,7 @@ def _row(
 
 def _library_rows(path: Path, model: str, shape: ModelInfo) -> list[_Persona]:
     """library.json's rows in order, the first row of each neuron and direction."""
-    data = _load(path)
+    data = load_json(path)
     table = _table(path, data, "fields", "rows", ROW_FIELDS)
     categories = data.get("categories")
     if (
@@ -220,7 +230,7 @@ def _library_rows(path: Path, model: str, shape: ModelInfo) -> list[_Persona]:
     ):
         raise ValueError(
             f"{path} lacks 'categories', the names its rows' cat values point to, "
-            f"{PERSONA!r} among them; has the library changed its format?"
+            f"{PERSONA!r} among them; {NEW_FORMAT}"
         )
     rows: dict[tuple[int, int, int], _Persona] = {}
     for where, values in table:
@@ -232,17 +242,19 @@ def _library_rows(path: Path, model: str, shape: ModelInfo) -> list[_Persona]:
 def _pool(path: Path, model: str, shape: ModelInfo) -> list[_Persona]:
     """The pool's verified personas in order, the first of each neuron and direction."""
     pool: dict[tuple[int, int, int], _Persona] = {}
-    for where, values in _table(path, _load(path), "pool_fields", "pool", POOL_FIELDS):
+    table = _table(path, load_json(path), "pool_fields", "pool", POOL_FIELDS)
+    for where, values in table:
         layer, index, sign = _neuron(where, values, model, shape)
         ident, verified = values["id"], values["verified"]
         if not isinstance(ident, str) or not ident.strip():
             raise ValueError(
                 f"{where}: id must be the persona's ID, such as 'L33N4096-', not "
-                f"{ident!r}"
+                f"{ident!r}; {NEW_FORMAT}"
             )
         if not isinstance(verified, bool):
             raise ValueError(
-                f"{where}: verified must be true or false, not {verified!r}"
+                f"{where}: verified must be true or false, not {verified!r}; "
+                f"{NEW_FORMAT}"
             )
         entry = _Persona(
             layer,
@@ -259,57 +271,6 @@ def _pool(path: Path, model: str, shape: ModelInfo) -> list[_Persona]:
         if verified:
             pool.setdefault(entry.key, entry)
     return list(pool.values())
-
-
-def _sensitive(path: Path) -> set[tuple[int, int, int]]:
-    """sensitive.json's neurons, each as (layer, neuron, direction)."""
-    data = _load(path)
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must hold a JSON object with 'neurons'")
-    neurons = data.get("neurons")
-    if not isinstance(neurons, list):
-        raise ValueError(
-            f"{path} lacks 'neurons', the list of sensitive neurons written "
-            'L:n:s, such as "18:2468:-1"'
-        )
-    found = set()
-    for i, item in enumerate(neurons):
-        match = SENSITIVE_NEURON.fullmatch(item) if isinstance(item, str) else None
-        if match is None:
-            raise ValueError(
-                f"{path}: neurons[{i}] must be a neuron written L:n:s, its layer, "
-                f'neuron and direction, such as "18:2468:-1", not {item!r}'
-            )
-        found.add((int(match[1]), int(match[2]), int(match[3])))
-    return found
-
-
-def _provenance(folder: Path) -> dict[str, tuple[str, str]]:
-    """Each file's URL and download time, from the fetch record in folder.
-
-    A file the record lacks, or every file when there is no record, gets the
-    library's own URL for it and "" for the time, which is not known.
-    """
-    path = folder / RECORD_FILE
-    files = read_record(folder).get("files") or {}
-    if not isinstance(files, dict):
-        raise ValueError(f"{path}: 'files' must hold what was recorded of each file")
-    found = {}
-    for file in LIBRARY_FILES:
-        entry = files.get(file) or {}
-        if not isinstance(entry, dict):
-            raise ValueError(
-                f"{path}: files[{file!r}] must be an object with its url and "
-                "downloaded_at"
-            )
-        url = entry.get("url") or f"{LIBRARY.url}/{file}"
-        downloaded_at = entry.get("downloaded_at") or ""
-        if not isinstance(url, str) or not isinstance(downloaded_at, str):
-            raise ValueError(
-                f"{path}: files[{file!r}]'s url and downloaded_at must be text"
-            )
-        found[file] = (url, downloaded_at)
-    return found
 
 
 def _shape(model: str) -> ModelInfo:
@@ -338,7 +299,9 @@ def import_library(folder: Path, model: str = "qwen3-8b") -> list[Candidate]:
     in library.json's order, then the pool's. Each says whether it is in the
     verified pool, and whether sensitive.json lists its neuron and direction;
     see the module's docstring for where it came from. A file not in the
-    library's format is refused with ValueError, which names it.
+    library's format is refused with ValueError, which names it, and so is a
+    sensitive.json whose "from" stamp gives library.json or combos.json
+    another size than the one in folder.
 
     Example:
         >>> pod = Path("/workspace/data/library/qwen")
@@ -353,13 +316,13 @@ def import_library(folder: Path, model: str = "qwen3-8b") -> list[Candidate]:
     if missing := [file for file in LIBRARY_FILES if not (folder / file).is_file()]:
         raise FileNotFoundError(
             f"{folder} has no {', '.join(missing)}; run `uv run pushlab fetch "
-            "library`, which downloads the Neuron Persona Library's files into "
-            f"the data folder's {LIBRARY.folder}"
+            "library` (on the GPU pod), which downloads the Neuron Persona "
+            f"Library's files into the data folder's {LIBRARY.folder}"
         )
     rows = _library_rows(folder / LIBRARY_FILE, model, shape)
     pool = _pool(folder / COMBOS_FILE, model, shape)
-    sensitive = _sensitive(folder / SENSITIVE_FILE)
-    provenance = _provenance(folder)
+    sensitive = sensitive_neurons(folder / SENSITIVE_FILE)
+    origins = provenance(folder)
     personas = [row for row in rows if row.category == PERSONA]
     has_row = {row.key for row in personas}
     chosen = [(row, LIBRARY_FILE) for row in personas]
@@ -375,8 +338,8 @@ def import_library(folder: Path, model: str = "qwen3-8b") -> list[Candidate]:
             sensitive=persona.key in sensitive,
             source_file=f"{LIBRARY.folder}/{file}",
             source_ref=persona.ref,
-            source_url=provenance[file][0],
-            downloaded_at=provenance[file][1],
+            source_url=origins[file][0],
+            downloaded_at=origins[file][1],
             category=persona.category,
             tags=persona.tags,
             coherence=persona.coherence,

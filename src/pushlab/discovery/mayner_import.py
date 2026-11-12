@@ -2,21 +2,26 @@
 
 Mayner's data (huggingface.co/datasets/wmayner/persona-neurons) is under CC BY
 4.0, so it is credited wherever it is used: every row of a candidates file
-made from it carries sources.MAYNER.credit. It splits the persona vector of
-each of 275 roles in Qwen3-8B into the contributions of the MLP neurons of
-layers 0 to 18. `pushlab fetch mayner` copies the files of his data bundle
-that are read here into data/mayner/bundle/, at the bundle's own paths, with
-FETCHED.json beside it, the record of the download (decision 0020).
+made from it carries sources.MAYNER.list_credit, his credit and how pushlab
+adapted his data. It splits the persona vector of each of 275 roles in
+Qwen3-8B into the contributions of the MLP neurons of layers 0 to 18.
+`pushlab fetch mayner` copies the files of his data bundle that are read
+here into data/mayner/bundle/, at the bundle's own paths, with his MANIFEST
+of the bundle's files there too and FETCHED.json beside it, the record of
+the download (decision 0020). When the MANIFEST is there, every file it
+lists that is read here must still be as it lists it, the right size and
+SHA-256 (mayner_manifest.check_bundle); without it, nothing is checked.
 
 import_mayner makes every role of split/top_neurons.parquet, in name order, a
 candidate at each set size, 10 and 50 neurons unless told otherwise: the
 NeuronSet of the role's top k neurons at Mayner's strength, named such as
 coral-reef-top10, which a dose of 1 pushes as his code steers
-(pushlab.units.mayner.top_neurons_set; decision 0019). Its size is 4 times
-|v_r|, the length of the role's persona vector, taken from the role's and the
-default's vector files in vectors/without/ when both are there, which gives
-exactly his strength (size_from "vectors/without"), or else read back from
-the split's shares, 0.1 to 0.2% off it (size_from "split shares").
+(pushlab.units.mayner.top_neurons_set; decision 0019). A set's size is 4
+times |v_r|, the length of the role's persona vector. It comes from the role
+vectors when they are there, the role's and the default's files in
+vectors/without/, which give exactly his strength (size_from
+"vectors/without"), and from the split's shares otherwise, 0.1 to 0.2% off
+his strength (size_from "split shares").
 
 Each candidate keeps Mayner's own measures of its set, for reference, each
 None where his files have none:
@@ -32,11 +37,13 @@ None where his files have none:
 - mayner_share, from step 5's split/concentration_neurons.parquet: the % of
   |v_r| the role's top k neurons contribute.
 
-His data flags no role as sensitive, so every candidate from it has sensitive
-False, and leaving sensitive personas out drops none of them. Each candidate
-says where it came from: source_file mayner/bundle/split/top_neurons.parquet,
-source_ref the set's own source (the role and the ranks taken), and from
-FETCHED.json the file's URL and when the bundle was downloaded.
+Every candidate of his data has category "role", pushlab's own label for one
+of his roles: his data gives none. His data flags no role as sensitive, so
+every candidate from it has sensitive False, and leaving sensitive personas
+out drops none of them. Each candidate says where it came from: source_file
+mayner/bundle/split/top_neurons.parquet, source_ref the set's own source (the
+role and the ranks taken), and from FETCHED.json the file's URL and when the
+bundle was downloaded.
 """
 
 import math
@@ -48,7 +55,14 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from pushlab.discovery.candidates import Candidate
-from pushlab.discovery.sources import MAYNER, MAYNER_BUNDLE, RECORD_FILE, read_record
+from pushlab.discovery.mayner_manifest import check_bundle
+from pushlab.discovery.sources import (
+    MAYNER,
+    MAYNER_BUNDLE,
+    MAYNER_FILES,
+    RECORD_FILE,
+    read_record,
+)
 from pushlab.models.registry import REGISTRY
 from pushlab.units import mayner
 from pushlab.units.mayner_vectors import vector_norm_from_vectors
@@ -282,10 +296,12 @@ def import_mayner(
     files in bundle/ and the record FETCHED.json. The bundle's
     split/top_neurons.parquet must be there; the vector files, the judged
     replies and the concentration table are used when they are (see the
-    module's docstring). The candidates come role by role in name order, each
-    role's in the order of sizes. model is the registry name the sets are
-    made for, which must name Qwen3-8B, the model whose neurons his data
-    lists.
+    module's docstring). If bundle/ has his MANIFEST, a file it lists among
+    those read here (sources.MAYNER_FILES) that is missing or not as it
+    lists it is refused with ValueError, which says to fetch it again. The
+    candidates come role by role in name order, each role's in the order of
+    sizes. model is the registry name the sets are made for, which must name
+    Qwen3-8B, the model whose neurons his data lists.
 
     Example:
         >>> found = import_mayner(Path("/workspace/data/mayner"))  # doctest: +SKIP
@@ -300,6 +316,7 @@ def import_mayner(
     sizes = _sizes(sizes)
     folder = Path(folder)
     bundle = folder / MAYNER_BUNDLE
+    check_bundle(bundle, MAYNER_FILES)
     path = bundle / TOP_NEURONS_FILE
     table = _read(path, mayner.TOP_NEURONS_COLUMNS)
     if table is None:

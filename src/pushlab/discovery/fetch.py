@@ -1,51 +1,49 @@
 """Download the two sources of persona candidates into the data folder.
 
-`pushlab fetch library` and `pushlab fetch mayner` run fetch_library and
-fetch_mayner (decision 0020). Each source goes into its own folder of the
-data folder (/workspace/data/library/qwen and /workspace/data/mayner on the
-GPU pod), beside FETCHED.json, the record of where its files came from and
-when. Files already there are skipped, so running a fetch again downloads
-only what is missing.
+`pushlab fetch library` runs fetch_library, here, and `pushlab fetch mayner`
+runs fetch_mayner.fetch_mayner (decision 0020). Each source goes into its
+own folder of the data folder (/workspace/data/library/qwen and
+/workspace/data/mayner on the GPU pod), beside FETCHED.json, the record of
+where its files came from and when. Files already there are skipped, so
+running a fetch again downloads only what is missing.
 
 - fetch_library downloads the Neuron Persona Library's three files for
-  Qwen3-8B, about 26 MB. Each goes into a .part file first and is renamed
-  once whole, so a file in the folder is never half a download.
-- fetch_mayner checks out Will Mayner's code at the pinned commit and runs
-  his own download script, which copies the files of his bundle that the
-  importers read, about 110 MB (all_files: the whole 1 GB), into bundle/,
-  checking each against his MANIFEST and skipping those already there. Its
-  steps for his code are in fetch_mayner.py.
+  Qwen3-8B from neuronpersonas.com, about 26 MB. Each goes into a .part
+  file first and must be the JSON asked for (fetch_http.check_download);
+  only once all of them are whole and checked do they replace the files
+  there, together, and the record follows at once. A fetch that fails
+  changes nothing.
+- fetch_mayner checks out Will Mayner's code from github.com and runs his
+  own download script, which copies from huggingface.co the files of his
+  bundle that the importers read, 279 files of about 105 MB (all_files: his
+  whole bundle, 638 files of 1.02 GB). Its steps are in fetch_mayner.py.
 
-The downloads are large, so they run on the pod. The tests hand in a fake
-download, a fake run of his script and a local git repository instead.
+Both use the network through fetch_http.py and the records' steps here.
+The downloads are large, so they run on the pod, whose network must reach
+neuronpersonas.com, github.com and huggingface.co, and the hosts under
+hf.co, such as us.aws.cdn.hf.co, through which Hugging Face serves the
+files (its CDN). The tests hand in a fake download, a fake run of his
+script and a local git repository instead.
 """
 
 import hashlib
-import os
 import shlex
-import shutil
-import urllib.request
-from collections.abc import Callable, Mapping
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pushlab.discovery.fetch_mayner import (
-    Git,
-    Run,
-    checkout_code,
-    mayner_command,
-    run_command,
+from pushlab.discovery.fetch_http import (
+    Download,
+    check_download,
+    http_download,
+    last_modified,
+    part_of,
 )
 from pushlab.discovery.sources import (
     LIBRARY,
     LIBRARY_FILES,
-    MAYNER,
-    MAYNER_BUNDLE,
-    MAYNER_CODE,
-    MAYNER_COMMIT,
-    MAYNER_FILES,
-    MAYNER_REPOSITORY,
     RECORD_FILE,
     Source,
     read_record,
@@ -53,15 +51,15 @@ from pushlab.discovery.sources import (
     write_record,
 )
 
-# Sent with every download: a plain name, nothing about who runs it.
-USER_AGENT = "pushlab"
-# Seconds a download waits for the server before it gives up.
-TIMEOUT = 60
-# Bytes copied at a time.
-CHUNK = 1 << 20
+# The keys each of the library's files has, as a JSON object (decision
+# 0020): library.json's table, the verified pool of combos.json and the
+# sensitive neurons of sensitive.json. A download without them is refused.
+LIBRARY_KEYS = {
+    "library.json": ("fields", "rows"),
+    "combos.json": ("pool_fields", "pool"),
+    "sensitive.json": ("neurons",),
+}
 
-# Downloads a URL into a file; returns the response's headers.
-Download = Callable[[str, Path], Mapping[str, str]]
 # The time now, with its time zone.
 Clock = Callable[[], datetime]
 
@@ -83,8 +81,13 @@ def utc_stamp(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _utc_now() -> datetime:
-    """The time now, in UTC."""
+def utc_now() -> datetime:
+    """The time now, in UTC: the fetches' clock unless they are given another.
+
+    Example:
+        >>> utc_now().tzinfo is UTC
+        True
+    """
     return datetime.now(UTC)
 
 
@@ -92,94 +95,20 @@ def sha256_of(path: Path) -> str:
     """The SHA-256 of a file's bytes, as hex.
 
     Example:
-        >>> sha256_of(Path(os.devnull))[:16]  # no bytes at all
+        >>> sha256_of(Path("/dev/null"))[:16]  # no bytes at all
         'e3b0c44298fc1c14'
     """
     with Path(path).open("rb") as file:
         return hashlib.file_digest(file, "sha256").hexdigest()
 
 
-def _header(headers: Mapping[str, str], name: str) -> str | None:
-    """The value of a header whose name matches name in any case, or None."""
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
-def last_modified(headers: Mapping[str, str]) -> str | None:
-    """The Last-Modified header among a response's headers, in any case.
+def source_fields(source: Source) -> dict[str, str]:
+    """What every fetch record says of its source.
 
     Example:
-        >>> last_modified({"last-modified": "Wed, 11 Nov 2026 09:00:00 GMT"})
-        'Wed, 11 Nov 2026 09:00:00 GMT'
-        >>> last_modified({}) is None
-        True
+        >>> source_fields(LIBRARY)["url"]
+        'https://neuronpersonas.com/data/qwen'
     """
-    return _header(headers, "Last-Modified")
-
-
-def http_download(url: str, dest: Path) -> dict[str, str]:
-    """Download url into dest with urllib; return the response's headers.
-
-    The request names itself only "pushlab", and each wait for the server
-    lasts at most TIMEOUT seconds. A response that ends before its
-    Content-Length raises OSError.
-
-    Example:
-        >>> url = LIBRARY.url + "/sensitive.json"
-        >>> http_download(url, Path("sensitive.json"))  # doctest: +SKIP
-        {'Content-Type': 'application/json', 'Last-Modified': '...', ...}
-    """
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with (
-        urllib.request.urlopen(request, timeout=TIMEOUT) as response,
-        Path(dest).open("wb") as file,
-    ):
-        shutil.copyfileobj(response, file, CHUNK)
-        headers = dict(response.headers.items())
-    expected = (_header(headers, "Content-Length") or "").strip()
-    got = Path(dest).stat().st_size
-    if expected.isdigit() and int(expected) != got:
-        raise OSError(
-            f"{url} stopped after {got:,} of its {int(expected):,} bytes; run "
-            "the fetch again"
-        )
-    return headers
-
-
-def download_whole(download: Download, url: str, dest: Path) -> dict[str, str]:
-    """Download url into dest with download, through a .part file beside it.
-
-    The .part file becomes dest only once download has returned, so a file
-    at dest is always whole. If download fails, the .part file is deleted,
-    dest stays as it was, and OSError names the URL. Returns the headers.
-
-    Example:
-        >>> url = LIBRARY.url + "/combos.json"
-        >>> download_whole(http_download, url, Path("combos.json"))  # doctest: +SKIP
-        {'Content-Type': 'application/json', ...}
-    """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    partial = dest.with_name(dest.name + ".part")
-    try:
-        headers = download(url, partial)
-    except Exception as error:
-        partial.unlink(missing_ok=True)
-        raise OSError(
-            f"could not download {url}: {error}. Check the connection, and "
-            "that the URL still works, then run the fetch again; the files "
-            "already downloaded are kept"
-        ) from error
-    except BaseException:  # such as Ctrl-C
-        partial.unlink(missing_ok=True)
-        raise
-    partial.replace(dest)
-    return dict(headers or {})
-
-
-def _source_fields(source: Source) -> dict[str, str]:
-    """What every record says of its source."""
     return {
         "source": source.name,
         "title": source.title,
@@ -189,8 +118,29 @@ def _source_fields(source: Source) -> dict[str, str]:
     }
 
 
-def _credit_line(source: Source) -> str:
+def credit_line(source: Source) -> str:
+    """The line a fetch ends with: its source's licence and credit.
+
+    Example:
+        >>> credit_line(LIBRARY).startswith("library: licence: ")
+        True
+    """
     return f"{source.name}: licence: {source.licence}. Credit: {source.credit}"
+
+
+def fetch_again(source: str, root: Path | None = None, *options: str) -> str:
+    """The command that runs a fetch again, as a failed one names it.
+
+    root is the data folder the fetch was given (--data-dir), if any.
+
+    Example:
+        >>> fetch_again("library", None, "--refresh")
+        'uv run pushlab fetch library --refresh'
+        >>> fetch_again("mayner", Path("my data"), "--all")
+        "uv run pushlab fetch mayner --all --data-dir 'my data'"
+    """
+    folder = [] if root is None else ["--data-dir", str(root)]
+    return shlex.join(["uv", "run", "pushlab", "fetch", source, *options, *folder])
 
 
 def _describe(
@@ -209,29 +159,122 @@ def _describe(
     }
 
 
+def _matches(entry: object, found: Mapping[str, Any]) -> bool:
+    """True if a record's entry still describes a file: same size and SHA-256."""
+    return isinstance(entry, dict) and all(
+        entry.get(key) == found[key] for key in ("bytes", "sha256")
+    )
+
+
 def _kept(path: Path, url: str, entry: object) -> dict[str, Any]:
     """The entry of a file left as it was: its old entry while that still
-    describes it (same size and SHA-256), else one with its download time
-    null, unknown, as for a file copied in by hand."""
+    describes it, else one with its download time null, unknown, as for a
+    file copied in by hand."""
     found = _describe(path, url)
-    if isinstance(entry, dict) and all(
-        entry.get(key) == found[key] for key in ("bytes", "sha256")
-    ):
-        return found | entry
-    return found
+    return found | entry if _matches(entry, found) else found
 
 
-def _old_files(folder: Path) -> dict[str, Any]:
+def _old_files(folder: Path, root: Path | None) -> dict[str, Any]:
     """The file entries of the library's record in folder ({} without one)."""
     try:
         record = read_record(folder)
     except ValueError as error:
         raise ValueError(
-            f"{error}. Delete it and run `pushlab fetch library` again: the "
-            "files already there are kept, their download times unknown"
+            f"{error}. Delete it and run `{fetch_again(LIBRARY.name, root)}` "
+            "again: the files already there are kept, their download times "
+            "unknown"
         ) from None
     files = record.get("files")
     return files if isinstance(files, dict) else {}
+
+
+def _warn_changed(path: Path, root: Path | None) -> None:
+    """Warn that a file kept as it was no longer matches its record's entry."""
+    print(
+        f"pushlab fetch: warning: {path} is not the file FETCHED.json recorded: "
+        "its size or SHA-256 differs, as for a file changed or replaced since "
+        "its download, so its download time is now unknown. To download a "
+        f"fresh copy, run `{fetch_again(LIBRARY.name, root, '--refresh')}`",
+        file=sys.stderr,
+    )
+
+
+def download_parts(
+    download: Download, folder: Path, names: Sequence[str], now: Clock
+) -> dict[str, dict[str, Any]]:
+    """Download each of the library's files named into its .part file in
+    folder; return their record entries once all are whole and checked.
+
+    Each must hold the JSON object that LIBRARY_KEYS describes for it
+    (fetch_http.check_download). If a download fails, or brings anything
+    else, every .part file is deleted, the files in folder are left as they
+    were, and OSError says what went wrong. Prints each file's size.
+
+    Example:
+        >>> folder, names = Path("/workspace/data/library/qwen"), LIBRARY_FILES
+        >>> download_parts(http_download, folder, names, utc_now)  # doctest: +SKIP
+        library: library.json: downloaded 23,948,454 bytes from https://...
+        ...
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    entries: dict[str, dict[str, Any]] = {}
+    try:
+        for name in names:
+            url, part = f"{LIBRARY.url}/{name}", part_of(folder / name)
+            try:
+                headers = dict(download(url, part) or {})
+            except Exception as error:
+                raise OSError(f"could not download {url}: {error}") from error
+            check_download(part, url, LIBRARY_KEYS[name], headers)
+            stamp = utc_stamp(now())
+            entries[name] = _describe(part, url, stamp, last_modified(headers))
+            size = entries[name]["bytes"]
+            print(f"library: {name}: downloaded {size:,} bytes from {url}")
+    except BaseException:  # Ctrl-C too
+        for name in names:
+            part_of(folder / name).unlink(missing_ok=True)
+        raise
+    return entries
+
+
+def put_in_place(
+    folder: Path,
+    new: Mapping[str, dict[str, Any]],
+    kept: Mapping[str, dict[str, Any]],
+    old: Mapping[str, Any],
+    now: Clock,
+) -> dict[str, Any]:
+    """Rename each new file's .part over its file in folder, then write the
+    library's record there and return it.
+
+    new holds the entries of the files downloaded (download_parts), kept
+    those of the files left as they were, and old the entries of the record
+    before. The record is written right after the renames, which are quick;
+    should they stop partway, it still describes the files there, the ones
+    not replaced by their old entries, and the .part files left are deleted.
+
+    Example:
+        >>> folder = Path("/workspace/data/library/qwen")
+        >>> put_in_place(folder, new, {}, {}, utc_now)  # doctest: +SKIP
+        {'source': 'library', ..., 'files': {'library.json': {...}, ...}}
+    """
+    files = dict(kept)
+    try:
+        for name, entry in new.items():
+            part_of(folder / name).replace(folder / name)
+            files[name] = entry
+    finally:
+        for name in new:
+            part_of(folder / name).unlink(missing_ok=True)
+            path = folder / name
+            if name not in files and path.is_file():
+                files[name] = _kept(path, f"{LIBRARY.url}/{name}", old.get(name))
+        record = source_fields(LIBRARY) | {
+            "updated_at": utc_stamp(now()),
+            "files": {name: files[name] for name in LIBRARY_FILES if name in files},
+        }
+        write_record(folder, record)
+    return record
 
 
 def fetch_library(
@@ -244,121 +287,52 @@ def fetch_library(
     """Download the library's files for Qwen3-8B; write and return its record.
 
     Each of LIBRARY_FILES comes from LIBRARY.url/<name> into the library's
-    folder of root (the data folder by default). The record, FETCHED.json,
-    has the library's name, licence and credit, updated_at, and for each
-    file its URL, bytes, SHA-256, downloaded_at (UTC) and the server's
-    Last-Modified. A file already there is skipped unless refresh, keeping
-    its entry; one without an entry yet, or changed since, gets one with
-    downloaded_at null. If a download fails, OSError names its URL, and the
-    record still lists the files that are there. Prints which files it
-    downloaded and which it skipped. download(url, dest) and now() stand in
-    for the network and the clock in tests.
+    folder of root (the data folder by default). A file already there is
+    skipped unless refresh, keeping its record entry while its size and
+    SHA-256 still match it; one without an entry gets one with downloaded_at
+    null, and so does one changed since, with a warning that suggests
+    --refresh. The others are downloaded into .part files and checked
+    (download_parts); only once all are whole do they replace the files
+    there, together, and the record is written at once (put_in_place). If
+    any fails, nothing is changed, and OSError says what went wrong and the
+    command to run again.
+
+    The record, FETCHED.json, has the library's name, licence and credit,
+    updated_at, and for each file its URL, bytes, SHA-256, downloaded_at
+    (UTC) and the server's Last-Modified. Prints which files it downloaded
+    and which it skipped. download(url, dest) and now() stand in for the
+    network and the clock in tests.
 
     Example:
         >>> record = fetch_library(Path("/workspace/data"))  # doctest: +SKIP
-        library: library.json: downloaded 23,912,064 bytes from https://...
+        library: library.json: downloaded 23,948,454 bytes from https://...
         ...
     """
     download = download or http_download
-    now = now or _utc_now
+    now = now or utc_now
     folder = source_dir(LIBRARY, root)
-    old = _old_files(folder)
-    files: dict[str, dict[str, Any]] = {}
+    old = _old_files(folder, root)
+    kept: dict[str, dict[str, Any]] = {}
+    for name in LIBRARY_FILES:
+        path = folder / name
+        if refresh or not path.is_file():
+            continue
+        kept[name] = _kept(path, f"{LIBRARY.url}/{name}", old.get(name))
+        print(f"library: {name}: already in {folder}, skipped")
+        if name in old and not _matches(old[name], kept[name]):
+            _warn_changed(path, root)
+    wanted = [name for name in LIBRARY_FILES if name not in kept]
     try:
-        for name in LIBRARY_FILES:
-            path, url = folder / name, f"{LIBRARY.url}/{name}"
-            if path.is_file() and not refresh:
-                files[name] = _kept(path, url, old.get(name))
-                print(f"library: {name}: already in {folder}, skipped")
-                continue
-            headers = download_whole(download, url, path)
-            stamp = utc_stamp(now())
-            files[name] = _describe(path, url, stamp, last_modified(headers))
-            size = files[name]["bytes"]
-            print(f"library: {name}: downloaded {size:,} bytes from {url}")
-    finally:
-        # Whatever stopped the loop, the record lists every file that is there.
-        for name in LIBRARY_FILES:
-            path = folder / name
-            if name not in files and path.is_file():
-                files[name] = _kept(path, f"{LIBRARY.url}/{name}", old.get(name))
-        record = _source_fields(LIBRARY) | {
-            "updated_at": utc_stamp(now()),
-            "files": {name: files[name] for name in LIBRARY_FILES if name in files},
-        }
-        written = write_record(folder, record)
-    print(f"library: recorded in {written}")
-    print(_credit_line(LIBRARY))
-    return record
-
-
-def fetch_mayner(
-    root: Path | None = None,
-    *,
-    all_files: bool = False,
-    run: Run | None = None,
-    download: Download | None = None,
-    now: Clock | None = None,
-    git: Git | None = None,
-) -> dict[str, Any]:
-    """Download Mayner's bundle with his own script; write and return the record.
-
-    His code goes into code/ of Mayner's folder of root (the data folder by
-    default), at MAYNER_COMMIT; a checkout with a changed file of his is
-    refused (checkout_code). His bundle's MANIFEST, a few kilobytes, is
-    downloaded into bundle/ every time, for its SHA-256. Then his
-    download_data.py copies into bundle/ the files the importers read
-    (MAYNER_FILES), or all of them with all_files, checking each against the
-    MANIFEST and skipping those already there. If it fails, RuntimeError
-    says to run the fetch again.
-
-    The record, FETCHED.json, has his data's name, licence and credit,
-    files_url, downloaded_at (UTC: when his script finished, every file
-    then matching the MANIFEST), the --only prefixes (null for all), his
-    repository, the commit and the command that ran, and the MANIFEST's
-    SHA-256. The old record is deleted before his script runs, so a record
-    always describes a finished download. run, download, now and git stand
-    in for his script, the network, the clock and git in tests.
-
-    Example:
-        >>> record = fetch_mayner(Path("/workspace/data"))  # doctest: +SKIP
-        mayner: his code is in /workspace/data/mayner/code, at commit 64c9d36...
-        ...
-    """
-    run = run or run_command
-    download = download or http_download
-    now = now or _utc_now
-    folder = source_dir(MAYNER, root).absolute()
-    code, bundle = folder / MAYNER_CODE, folder / MAYNER_BUNDLE
-    checkout_code(code, MAYNER_REPOSITORY, MAYNER_COMMIT, git)
-    print(f"mayner: his code is in {code}, at commit {MAYNER_COMMIT}")
-    files_url = f"{MAYNER.url}/resolve/main"
-    manifest = bundle / "MANIFEST"
-    download_whole(download, f"{files_url}/MANIFEST", manifest)
-    (folder / RECORD_FILE).unlink(missing_ok=True)
-    command = mayner_command(code, all_files)
-    shown = f"PN_DATA_DIR={shlex.quote(str(bundle))} {shlex.join(command)}"
-    # Flushed, so this line comes before his script's own output in a log.
-    print(f"mayner: running {shown}", flush=True)
-    status = run(command, cwd=code, env={**os.environ, "PN_DATA_DIR": str(bundle)})
-    if status != 0:
-        raise RuntimeError(
-            f"his download script stopped with exit code {status}. The files "
-            "that matched his MANIFEST are kept; run `pushlab fetch mayner` "
-            "again to fetch the rest"
-        )
-    record = _source_fields(MAYNER) | {
-        "files_url": files_url,
-        "downloaded_at": utc_stamp(now()),
-        "only": None if all_files else list(MAYNER_FILES),
-        "script": {
-            "repository": MAYNER_REPOSITORY,
-            "commit": MAYNER_COMMIT,
-            "command": shlex.join(command),
-        },
-        "manifest_sha256": sha256_of(manifest),
-    }
-    written = write_record(folder, record)
-    print(f"mayner: recorded in {written}")
-    print(_credit_line(MAYNER))
+        new = download_parts(download, folder, wanted, now)
+    except OSError as error:
+        again = fetch_again(LIBRARY.name, root, *(["--refresh"] if refresh else []))
+        raise OSError(
+            f"{error}. Nothing was changed: the files in {folder} and their "
+            "record are as they were. Check that this machine reaches "
+            f"neuronpersonas.com and that {LIBRARY.url} still serves the "
+            f"files, then run `{again}` again"
+        ) from error
+    record = put_in_place(folder, new, kept, old, now)
+    print(f"library: recorded in {folder / RECORD_FILE}")
+    print(credit_line(LIBRARY))
     return record

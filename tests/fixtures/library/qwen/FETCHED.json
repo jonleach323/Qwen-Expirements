@@ -1,25 +1,25 @@
 {
-  "credit": "Neuron Persona Library (Qwen3-8B), neuronpersonas.com",
+  "credit": "Fonseca Rivera, J. (2026). Neuron Persona Library: What Language Models Say They Are When One Neuron Is Pushed. https://neuronpersonas.com (Qwen3-8B files)",
   "files": {
     "combos.json": {
-      "bytes": 1394,
+      "bytes": 1355,
       "downloaded_at": "2026-11-12T20:31:07Z",
       "last_modified": "Tue, 10 Nov 2026 17:15:00 GMT",
-      "sha256": "88f3cb9aef1eb9da4ed468095fb121cacee836bbd5c7fcaaa70268a869325609",
+      "sha256": "8c7b6ccb4e9cdb06990ae53f4b5706601bc91a2f897b1619a4b9c68306da0b2c",
       "url": "https://neuronpersonas.com/data/qwen/combos.json"
     },
     "library.json": {
-      "bytes": 1811,
+      "bytes": 1964,
       "downloaded_at": "2026-11-12T20:31:05Z",
       "last_modified": "Tue, 10 Nov 2026 17:15:00 GMT",
-      "sha256": "cd81a623ff5601a47d8eec777ade12cd7c502e6349f186c1ca0430b1782fee88",
+      "sha256": "ee36fcd29d297bb73f19d3541f288c7858efbcbba6ed36ca2e739899b2b42696",
       "url": "https://neuronpersonas.com/data/qwen/library.json"
     },
     "sensitive.json": {
-      "bytes": 294,
+      "bytes": 357,
       "downloaded_at": "2026-11-12T20:31:08Z",
       "last_modified": "Wed, 11 Nov 2026 09:40:12 GMT",
-      "sha256": "6ff2c4f7c71c46dff0012e346effe07f3b30c320d179bf96e0d8fd82ab1d65d0",
+      "sha256": "ca31043ae3ae4afa035a8eac1d78d6c6e9d28470fcb8468fb31cf7f716ba3eb1",
       "url": "https://neuronpersonas.com/data/qwen/sensitive.json"
     }
   },

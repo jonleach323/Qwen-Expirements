@@ -1,16 +1,17 @@
 """Downloading the library's files with their record (decision 0020), and
-the download steps both sources share.
+the steps of the records both sources share.
 
-Nothing here touches the network: a fake download, or a fake urlopen, stands
-in. All the bytes are made up; none of them is the library's data. Mayner's
-bundle is tested in test_fetch_mayner.py.
+Nothing here touches the network: a fake download stands in. All the bytes
+are made up; none of them is the library's data. The network's side, and
+what a download must hold, are tested in test_fetch_http.py, and Mayner's
+bundle in test_fetch_mayner.py.
 """
 
 import doctest
 import hashlib
-import io
+import json
 import re
-import urllib.request
+import shlex
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,9 +19,11 @@ import pytest
 
 from pushlab.discovery import fetch
 from pushlab.discovery.fetch import (
-    download_whole,
+    LIBRARY_KEYS,
+    download_parts,
+    fetch_again,
     fetch_library,
-    http_download,
+    put_in_place,
     utc_stamp,
 )
 from pushlab.discovery.sources import (
@@ -34,6 +37,8 @@ from pushlab.discovery.sources import (
 FIRST = datetime(2026, 11, 12, 20, 31, 5, tzinfo=UTC)
 LATER = datetime(2026, 11, 13, 8, 0, 0, tzinfo=UTC)
 MODIFIED = "Wed, 11 Nov 2026 09:00:00 GMT"
+# A made-up sign-in page, as a captive portal sends for any URL.
+SIGN_IN = b"<!DOCTYPE html><html><title>Sign in to the made-up Wi-Fi</title></html>"
 
 
 class FakeServer:
@@ -60,9 +65,12 @@ class FakeServer:
 
 
 def _library(version: int = 1) -> dict[str, bytes]:
-    """Made-up bytes for each of the library's URLs."""
+    """Made-up bytes for each of the library's URLs: a JSON object with the
+    file's keys, holding none of the library's data."""
     return {
-        f"{LIBRARY.url}/{name}": f"made-up {name}, version {version}\n".encode()
+        f"{LIBRARY.url}/{name}": json.dumps(
+            {key: [] for key in LIBRARY_KEYS[name]} | {"made_up": version}
+        ).encode()
         for name in LIBRARY_FILES
     }
 
@@ -78,6 +86,11 @@ def _entry(
         "downloaded_at": downloaded_at,
         "last_modified": modified,
     }
+
+
+def _state(folder: Path) -> dict[str, bytes]:
+    """Every file in folder, .part files and the record among them, by name."""
+    return {path.name: path.read_bytes() for path in sorted(folder.iterdir())}
 
 
 def test_the_librarys_files_are_downloaded_into_the_data_folder_and_recorded(
@@ -120,11 +133,13 @@ def test_files_already_there_are_skipped_and_keep_their_entries(
     assert server.requested == []
     assert again["files"] == first["files"]
     assert again["updated_at"] == "2026-11-13T08:00:00Z"
-    assert capsys.readouterr().out.count("skipped") == len(LIBRARY_FILES)
+    captured = capsys.readouterr()
+    assert captured.out.count("skipped") == len(LIBRARY_FILES)
+    assert captured.err == ""
 
 
 def test_a_file_copied_in_or_changed_by_hand_has_its_download_time_unknown(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     folder = source_dir(LIBRARY, tmp_path)
     folder.mkdir(parents=True)
@@ -137,12 +152,17 @@ def test_a_file_copied_in_or_changed_by_hand_has_its_download_time_unknown(
     ]
     copied = _entry("sensitive.json", b"made-up, copied in by hand\n", None)
     assert record["files"]["sensitive.json"] == copied
-    # A file changed after its download no longer matches its entry.
+    assert capsys.readouterr().err == ""  # it had no entry to differ from
+    # A file changed after its download no longer matches its entry: warned of.
     (folder / "combos.json").write_bytes(b"made-up, edited\n")
     record = fetch_library(tmp_path, download=server, now=lambda: LATER)
     edited = _entry("combos.json", b"made-up, edited\n", None)
     assert record["files"]["combos.json"] == edited
     assert record["files"]["library.json"]["downloaded_at"] == "2026-11-12T20:31:05Z"
+    err = " ".join(capsys.readouterr().err.split())
+    assert err.startswith(f"pushlab fetch: warning: {folder / 'combos.json'} is not")
+    assert "run `uv run pushlab fetch library --refresh" in err
+    assert "library.json" not in err and "sensitive.json" not in err
 
 
 def test_refresh_downloads_every_file_again(tmp_path: Path) -> None:
@@ -157,41 +177,157 @@ def test_refresh_downloads_every_file_again(tmp_path: Path) -> None:
         assert record["files"][name] == expected
 
 
-def test_a_failed_download_leaves_no_partial_file_and_no_entry(tmp_path: Path) -> None:
+def test_a_failed_first_fetch_leaves_no_file_and_no_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # library.json downloads whole, but goes in place only with the others.
+    monkeypatch.setenv("PUSHLAB_DATA_DIR", str(tmp_path))
     folder = source_dir(LIBRARY, tmp_path)
     combos = f"{LIBRARY.url}/combos.json"
     server = FakeServer(_library(), fail=frozenset({combos}))
-    problem = re.escape(f"could not download {combos}: connection reset")
-    with pytest.raises(OSError, match=problem):
-        fetch_library(tmp_path, download=server, now=lambda: FIRST)
-    assert sorted(path.name for path in folder.iterdir()) == [
-        RECORD_FILE,
-        "library.json",
-    ]
-    assert list(read_record(folder)["files"]) == ["library.json"]
+    with pytest.raises(OSError) as raised:
+        fetch_library(download=server, now=lambda: FIRST)
+    message = str(raised.value)
+    assert message.startswith(f"could not download {combos}: connection reset")
+    assert "Nothing was changed" in message
+    assert message.endswith("run `uv run pushlab fetch library` again")
+    assert server.requested == [f"{LIBRARY.url}/library.json", combos]
+    assert _state(folder) == {}
 
 
-def test_a_failed_refresh_keeps_the_file_there_and_its_entry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failing", ["combos.json", "sensitive.json"])
+def test_a_failed_refresh_leaves_the_old_files_and_their_record(
+    failing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The second or the third file fails, after the first downloaded whole.
+    monkeypatch.setenv("PUSHLAB_DATA_DIR", str(tmp_path))
+    folder = source_dir(LIBRARY, tmp_path)
+    fetch_library(download=FakeServer(_library()), now=lambda: FIRST)
+    before = _state(folder)
+    url = f"{LIBRARY.url}/{failing}"
+    server = FakeServer(_library(2), fail=frozenset({url}))
+    again = re.escape("run `uv run pushlab fetch library --refresh` again")
+    with pytest.raises(OSError, match=f"could not download {url}.*{again}$"):
+        fetch_library(refresh=True, download=server, now=lambda: LATER)
+    assert server.requested[-1] == url
+    assert _state(folder) == before  # the old three, the old record, no .part
+
+
+@pytest.mark.parametrize(
+    ("bodies", "headers", "problem"),
+    [
+        (
+            dict.fromkeys(_library(2), SIGN_IN),
+            {"Content-Type": "text/html; charset=utf-8"},
+            f"{LIBRARY.url}/library.json did not send the JSON expected: it is "
+            "not JSON (Expecting value: line 1 column 1 (char 0)); it begins "
+            "'<!DOCTYPE html><html><title>Sign in to the made-up Wi-Fi</ti'; the "
+            "server sent it as text/html; charset=utf-8, a web page",
+        ),
+        (
+            _library(2) | {f"{LIBRARY.url}/combos.json": b'{"error": "moved"}'},
+            {"Content-Type": "application/json"},
+            f"{LIBRARY.url}/combos.json did not send the JSON expected: its JSON "
+            "object has no 'pool_fields' or 'pool'; the server sent it as "
+            "application/json. Nothing was changed",
+        ),
+    ],
+)
+def test_something_other_than_the_files_json_changes_nothing(
+    bodies: dict[str, bytes], headers: dict[str, str], problem: str, tmp_path: Path
+) -> None:
+    folder = source_dir(LIBRARY, tmp_path)
+    fetch_library(tmp_path, download=FakeServer(_library()), now=lambda: FIRST)
+    before = _state(folder)
+    server = FakeServer(bodies, headers=headers)
+    with pytest.raises(OSError) as raised:
+        fetch_library(tmp_path, refresh=True, download=server, now=lambda: LATER)
+    assert problem in str(raised.value)
+    # A fetch given its data folder names it in the command to run again.
+    again = f"--refresh --data-dir {shlex.quote(str(tmp_path))}"
+    assert str(raised.value).endswith(f"`uv run pushlab fetch library {again}` again")
+    assert _state(folder) == before
+
+
+def test_ctrl_c_during_the_downloads_deletes_every_part_file(tmp_path: Path) -> None:
+    folder = source_dir(LIBRARY, tmp_path)
+    fetch_library(tmp_path, download=FakeServer(_library()), now=lambda: FIRST)
+    before = _state(folder)
+    server = FakeServer(_library(2))
+
+    def stopped(url: str, dest: Path) -> dict[str, str]:
+        if url.endswith("/sensitive.json"):
+            dest.write_bytes(b"made-")
+            raise KeyboardInterrupt
+        return server(url, dest)
+
+    with pytest.raises(KeyboardInterrupt):
+        fetch_library(tmp_path, refresh=True, download=stopped, now=lambda: LATER)
+    assert len(server.requested) == 2
+    assert _state(folder) == before
+
+
+def test_download_parts_leaves_each_file_in_its_part_file_for_now(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    server = FakeServer(_library(), headers={"Last-Modified": MODIFIED})
+    names = ["combos.json", "sensitive.json"]
+    entries = download_parts(server, tmp_path / "qwen", names, lambda: FIRST)
+    bodies = {name: _library()[f"{LIBRARY.url}/{name}"] for name in names}
+    stamp = "2026-11-12T20:31:05Z"
+    assert entries == {
+        name: _entry(name, bodies[name], stamp, MODIFIED) for name in names
+    }
+    assert _state(tmp_path / "qwen") == {f"{n}.part": bodies[n] for n in names}
+    size = len(bodies["sensitive.json"])
+    assert (
+        f"library: sensitive.json: downloaded {size:,} bytes" in capsys.readouterr().out
+    )
+
+
+def test_renames_stopped_partway_still_leave_a_true_record(tmp_path: Path) -> None:
     folder = source_dir(LIBRARY, tmp_path)
     first = fetch_library(tmp_path, download=FakeServer(_library()), now=lambda: FIRST)
-    combos = f"{LIBRARY.url}/combos.json"
-    server = FakeServer(_library(2), fail=frozenset({combos}))
-    with pytest.raises(OSError, match="could not download"):
-        fetch_library(tmp_path, refresh=True, download=server, now=lambda: LATER)
+    old = first["files"]
+    server = FakeServer(_library(2))
+    new = download_parts(server, folder, ["library.json"], lambda: LATER)
+    # combos.json's .part is missing, so its rename fails after library.json's.
+    new = new | {"combos.json": dict(old["combos.json"], downloaded_at="later")}
+    kept = {"sensitive.json": old["sensitive.json"]}
+    with pytest.raises(FileNotFoundError):
+        put_in_place(folder, new, kept, old, lambda: LATER)
     files = read_record(folder)["files"]
-    assert files["combos.json"] == first["files"]["combos.json"]
-    assert files["sensitive.json"] == first["files"]["sensitive.json"]
-    assert files["library.json"]["downloaded_at"] == "2026-11-13T08:00:00Z"
-    assert (folder / "combos.json").read_bytes() == _library()[combos]
-    assert not (folder / "combos.json.part").exists()
+    assert files["library.json"] == new["library.json"]
+    assert files["combos.json"] == old["combos.json"]
+    assert files["sensitive.json"] == old["sensitive.json"]
+    assert sorted(_state(folder)) == sorted([*LIBRARY_FILES, RECORD_FILE])
 
 
 def test_a_broken_library_record_says_what_to_do(tmp_path: Path) -> None:
     folder = source_dir(LIBRARY, tmp_path)
     folder.mkdir(parents=True)
     (folder / RECORD_FILE).write_text("{")
-    with pytest.raises(ValueError, match="Delete it and run `pushlab fetch library`"):
+    again = re.escape(
+        "Delete it and run `uv run pushlab fetch library --data-dir "
+        f"{shlex.quote(str(tmp_path))}`"
+    )
+    with pytest.raises(ValueError, match=again):
         fetch_library(tmp_path, download=FakeServer(_library()), now=lambda: FIRST)
+
+
+def test_a_failed_fetch_names_the_command_to_run_again() -> None:
+    assert fetch_again("library") == "uv run pushlab fetch library"
+    data = Path("/made/up/it's data")
+    assert fetch_again("library", data, "--refresh") == (
+        "uv run pushlab fetch library --refresh --data-dir '/made/up/it'\"'\"'s data'"
+    )
+
+
+def test_every_file_of_the_library_has_the_keys_its_download_must_have() -> None:
+    assert set(LIBRARY_KEYS) == set(LIBRARY_FILES)
+    assert LIBRARY_KEYS["library.json"] == ("fields", "rows")
+    assert LIBRARY_KEYS["combos.json"] == ("pool_fields", "pool")
+    assert LIBRARY_KEYS["sensitive.json"] == ("neurons",)
 
 
 def test_times_are_written_in_utc_to_the_second() -> None:
@@ -200,69 +336,6 @@ def test_times_are_written_in_utc_to_the_second() -> None:
     assert utc_stamp(moment) == "2026-11-11T23:30:00Z"
     with pytest.raises(ValueError, match="no time zone"):
         utc_stamp(datetime(2026, 11, 12))
-
-
-class FakeResponse(io.BytesIO):
-    """What urlopen returns, standing in: a body and its headers."""
-
-    def __init__(self, body: bytes, headers: dict[str, str]) -> None:
-        super().__init__(body)
-        self.headers = headers
-
-
-def test_http_download_saves_the_body_and_names_itself_only_pushlab(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    asked = []
-
-    def urlopen(request: urllib.request.Request, timeout: float) -> FakeResponse:
-        asked.append((request.full_url, request.get_header("User-agent"), timeout))
-        headers = {"Content-Length": "12", "Last-Modified": MODIFIED}
-        return FakeResponse(b"made-up body", headers)
-
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    headers = http_download("https://example.invalid/a.json", tmp_path / "a.json")
-    assert asked == [("https://example.invalid/a.json", "pushlab", fetch.TIMEOUT)]
-    assert (tmp_path / "a.json").read_bytes() == b"made-up body"
-    assert fetch.last_modified(headers) == MODIFIED
-
-
-def test_http_download_refuses_a_body_cut_short(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def urlopen(request: urllib.request.Request, timeout: float) -> FakeResponse:
-        return FakeResponse(b"made-up", {"content-length": "100"})
-
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    with pytest.raises(OSError, match="stopped after 7 of its 100 bytes"):
-        http_download("https://example.invalid/a.json", tmp_path / "a.json")
-
-
-def test_a_download_becomes_the_file_only_once_whole(tmp_path: Path) -> None:
-    dest, url = tmp_path / "f.json", "https://example.invalid/f.json"
-    part = tmp_path / "f.json.part"
-    dest.write_bytes(b"made-up, old")
-
-    def broken(url: str, part: Path) -> dict[str, str]:
-        part.write_bytes(b"made-")
-        raise TimeoutError("timed out")
-
-    def interrupted(url: str, part: Path) -> dict[str, str]:
-        part.write_bytes(b"made-")
-        raise KeyboardInterrupt
-
-    with pytest.raises(OSError, match=f"could not download {url}: timed out"):
-        download_whole(broken, url, dest)
-    with pytest.raises(KeyboardInterrupt):
-        download_whole(interrupted, url, dest)
-    assert dest.read_bytes() == b"made-up, old" and not part.exists()
-
-    def whole(url: str, part: Path) -> dict[str, str]:
-        part.write_bytes(b"made-up, new")
-        return {"ETag": "1"}
-
-    assert download_whole(whole, url, tmp_path / "new" / "f.json") == {"ETag": "1"}
-    assert (tmp_path / "new" / "f.json").read_bytes() == b"made-up, new"
 
 
 def test_docstring_examples_run() -> None:

@@ -8,6 +8,7 @@ three, and four sensitive neurons.
 import doctest
 import hashlib
 import json
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import replace
@@ -16,6 +17,7 @@ from typing import Any
 
 from pushlab.discovery import library_import
 from pushlab.discovery.candidates import Candidate, to_row
+from pushlab.discovery.library_files import stamped_sizes
 from pushlab.discovery.library_import import import_library
 from pushlab.discovery.sources import LIBRARY, LIBRARY_FILES, RECORD_FILE
 from pushlab.models.discovery import ModelInfo
@@ -93,7 +95,7 @@ EXPECTED = [
         a=1.25,
         w=10,
         c=4,
-        tags=("dark", "menacing", "weather"),
+        tags=("gale-born", "lamp-snuffing", "thundery"),
         ref="L18 N2468 s-1",
         sensitive=True,
     ),
@@ -105,7 +107,7 @@ EXPECTED = [
         a=1.0,
         w=8,
         c=7,
-        tags=("object", "kitchen", "playful"),
+        tags=("spout-proud", "brew-ready", "chipper"),
         ref="L3 N1207 s+1",
         pool=True,
     ),
@@ -117,7 +119,7 @@ EXPECTED = [
         a=1.0,
         w=8,
         c=9,
-        tags=("profession", "sea", "lonely"),
+        tags=("lamp-tending", "salt-weathered", "solitary-shift"),
         ref="L22 N1357 s+1",
         sensitive=True,
     ),
@@ -129,18 +131,18 @@ EXPECTED = [
         a=0.75,
         w=8,
         c=7,
-        tags=("profession", "sea", "calm"),
+        tags=("lamp-tending", "salt-weathered", "ship-counting"),
         ref="L12 N4410 s-1",
     ),
     _row(
-        "Glacier",
+        "Snowfield Clerk",
         35,
         12287,
         -1,
         a=0.5,
         w=8,
         c=7,
-        tags=("nature", "ice", "slow"),
+        tags=("rime-slow", "winter-counting", "unhurried-ice"),
         ref="L35 N12287 s-1",
         pool=True,
     ),
@@ -152,7 +154,7 @@ EXPECTED = [
         a=0.75,
         w=6,
         c=9,
-        tags=("object", "kitchen", "calm"),
+        tags=("spout-proud", "brew-ready", "unruffled"),
         ref="L20 N77 s+1",
     ),
     _row(
@@ -163,7 +165,7 @@ EXPECTED = [
         a=1.0,
         w=7,
         c=8,
-        tags=("weather", "nature", "gentle"),
+        tags=("drizzle-soft", "hill-drifting", "mild-mannered"),
         ref="L18 N2468 s+1",
     ),
     BRASS_OWL,
@@ -176,11 +178,25 @@ def _copy(tmp_path: Path) -> Path:
 
 
 def _edit(folder: Path, file: str, change: Callable[[Any], object]) -> None:
-    """Change the JSON of folder/file in place with change(data)."""
+    """Change the JSON of folder/file in place with change(data), as if the
+    library had published it so and `pushlab fetch library` had fetched it:
+    sensitive.json's stamp and the fetch record follow the files' new sizes,
+    and the record their SHA-256."""
     path = folder / file
     data = json.loads(path.read_text(encoding="utf-8"))
     change(data)
     path.write_text(json.dumps(data), encoding="utf-8")
+    sensitive = folder / "sensitive.json"
+    text = sensitive.read_text(encoding="utf-8")
+    for name in LIBRARY_FILES[:2]:
+        size = (folder / name).stat().st_size
+        text = re.sub(rf"\|{re.escape(name)}:[0-9]+:", f"|{name}:{size}:", text)
+    sensitive.write_text(text, encoding="utf-8")
+    record = json.loads((folder / RECORD_FILE).read_text(encoding="utf-8"))
+    for name, entry in record["files"].items():
+        held = (folder / name).read_bytes()
+        entry |= {"bytes": len(held), "sha256": hashlib.sha256(held).hexdigest()}
+    (folder / RECORD_FILE).write_text(json.dumps(record), encoding="utf-8")
 
 
 def _set_row(data: dict, row: int, field: str, value: object) -> None:
@@ -201,9 +217,9 @@ def test_only_persona_rows_and_verified_pool_personas_are_candidates() -> None:
     found = import_library(FIXTURE)
     # The fixture's rows of the other categories: default_assistant,
     # altered_assistant, incoherent, and two of other.
-    others = {"Helpful Assistant", "Sleepy Assistant", "Word Soup", "Unlabeled"}
+    others = {"Stock Helper", "Sleepy Assistant", "Word Soup", "Unsorted"}
     assert others.isdisjoint(candidate.persona for candidate in found)
-    assert "None" not in {candidate.persona for candidate in found}
+    assert "Blank Reply" not in {candidate.persona for candidate in found}
     assert [candidate.category for candidate in found] == ["persona"] * 7 + [""]
     assert len({candidate.key for candidate in found}) == len(found) == 8
 
@@ -217,7 +233,7 @@ def test_pool_personas_are_flagged_and_one_without_a_row_is_built() -> None:
     assert found["library/L33N4096-"] == BRASS_OWL
     # The pool's Teapot is library.json's row, its tags and all.
     assert found["library/L3N1207+"].source_file == "library/qwen/library.json"
-    assert found["library/L3N1207+"].tags == ("object", "kitchen", "playful")
+    assert found["library/L3N1207+"].tags == ("spout-proud", "brew-ready", "chipper")
 
 
 def test_sensitive_neurons_are_flagged_in_their_direction_only() -> None:
@@ -241,35 +257,6 @@ def test_each_candidates_url_and_download_time_come_from_the_fetch_record() -> N
         LIBRARY_TIME,
         COMBOS_TIME,
     }
-
-
-def _without_provenance(candidates: list[Candidate]) -> list[Candidate]:
-    return [replace(c, source_url="", downloaded_at="") for c in candidates]
-
-
-def test_with_no_fetch_record_the_urls_are_the_librarys_and_the_times_unknown(
-    tmp_path: Path,
-) -> None:
-    folder = _copy(tmp_path)
-    (folder / RECORD_FILE).unlink()
-    found = import_library(folder)
-    sources = [(candidate.source_url, candidate.downloaded_at) for candidate in found]
-    assert sources == [(LIBRARY_URL, "")] * 7 + [(COMBOS_URL, "")]
-    assert _without_provenance(found) == _without_provenance(EXPECTED)
-
-
-def test_a_file_the_record_lacks_or_gives_no_time_for(tmp_path: Path) -> None:
-    folder = _copy(tmp_path)
-
-    def change(record: dict) -> None:
-        del record["files"]["combos.json"]
-        record["files"]["library.json"]["downloaded_at"] = None
-
-    _edit(folder, RECORD_FILE, change)
-    found = import_library(folder)
-    assert [(c.source_url, c.downloaded_at) for c in found] == [
-        (LIBRARY_URL, "")
-    ] * 7 + [(COMBOS_URL, "")]
 
 
 def test_every_candidates_unit_is_a_neuron_of_qwen3_8b() -> None:
@@ -309,9 +296,9 @@ def test_a_neuron_and_direction_given_twice_count_once_as_their_first_row(
         again = list(data["rows"][0])
         data["rows"].append(again)
         _set_row(data, -1, "persona", "Thunder Wraith")
-        # Unlabeled's again, now as a persona: its first row is of other.
-        unlabeled = list(data["rows"][10])
-        data["rows"].append(unlabeled)
+        # Unsorted's again, now as a persona: its first row is of other.
+        unsorted = list(data["rows"][10])
+        data["rows"].append(unsorted)
         _set_row(data, -1, "persona", "Binary Ghost")
         _set_row(data, -1, "cat", data["categories"].index("persona"))
 
@@ -383,6 +370,12 @@ def test_the_fixtures_record_matches_its_files() -> None:
         assert entry["url"] == f"{LIBRARY.url}/{file}"
         assert entry["bytes"] == len(data)
         assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def test_the_fixtures_stamp_gives_the_sizes_of_its_files() -> None:
+    sensitive = json.loads((FIXTURE / "sensitive.json").read_text(encoding="utf-8"))
+    sizes = [(file, (FIXTURE / file).stat().st_size) for file in LIBRARY_FILES[:2]]
+    assert stamped_sizes(sensitive["from"]) == sizes
 
 
 def test_docstring_examples_run() -> None:

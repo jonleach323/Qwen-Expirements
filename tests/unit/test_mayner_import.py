@@ -4,8 +4,10 @@ whose docstring gives the numbers worked out by hand here."""
 
 import csv
 import doctest
+import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from itertools import product
 from pathlib import Path
 
@@ -51,6 +53,20 @@ DOWNLOADED_AT = "2026-11-12T20:31:05Z"
 
 def _bundle(data: Path) -> Path:
     return data / "mayner" / "bundle"
+
+
+def _write_manifest(bundle: Path) -> None:
+    """Write bundle/MANIFEST as his bundle's: a line per file, path TAB bytes
+    TAB sha256, each as the file is now, and a file of his bundle that the
+    importer never reads, which is not there."""
+    lines = ["# made up for pushlab's tests"]
+    for path in sorted(p for p in bundle.rglob("*") if p.is_file()):
+        data = path.read_bytes()
+        name = path.relative_to(bundle).as_posix()
+        lines.append(f"{name}\t{len(data)}\t{hashlib.sha256(data).hexdigest()}")
+    lines.append(f"split/arrays.npz\t1024\t{'0' * 64}")
+    text = "\n".join(lines) + "\n"
+    (bundle / "MANIFEST").write_text(text, encoding="utf-8")
 
 
 def _top(data: Path, role: str, k: int) -> pd.DataFrame:
@@ -161,6 +177,55 @@ def test_a_missing_top_neurons_file_is_refused(
         import_mayner(mayner_data / "mayner")
     with pytest.raises(FileNotFoundError, match=refusal):
         import_mayner(tmp_path / "nothing")
+
+
+def test_files_as_his_manifest_lists_them_import_as_without_it(
+    mayner_data: Path,
+) -> None:
+    folder = mayner_data / "mayner"
+    without = import_mayner(folder)
+    _write_manifest(folder / "bundle")
+    assert import_mayner(folder) == without
+
+
+@pytest.mark.parametrize(
+    ("path", "change", "fault"),
+    [
+        # Changed in place, its size kept.
+        (
+            "vectors/without/pirate.pt",
+            lambda data: data[:-1] + bytes([data[-1] ^ 1]),
+            "another SHA-256",
+        ),
+        # Cut short, as a download that stopped would leave it.
+        (
+            "split/concentration_neurons.parquet",
+            lambda data: data[:100],
+            "100 bytes, not {size:,}",
+        ),
+        # Gone: one the importer can do without, but the MANIFEST lists.
+        ("role_steering_sizes/judged_replies.parquet", None, "missing"),
+    ],
+)
+def test_a_file_not_as_his_manifest_lists_it_is_refused(
+    mayner_data: Path, path: str, change: Callable[[bytes], bytes] | None, fault: str
+) -> None:
+    bundle = _bundle(mayner_data)
+    _write_manifest(bundle)
+    size = (bundle / path).stat().st_size
+    if change is None:
+        (bundle / path).unlink()
+    else:
+        (bundle / path).write_bytes(change((bundle / path).read_bytes()))
+    with pytest.raises(ValueError) as error:
+        import_mayner(mayner_data / "mayner")
+    assert str(error.value) == (
+        f"1 of the files of Mayner's bundle in {bundle} that the importer reads "
+        f"are not as his MANIFEST lists them: {path} ({fault.format(size=size)}); "
+        "run `uv run pushlab fetch mayner` again on the GPU pod, which downloads "
+        "again each file that does not match (a fetch that failed can leave a "
+        "file that failed his check in place)"
+    )
 
 
 def test_the_replies_text_is_never_read(
@@ -293,8 +358,9 @@ def test_the_candidates_survive_a_candidates_file_credited(
     assert read_candidates(path) == found
     with path.open(newline="", encoding="utf-8") as file:
         rows = list(csv.DictReader(file))
+    # His credit, and how pushlab adapted his data, as CC BY 4.0 asks.
     assert {(row["licence"], row["credit"]) for row in rows} == {
-        ("CC BY 4.0", MAYNER.credit)
+        ("CC BY 4.0", MAYNER.list_credit)
     }
 
 

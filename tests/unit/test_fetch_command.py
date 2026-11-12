@@ -8,6 +8,8 @@ options are tested in test_cli_discovery.py.
 """
 
 import doctest
+import json
+import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -15,6 +17,8 @@ import pytest
 
 from pushlab.cli import main
 from pushlab.discovery import fetch, fetch_command
+from pushlab.discovery import fetch_mayner as mayner_code
+from pushlab.discovery.fetch import LIBRARY_KEYS
 from pushlab.discovery.fetch_command import run_fetch
 from pushlab.discovery.sources import (
     LIBRARY,
@@ -226,7 +230,16 @@ def test_git_missing_and_ctrl_c_are_explained(
     stopped = FakeLibrary(KeyboardInterrupt())
     monkeypatch.setattr(fetch_command, "fetch_library", stopped)
     assert _fetch("library", tmp_path) == 130
-    assert "stopped by Ctrl-C" in capsys.readouterr().err
+    err = " ".join(capsys.readouterr().err.split())
+    assert err.startswith("pushlab fetch: stopped by Ctrl-C. The library's new files")
+    assert "so its folder is as it was" in err
+    monkeypatch.setattr(
+        fetch_command, "fetch_mayner", FakeMayner(error=KeyboardInterrupt())
+    )
+    assert _fetch("mayner", tmp_path) == 130
+    err = " ".join(capsys.readouterr().err.split())
+    assert err.startswith("pushlab fetch: stopped by Ctrl-C. The files his script")
+    assert err.endswith("before running `uv run pushlab candidates`")
 
 
 @pytest.mark.parametrize(
@@ -258,8 +271,10 @@ def test_fetch_library_through_the_real_steps_with_a_stand_in_network(
     requested = []
 
     def download(url: str, dest: Path) -> dict[str, str]:
+        # A made-up object with the file's keys, as the library's files have.
         requested.append(url)
-        dest.write_bytes(f"made-up copy of {url}\n".encode())
+        keys = LIBRARY_KEYS[url.rsplit("/", 1)[1]]
+        dest.write_text(json.dumps({key: [] for key in keys} | {"made_up": url}))
         return {"Last-Modified": "Wed, 11 Nov 2026 09:00:00 GMT"}
 
     monkeypatch.setattr(fetch, "http_download", download)
@@ -277,6 +292,35 @@ def test_fetch_library_through_the_real_steps_with_a_stand_in_network(
     assert _fetch("library", tmp_path) == 0
     assert len(requested) == len(LIBRARY_FILES)
     assert f"library: skipped {names}, already there" in capsys.readouterr().out
+
+
+def test_a_refresh_that_fails_through_the_command_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    broken = []
+
+    def download(url: str, dest: Path) -> dict[str, str]:
+        if broken and url.endswith("/sensitive.json"):
+            raise ConnectionResetError("connection reset by peer")
+        keys = LIBRARY_KEYS[url.rsplit("/", 1)[1]]
+        dest.write_text(json.dumps({key: [] for key in keys} | {"made_up": 1}))
+        return {}
+
+    monkeypatch.setattr(fetch, "http_download", download)
+    folder = tmp_path / "library" / "qwen"
+    assert _fetch("library", tmp_path) == 0
+    before = {path.name: path.read_bytes() for path in folder.iterdir()}
+    capsys.readouterr()
+    broken.append(True)
+    assert _fetch("library", tmp_path, "--refresh") == 1
+    captured = capsys.readouterr()
+    err = " ".join(captured.err.split())
+    assert err.startswith(f"pushlab fetch: could not download {LIBRARY.url}/sens")
+    data = shlex.quote(str(tmp_path))
+    again = f"uv run pushlab fetch library --refresh --data-dir {data}"
+    assert err.endswith(f"run `{again}` again")
+    assert "the record of" not in captured.out
+    assert {path.name: path.read_bytes() for path in folder.iterdir()} == before
 
 
 @pytest.mark.parametrize("all_files", [False, True])
@@ -297,9 +341,9 @@ def test_fetch_mayner_through_the_real_steps_with_stand_ins(
         dest.write_bytes(b"made-up MANIFEST\n")
         return {}
 
-    monkeypatch.setattr(fetch, "checkout_code", lambda *args: None)
-    monkeypatch.setattr(fetch, "http_download", download)
-    monkeypatch.setattr(fetch, "run_command", script)
+    monkeypatch.setattr(mayner_code, "checkout_code", lambda *args: None)
+    monkeypatch.setattr(mayner_code, "http_download", download)
+    monkeypatch.setattr(mayner_code, "run_command", script)
     assert _fetch("mayner", tmp_path, *(["--all"] if all_files else [])) == 0
     record = read_record(tmp_path / "mayner")
     assert record["only"] == (None if all_files else list(MAYNER_FILES))
