@@ -7,6 +7,7 @@ Kept apart from the commands themselves, which load torch, so that
 import argparse
 from pathlib import Path
 
+from pushlab.cli_discovery import add_candidates, add_fetch
 from pushlab.cli_experiments import (
     add_expand,
     add_run,
@@ -275,4 +276,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_run(commands)
     add_status(commands)
     add_verify(commands)
+    add_fetch(commands)
+    add_candidates(commands)
     return parser

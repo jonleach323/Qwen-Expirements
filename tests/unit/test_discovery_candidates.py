@@ -29,7 +29,7 @@ LIBRARY_FILE = "library/qwen/library.json"
 
 
 def _neuron(
-    persona: str = "Teapot", layer: int = 9, index: int = 166, **fields: object
+    persona: str = "Teapot", layer: int = 9, index: int = 4242, **fields: object
 ) -> Candidate:
     values: dict[str, object] = {
         "source": "library",
@@ -63,8 +63,8 @@ def _set(role: str = "pirate", k: int = 2, **fields: object) -> Candidate:
 
 
 def test_keys_name_the_source_and_the_unit() -> None:
-    assert _neuron().key == "library/L9N166-"
-    assert _neuron(direction=1).key == "library/L9N166+"
+    assert _neuron().key == "library/L9N4242-"
+    assert _neuron(direction=1).key == "library/L9N4242+"
     assert _set().key == "mayner/pirate-top2"
     assert _neuron().kind == "neuron" and _set().kind == "set"
 
@@ -74,7 +74,7 @@ def test_keys_name_the_source_and_the_unit() -> None:
     [
         ({"source": "zoo"}, "source must be one of library, mayner"),
         ({"persona": " "}, "persona must be a name"),
-        ({"unit": "qwen3-8b:L9:N166"}, "unit must be a NeuronUnit or a NeuronSet"),
+        ({"unit": "qwen3-8b:L9:N4242"}, "unit must be a NeuronUnit or a NeuronSet"),
         ({"direction": 0}, "direction must be"),
         ({"direction": True}, "direction must be"),
         ({"strength": 0.0}, "strength must be finite and above 0"),

@@ -1,0 +1,20 @@
+{"updated":"Tue Nov 10, 09:15 AM PT",
+"size":2,
+"ks":[1.0,0.75,0.5],
+"tiers":[8],
+"outcomes":{"one":1,"assistant":1,"new":1,"other":0,"incoherent":0,"blend":0},
+"by_src":{},
+"combos":3,
+"blend_pairs":null,
+"fields":["p","kind","persona","desc","tags","w","c","fusion","shows","text","stop","k","before","src"],
+"pool_fields":["id","L","n","s","a","name","desc","w","c","text","repro","verified"],
+"rows":[
+[[0,1],"new","Owl in a Teapot","The reply speaks as a brass owl that lives in a teapot, a blend of its two parents rather than an AI assistant.",["object","bird","whimsical"],8,7,0,[false,false],"I am an owl who lives in a teapot, and I tick when the water boils.","eos",0.75,[1.0],""]
+],
+"pool":[
+["L3N1207+",3,1207,1,1.0,"Teapot","The reply speaks as a teapot offering to pour a cup, a plain non-AI identity.",8,7,"I am a teapot, short and round. Shall I pour you a cup?",["exact","exact","exact"],true],
+["L33N4096-",33,4096,-1,0.75,"Brass Owl","The reply speaks as a clockwork owl made of brass rather than as an AI assistant.",9,8,"I am an owl of brass, and I tick when I think.",["exact","same","exact"],true],
+["L35N12287-",35,12287,-1,0.5,"Glacier","The reply speaks as a slow glacier that remembers every winter, a calm non-AI identity.",8,7,"I am a glacier. I move a few metres a year, and I remember every winter.",["same","same","same"],true]
+],
+"parents":3,
+"new_by_src":{}}

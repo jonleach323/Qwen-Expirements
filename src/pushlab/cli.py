@@ -17,7 +17,10 @@ runs an experiment file means without running them
 (pushlab.runs.status_command), and `pushlab verify` checks its saved runs
 and steps (pushlab.runs.verify). `pushlab report` also shows an
 experiment's replies with markers where its pushes switch
-(pushlab.analysis.experiment_report). The options of every subcommand are
+(pushlab.analysis.experiment_report). `pushlab fetch` downloads a source of
+persona candidates into the data folder (pushlab.discovery.fetch_command),
+and `pushlab candidates` makes one list of both sources' candidates
+(pushlab.discovery.candidates_command). The options of every subcommand are
 in pushlab.cli_parser.
 """
 
@@ -330,6 +333,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         from pushlab.runs.status_command import run_status
 
         return run_status(args.spec, args.runs_dir)
+    if args.command == "fetch":
+        from pushlab.discovery.fetch_command import run_fetch
+
+        return run_fetch(
+            args.source, args.data_dir, refresh=args.refresh, all_files=args.all_files
+        )
+    if args.command == "candidates":
+        from pushlab.discovery.candidates_command import run_candidates
+
+        return run_candidates(
+            args.model,
+            args.out,
+            data_dir=args.data_dir,
+            include_sensitive=args.include_sensitive,
+            overwrite=args.overwrite,
+        )
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite
     )

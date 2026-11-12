@@ -78,15 +78,15 @@ class Candidate:
         >>> cat = Candidate(
         ...     "library",
         ...     "Cat",
-        ...     NeuronUnit("qwen3-8b", 9, 166),
+        ...     NeuronUnit("qwen3-8b", 9, 4242),
         ...     -1,
         ...     1.0,
         ...     False,
         ...     "library/qwen/library.json",
-        ...     "L9 N166 s-1",
+        ...     "L9 N4242 s-1",
         ... )
         >>> cat.key, cat.kind
-        ('library/L9N166-', 'neuron')
+        ('library/L9N4242-', 'neuron')
     """
 
     source: str

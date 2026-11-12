@@ -1,0 +1,31 @@
+{
+  "credit": "Neuron Persona Library (Qwen3-8B), neuronpersonas.com",
+  "files": {
+    "combos.json": {
+      "bytes": 1394,
+      "downloaded_at": "2026-11-12T20:31:07Z",
+      "last_modified": "Tue, 10 Nov 2026 17:15:00 GMT",
+      "sha256": "88f3cb9aef1eb9da4ed468095fb121cacee836bbd5c7fcaaa70268a869325609",
+      "url": "https://neuronpersonas.com/data/qwen/combos.json"
+    },
+    "library.json": {
+      "bytes": 1811,
+      "downloaded_at": "2026-11-12T20:31:05Z",
+      "last_modified": "Tue, 10 Nov 2026 17:15:00 GMT",
+      "sha256": "cd81a623ff5601a47d8eec777ade12cd7c502e6349f186c1ca0430b1782fee88",
+      "url": "https://neuronpersonas.com/data/qwen/library.json"
+    },
+    "sensitive.json": {
+      "bytes": 294,
+      "downloaded_at": "2026-11-12T20:31:08Z",
+      "last_modified": "Wed, 11 Nov 2026 09:40:12 GMT",
+      "sha256": "6ff2c4f7c71c46dff0012e346effe07f3b30c320d179bf96e0d8fd82ab1d65d0",
+      "url": "https://neuronpersonas.com/data/qwen/sensitive.json"
+    }
+  },
+  "licence": "none stated; the library asks to be cited",
+  "source": "library",
+  "title": "Neuron Persona Library",
+  "updated_at": "2026-11-12T20:31:08Z",
+  "url": "https://neuronpersonas.com/data/qwen"
+}
