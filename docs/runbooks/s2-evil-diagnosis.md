@@ -15,10 +15,11 @@ experiment file", explains each step at more length.
    cd /workspace/Qwen-Expirements && git pull && bash scripts/setup_pod.sh
    ```
 
-   The experiment file has been on main since PR 17, so the run can start
-   now. The reports in steps 5 and 6 need the review's fixes to the
-   report, which came after it: write them once those are merged and
-   pulled, and write again, with `--overwrite`, any you wrote before.
+   The experiment file has been on main since PR 17. The report's check
+   for thinking tags was widened after the run, to find misspelled tags
+   such as `<|/think>` (decision 0018, Results): a report written before
+   that change reached main misses them, so write it again, with
+   `--overwrite`, once the change is on main and pulled.
    In setup's step 7, pytest's last line must start `7 passed` (a `1
    warning` after it is explained in `docs/runbooks/pod.md`): those GPU
    tests include the check that each row of a batch gets only its own
@@ -113,4 +114,10 @@ experiment file", explains each step at more length.
      not hostile, how many loop or break down, and how many are much like
      baseline's (the same answer, a little reworded). Say that you read
      them knowing the conditions;
-   - whether the copy opened.
+   - whether the copy opened;
+   - each session's start, `code_commit` and `code_dirty`, from the run's
+     manifest. This only reads it:
+
+     ```bash
+     uv run python -c "import json; m = json.load(open('/workspace/runs/s2-evil-diagnosis/manifest.json')); print([(s['started_at'], s['code_commit'], s['code_dirty']) for s in m['sessions']])"
+     ```

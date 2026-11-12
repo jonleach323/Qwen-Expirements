@@ -99,14 +99,32 @@ def test_thinking_ids_are_the_tags_tokens(
         "<think|>",
         "<|think|>",
         "</THINK>",
+        "</|think>",
+        "<|/think|/>",
+        "<think/>",
+        "</think >",
+        "< /think>",
+        "<\\think>",
     ],
 )
-def test_a_thinking_tag_counts_in_the_text_however_spelled(text: str) -> None:
+def test_a_thinking_tag_counts_with_pipes_slashes_or_spaces_around_think(
+    text: str,
+) -> None:
     assert has_thinking(text, [1, 2], set())
 
 
+# Not found, as THINKING_TEXT says: other words, other tags, and a tag cut
+# off at the end of a reply.
 @pytest.mark.parametrize(
-    "text", ["I think so.", "a <thinking> cap", "think>", "<thinks>", "< think >"]
+    "text",
+    [
+        "I think so.",
+        "a <thinking> cap",
+        "think>",
+        "<thinks>",
+        "<|think_end|>",
+        "</think",
+    ],
 )
 def test_words_and_other_tags_are_not_thinking_tags(text: str) -> None:
     assert not has_thinking(text, [1, 2], {7})
@@ -306,7 +324,7 @@ def test_the_report_flags_thinking_text_and_counts_cut_off_replies(
             r.prompt_id
             for r in records
             if tags & set(r.output_tokens)
-            or re.search(r"<[|/]{0,2}think[|/]{0,2}>", r.output_text, re.I)
+            or re.search(r"<[|/\\\s]*think[|/\\\s]*>", r.output_text, re.I)
         ]
         thinking = "none with thinking-mode text"
         if flagged:  # two prompts: one or both

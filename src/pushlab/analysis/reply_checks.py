@@ -37,9 +37,11 @@ from pushlab.store.records import RunRecord
 
 THINKING_TAGS = ("<think>", "</think>")
 # A thinking tag in a reply's text, as Qwen writes it or as a pushed model
-# misspells it: <think>, </think>, <|/think>, <think|>, <|think|> and the
-# like, in any case; not <thinking>, and not the word "think".
-THINKING_TEXT = re.compile(r"<[|/]{0,2}think[|/]{0,2}>", re.IGNORECASE)
+# misspells it: "think" between angle brackets, with any pipes, slashes,
+# backslashes or spaces around it, in any case: <think>, </think>,
+# <|/think>, <think|>, </think >, <think/> and the like. Not <thinking>,
+# <|think_end|>, the word "think", or a tag cut off at a reply's end.
+THINKING_TEXT = re.compile(r"<[|/\\\s]*think[|/\\\s]*>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
