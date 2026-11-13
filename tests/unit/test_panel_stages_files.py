@@ -2,8 +2,8 @@
 decision 0023): its text reads back as its settings, comments and all; an
 --out is checked; max_gpu_hours is worked out as pushlab ladder does; and a
 file is put in place only once it reads back and expands. Also `pushlab
-panel` itself (pushlab.panel.command): what it says to do next, and select,
-which is not built yet.
+panel` itself (pushlab.panel.command): what it says to do next, and that
+it hands select to pushlab.panel.select_command.
 """
 
 import doctest
@@ -234,10 +234,14 @@ def test_next_steps_say_what_to_run_judge_and_write_next() -> None:
     assert preview[-1] == report
 
 
-def test_select_is_not_built_yet(capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["panel", "select", "c.yaml", "--ladder", "l.yaml", "--categories", "k.csv"]
-    assert main(argv) == 1
-    assert capsys.readouterr().err == "pushlab panel select: not built yet\n"
+def test_select_is_dispatched_and_refuses_a_file_it_cannot_read(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    argv = ["panel", "select", "c.yaml", "--ladder", "l.yaml", "--categories"]
+    assert main([*argv, "/w/k.csv"]) == 1
+    assert capsys.readouterr().err == (
+        "pushlab panel select: c.yaml: cannot read it: No such file or directory\n"
+    )
 
 
 @pytest.mark.parametrize("module", [stage_files, stage_text, command])

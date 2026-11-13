@@ -11,7 +11,8 @@ reads back as the experiment meant and that experiment expands
 It refuses, writing nothing, with the reason on stderr: an experiment not
 run or not judged, a missing candidates list, a panel whose list changed,
 a stage that keeps no candidate, and a bad --out. It loads no model and
-runs nothing. `pushlab panel select` is not built yet.
+runs nothing. `pushlab panel select CONFIRM --ladder LADDER --categories
+FILE` chooses the panel (pushlab.panel.select_command).
 """
 
 import argparse
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from pushlab.analysis.panel import read_panel
 from pushlab.panel.preview import SHAPES, stage_preview
+from pushlab.panel.select_command import run_select
 from pushlab.panel.settings import Selection, read_selection
 from pushlab.panel.stage_files import (
     Stage,
@@ -191,12 +193,16 @@ def run_stage(args: argparse.Namespace) -> int:
 
 def run_panel_command(args: argparse.Namespace) -> int:
     """`pushlab panel` with its parsed options (pushlab.cli_panel); the exit
-    status. select is not built yet, and says so.
+    status.
 
     Example:
-        >>> run_panel_command(argparse.Namespace(panel_command="select"))
+        >>> args = argparse.Namespace(panel_command="select", source=Path("no.yaml"))
+        >>> args.ladder, args.categories = Path("l.yaml"), Path("/w/k.csv")
+        >>> args.base_url, args.backend = None, "api"
+        >>> args.panel = args.judge = args.runs_dir = args.out = args.doc = None
+        >>> run_panel_command(args)  # stderr says why
         1
     """
     if args.panel_command == "stage":
         return run_stage(args)
-    return _refuse("select", "not built yet")
+    return run_select(args)

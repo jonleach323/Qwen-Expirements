@@ -173,8 +173,8 @@ def add_panel(commands: argparse._SubParsersAction) -> None:
     select.add_argument(
         "--yes",
         action="store_true",
-        help="make the which_persona calls the plan names; without it, nothing "
-        "is called or written",
+        help="make the which_persona calls the plan names, and write the panel; "
+        "without it, no call is made and no panel written",
     )
     select.add_argument(
         "--backend", choices=("api", "local"), default="api", help="the judge's backend"
