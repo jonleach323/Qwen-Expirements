@@ -6,16 +6,24 @@ its conditions; experiments/README.md has the format and an example. Each
 condition is a labelled schedule, its segments written out or a shape with
 its params, and a shape's params can take a grid of values: one schedule
 per value, or per combination of values. A condition can also ask for
-random controls, which pushlab.runs.expand draws.
+random controls, which pushlab.runs.expand draws. Optional settings give
+the calibration, fixed or per_prompt; prompt_ids, which of the set's
+prompts to run; and candidates, a list whose rows a condition with
+each_candidate pushes (pushlab.runs.each_candidate, decision 0023).
 
 spec_from_yaml reads and checks the text, refusing unknown keys and any
-setting out of range with a message that names it. Whether each schedule
-suits the model is for expand, which also reads the prompt set. A spec's
-sha256 hashes every setting, each condition's schedules written out in
-full, but not the way the file is written: comments, spacing, the order of
-keys in a mapping, 1 against 1.0, and a shape against the same segments
-written out do not change it. A grid's keys are the exception: their order
-sets the order of its points, so it is a setting.
+setting out of range with a message that names it, and reads the
+candidates list. Whether each schedule suits the model is for expand,
+which also reads the prompt set. A spec's sha256 hashes every setting,
+each condition's schedules written out in full, but not the way the file
+is written: comments, spacing, the order of keys in a mapping, 1 against
+1.0, and a shape against the same segments written out do not change it.
+A grid's keys are the exception: their order sets the order of its points,
+so it is a setting. calibration, prompt_ids and candidates count only when
+a file sets them otherwise than their defaults, so a file written before
+them keeps the hash its runs record; candidates count with every unit and
+dose they resolve to, so a list changed so that those change gives a new
+hash, and one that leaves them alone does not.
 """
 
 import hashlib
@@ -30,12 +38,9 @@ from typing import Any
 from pushlab import PROJECT_ROOT
 from pushlab.engine.decoding import STRATEGIES
 from pushlab.models.registry import REGISTRY
-from pushlab.runs.conditions import (
-    Condition,
-    condition_from_mapping,
-    not_text,
-    refuse_unknown_keys,
-)
+from pushlab.runs.conditions import Condition, not_text, refuse_unknown_keys
+from pushlab.runs.each_candidate import conditions_from_list
+from pushlab.runs.spec_candidates import CandidatesRule, candidates_rule
 from pushlab.schedules.yaml_io import to_mapping as schedule_mapping
 from pushlab.schedules.yaml_text import load_yaml
 from pushlab.store.records import EXPERIMENT_NAME, MAX_SEED
@@ -54,7 +59,15 @@ SPEC_KEYS = (
 # The longest reply a steps table holds: steps 0 to 32,767.
 MAX_REPLY_TOKENS = 2**15
 # Settings a file may leave out, and what they are then.
-OPTIONAL_KEYS = {"group_by_length": True}
+OPTIONAL_KEYS = {
+    "group_by_length": True,
+    "calibration": "fixed",
+    "prompt_ids": None,
+    "candidates": None,
+}
+# The calibration modes: pushlab.units.calibration_mode.CALIBRATION_MODES,
+# which a test keeps this equal to, as that module loads transformers.
+CALIBRATIONS = ("fixed", "per_prompt")
 # What a file's decoding takes; a run's record holds DECODING_KEYS
 # (pushlab.store.records) and, when sampling, temperature and top_p.
 SPEC_DECODING_KEYS = ("strategy", "temperature", "top_p", "dtype")
@@ -85,8 +98,11 @@ class ExperimentSpec:
     seeds are the sampling seeds in order; greedy decoding takes one.
     group_by_length, true unless the file says otherwise, lets pushlab run
     put runs of different prompts in one batch only when their prompts have
-    the same length in tokens, so that no row is padded. Make a spec with
-    read_spec, spec_from_yaml or spec_from_mapping, which check every
+    the same length in tokens, so that no row is padded. calibration is
+    fixed or per_prompt. prompt_ids are the prompts to run, in order, or
+    None for all of the set's; candidates is the candidates: setting, or
+    None, and conditions hold the conditions it resolves to. Make a spec
+    with read_spec, spec_from_yaml or spec_from_mapping, which check every
     setting: the class itself checks none.
 
     Example:
@@ -105,6 +121,9 @@ class ExperimentSpec:
     max_gpu_hours: float
     conditions: tuple[Condition, ...]
     group_by_length: bool = True
+    calibration: str = OPTIONAL_KEYS["calibration"]
+    prompt_ids: tuple[str, ...] | None = None
+    candidates: CandidatesRule | None = None
 
     @property
     def prompts_path(self) -> Path:
@@ -114,12 +133,18 @@ class ExperimentSpec:
     def to_mapping(self) -> dict[str, Any]:
         """Every setting as plain data, each schedule written out: what sha256 hashes.
 
+        calibration, prompt_ids and candidates, and a condition's candidate,
+        are written only when the file sets them otherwise than their
+        defaults, so a file written before them keeps its hash.
+
         Example:
             >>> spec = read_spec(PROJECT_ROOT / "experiments/p0/s2_pulse_lengths.yaml")
             >>> spec.to_mapping()["conditions"][1]["points"][0]["label"]
             'pulse length=4'
+            >>> "calibration" in spec.to_mapping()
+            False
         """
-        return {
+        mapping = {
             "name": self.name,
             "model": self.model,
             "prompts": self.prompts,
@@ -139,9 +164,21 @@ class ExperimentSpec:
                         for label, schedule in condition.points
                     ],
                 }
+                | (
+                    {}
+                    if condition.candidate is None
+                    else {"candidate": condition.candidate}
+                )
                 for condition in self.conditions
             ],
         }
+        if self.calibration != OPTIONAL_KEYS["calibration"]:
+            mapping["calibration"] = self.calibration
+        if self.prompt_ids is not None:
+            mapping["prompt_ids"] = list(self.prompt_ids)
+        if self.candidates is not None:
+            mapping["candidates"] = self.candidates.to_mapping()
+        return mapping
 
     @property
     def sha256(self) -> str:
@@ -223,6 +260,34 @@ def _whole(name: str, value: object) -> int:
     return value
 
 
+def _calibration(value: object) -> str:
+    if not isinstance(value, str) or value not in CALIBRATIONS:
+        raise ValueError(
+            f"calibration must be {' or '.join(CALIBRATIONS)}: fixed scales doses "
+            "by each layer's residual size from calibration/, per_prompt by each "
+            f"prompt's own, as the Neuron Persona Library does; not {value!r}"
+        )
+    return value
+
+
+def _prompt_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(
+            "prompt_ids must list the IDs of the prompts to run, such as "
+            f"[heldout32-01, heldout32-02], not {value!r}"
+        )
+    for i, prompt_id in enumerate(value):
+        if not isinstance(prompt_id, str) or not prompt_id.strip():
+            raise ValueError(
+                f"prompt_ids[{i}]: {not_text('a prompt ID', prompt_id, 'heldout32-01')}"
+            )
+        if prompt_id in value[:i]:
+            raise ValueError(
+                f"prompt_ids gives {prompt_id!r} twice; each prompt runs once"
+            )
+    return tuple(value)
+
+
 def spec_from_mapping(data: object) -> ExperimentSpec:
     """Check an experiment's settings, as parsed from YAML, and return its spec.
 
@@ -287,18 +352,13 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
         raise ValueError(
             f"group_by_length must be true or false, not {group_by_length!r}"
         )
+    calibration = _calibration(data.get("calibration", OPTIONAL_KEYS["calibration"]))
+    prompt_ids = _prompt_ids(data["prompt_ids"]) if "prompt_ids" in data else None
+    rule = candidates_rule(data["candidates"]) if "candidates" in data else None
     listed = data["conditions"]
     if not isinstance(listed, list) or not listed:
         raise ValueError(f"conditions must list at least one condition, not {listed!r}")
-    conditions = []
-    for i, item in enumerate(listed):
-        condition = condition_from_mapping(item, i)
-        if any(condition.label == earlier.label for earlier in conditions):
-            raise ValueError(
-                f"conditions[{i}]: the label {condition.label!r} is used twice; "
-                "each condition needs its own"
-            )
-        conditions.append(condition)
+    conditions = conditions_from_list(listed, rule, model)
     return ExperimentSpec(
         name,
         model,
@@ -308,8 +368,11 @@ def spec_from_mapping(data: object) -> ExperimentSpec:
         max_new_tokens,
         batch_size,
         float(hours),
-        tuple(conditions),
+        conditions,
         group_by_length,
+        calibration,
+        prompt_ids,
+        rule,
     )
 
 

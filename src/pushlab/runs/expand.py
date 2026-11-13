@@ -2,11 +2,13 @@
 
 There is one run per prompt, seed, condition (each grid value its own) and
 control, in that order, nested as written: every run of the first prompt,
-its first seed first, then the next. Within a seed come the conditions in
-the file's order, each condition's own run followed by its controls. Run
-IDs count up in that order, `<experiment>-000001` first, so the same spec
-always gives the same IDs. An experiment of more than 999,999 runs, which
-six digits cannot number, is refused.
+its first seed first, then the next. The prompts are the set's, or the
+spec's prompt_ids in their order; an ID the set lacks is refused. Within a
+seed come the conditions in the file's order, each condition's own run
+followed by its controls. Run IDs count up in that order,
+`<experiment>-000001` first, so the same spec always gives the same IDs.
+An experiment of more than 999,999 runs, which six digits cannot number,
+is refused.
 
 Before any run is made, every condition's schedule and every control's
 passes validate(), at the default dose ceiling unless the condition allows
@@ -265,10 +267,10 @@ def _pack(sets: Sequence[Sequence[T]], size: int) -> list[list[T]]:
 def expand(spec: ExperimentSpec) -> Expansion:
     """Every run the spec means, in order, after checking every condition.
 
-    A prompt set that cannot be read, more runs than MOST_RUNS, a set's ID
-    given two definitions, a condition that validate() refuses, or controls
-    that cannot be drawn, such as a set's, raise ValueError, before any run
-    is made. Nothing loads a model.
+    A prompt set that cannot be read, a prompt ID it lacks, more runs than
+    MOST_RUNS, a set's ID given two definitions, a condition that validate()
+    refuses, or controls that cannot be drawn, such as a set's, raise
+    ValueError, before any run is made. Nothing loads a model.
 
     Example:
         >>> from pushlab import PROJECT_ROOT
@@ -289,8 +291,17 @@ def expand(spec: ExperimentSpec) -> Expansion:
         raise ValueError(f"cannot read the prompt set {path}: {why}") from None
     except ValueError as error:
         raise ValueError(f"cannot read the prompt set {path}: {error}") from None
+    prompt_ids = prompt_set.prompt_ids
+    if spec.prompt_ids is not None:
+        if missing := [p for p in spec.prompt_ids if p not in prompt_ids]:
+            more = f" and {len(missing) - 1} more" if missing[1:] else ""
+            raise ValueError(
+                f"prompt_ids names {missing[0]!r}{more}, which {spec.prompts} lacks; "
+                f"give IDs of its prompts, such as {prompt_ids[0]!r}"
+            )
+        prompt_ids = spec.prompt_ids
     per_seed = sum(len(c.points) * (1 + c.controls) for c in spec.conditions)
-    total = len(prompt_set.prompt_ids) * len(spec.seeds) * per_seed
+    total = len(prompt_ids) * len(spec.seeds) * per_seed
     if total > MOST_RUNS:
         raise ValueError(
             f"it means {total:,} runs, more than the {MOST_RUNS:,} that six-digit "
@@ -338,7 +349,7 @@ def expand(spec: ExperimentSpec) -> Expansion:
     model_name = f"{spec.model}@{model.revision}"
     runs: list[PlannedRun] = []
     batch = 0
-    for prompt_id in prompt_set.prompt_ids:
+    for prompt_id in prompt_ids:
         for seed in spec.seeds:
             # Each run with its controls: (condition, control, schedule, control_of).
             sets: list[list[tuple[str, int, list[dict[str, Any]], str]]] = []

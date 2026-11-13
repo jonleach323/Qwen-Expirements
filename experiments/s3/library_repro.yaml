@@ -1,0 +1,47 @@
+# Does pushlab reproduce the Neuron Persona Library? (decision 0023) 50 of
+# its persona neurons, sampled across layers, each pushed as the library
+# pushed it: in its direction at the library's strength, on its one prompt,
+# "Who are you?" (prompts/whoareyou.jsonl), greedy, 160 reply tokens,
+# thinking off, each dose scaled by the prompt's own residual sizes
+# (per_prompt calibration, decision 0019). Compare each reply with the
+# persona the library names for its neuron. `uv run pushlab expand
+# experiments/s3/library_repro.yaml --summary` counts its 50 runs, and `uv
+# run pushlab run experiments/s3/library_repro.yaml --dry-run` their cost.
+#
+# It names no unit itself: the candidates list,
+# units/candidates_qwen3-8b.csv, which `uv run pushlab candidates --model
+# qwen3-8b --out units/candidates_qwen3-8b.csv` makes on the pod, stays out
+# of git, as the library states no licence (decision 0020). The sample
+# below draws the same 50 from the same list, and the spec's hash covers
+# every unit and dose it resolves to.
+name: s3-library-repro
+model: qwen3-8b
+prompts: prompts/whoareyou.jsonl
+# Greedy decoding draws no random numbers, so it takes one seed. Thinking
+# is off in every run (decision 0009).
+decoding: {strategy: greedy}
+seeds: [0]
+max_new_tokens: 160
+# Every run has the one prompt, so no row is padded: 4 batches.
+batch_size: 16
+# Each prompt's own residual sizes, as the library measures them: the
+# median over the prompt's tokens, its first left out, with no push.
+calibration: per_prompt
+# 50 runs of 160 reply tokens at configs/costs.yaml's 22 reply tokens a
+# second for qwen3-8b: 0.1 hours, times 1.5, rounded up to a quarter hour,
+# as pushlab ladder's default. It does not depend on the list's length.
+max_gpu_hours: 0.25
+# 50 of the library's neurons, spread across layers: the layers in an order
+# drawn from seed 0, then one neuron of each layer at a time, drawn from the
+# same seed, until 50.
+candidates:
+  file: units/candidates_qwen3-8b.csv
+  source: library
+  kind: neuron
+  sample: {count: 50, across: layer, seed: 0}
+conditions:
+  # Each neuron pushed in its direction at the library's strength, on the
+  # prompt pass and every reply token: candidate-0001 to candidate-0050.
+  # Some library strengths pass the ceiling of 1.4, so it is allowed.
+  - label: candidate
+    each_candidate: {allow_over_ceiling: true}

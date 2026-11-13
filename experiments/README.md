@@ -17,6 +17,13 @@ The experiment files:
 | `p0/s2_pulse_lengths.yaml` | The example below: the evil neuron pushed for 4, 16 or 64 reply tokens, on the five smoke prompts, 50 runs. |
 | `s2/smoke_dynamics.yaml` | Sprint 2's smoke test of dynamics: every schedule shape on the evil neuron and its pair, each with one matched random control, on `prompts/neutral32.jsonl`, 992 runs (decision 0017). |
 | `s2/evil_diagnosis.yaml` | Why the evil neuron changed the smoke test's replies so little: no push; the evil neuron at doses 1, 1.25 and 1.5; at dose 1 without the prompt pass; with its pair; occcat's L16 N8927; and one matched random control for dose 1; on `prompts/neutral32.jsonl`, 256 runs (decision 0018; `docs/runbooks/s2-evil-diagnosis.md`). |
+| `s3/screen_a.yaml` | The persona panel's first screen: every candidate of `units/candidates_qwen3-8b.csv` at its reference dose on the first 8 prompts of `prompts/heldout32.jsonl`, greedy, 160 tokens, fixed calibration: the list's candidates × 8 runs, about 6,800 (decision 0023). |
+| `s3/library_repro.yaml` | Does pushlab reproduce the Neuron Persona Library: 50 of its neurons sampled across layers, each at the library's strength on "Who are you?" (`prompts/whoareyou.jsonl`), greedy, 160 tokens, per-prompt calibration, 50 runs (decision 0023). |
+
+The two S3 files name no unit: they choose their units by rule from the
+candidates list that `pushlab candidates --model qwen3-8b --out
+units/candidates_qwen3-8b.csv` makes on the pod, which stays out of git
+(decision 0020), so they expand only where that list is (below).
 
 `pushlab ladder` writes a dose ladder's file from a units file: one
 condition per unit, `u01`, `u02` and so on, each a constant push of its
@@ -91,8 +98,8 @@ does.
 
 ## The settings
 
-Every setting is required but `group_by_length`, and any other key is
-refused.
+Every setting is required but `group_by_length`, `calibration`,
+`prompt_ids` and `candidates`, and any other key is refused.
 
 | Key | What it is |
 | --- | --- |
@@ -104,6 +111,9 @@ refused.
 | `max_new_tokens` | The most tokens a reply may have, at most 32,768: the longest reply the steps table holds. |
 | `batch_size` | The most runs that share a batch. `expand` plans batches of one prompt and one seed, so they can be shorter (below); `pushlab run` joins planned batches that can share one, up to `batch_size`. |
 | `group_by_length` | Optional, `true` by default: `pushlab run` joins planned batches of different prompts only when the prompts are of one length in tokens, so that no row is padded. `false` lets prompts of different lengths share a padded batch. |
+| `calibration` | Optional, `fixed` by default: each layer's residual size, which turns a dose into an amount, from `calibration/` (decision 0007). `per_prompt` takes each prompt's own sizes instead, measured with no push, as the Neuron Persona Library does (decision 0019). |
+| `prompt_ids` | Optional: which of the set's prompts to run, by their IDs, in that order, each once, such as `[heldout32-01, heldout32-02]`. Without it every prompt of the set runs, in the set's order. `expand` refuses an ID the set lacks. |
+| `candidates` | Optional: a candidates list whose rows a condition with `each_candidate` pushes, one condition each (below). |
 | `max_gpu_hours` | The GPU time the experiment may take, a number above 0, for the runner to hold it to. |
 | `conditions` | The conditions, at least one (below). |
 
@@ -185,21 +195,94 @@ A condition may also have:
   random numbers: `generate` draws each row's from its place in the batch,
   and a control sits in another row (decision 0014).
 
+## Conditions by rule: candidates and each_candidate
+
+An experiment can name its units by rule instead of by ID: `candidates`
+names a list of persona candidates, as `pushlab candidates` writes one
+(decision 0020), and which of its rows to push, and one condition with
+`each_candidate` pushes each of them (decision 0023):
+
+```
+candidates:
+  file: units/candidates_qwen3-8b.csv
+  source: library
+  kind: neuron
+  sample: {count: 50, across: layer, seed: 0}
+conditions:
+  - label: candidate
+    each_candidate: {doses: [1.0], include_prompt: true, allow_over_ceiling: true}
+```
+
+`candidates` takes:
+
+- `file`: the list, as a path from the repository's root, as `prompts`
+  is, or an absolute one. Every row must be of the experiment's model. A
+  missing list is refused, naming the command that makes it.
+- `source` and `kind`, if you like: keep only the rows of that source
+  (`library` or `mayner`) and kind (`neuron` or `set`).
+- `keys`, if you like: exactly these candidates, in this order, each by
+  its key in the list's `candidate` column, such as `library/L9N4242-`,
+  or as `{key: library/L9N4242-, doses: [0.5, 1.0]}`, which gives that
+  candidate doses of its own. Each must be in the list and pass the
+  filters, and each comes once.
+- `sample`, if you like, instead of `keys`: `{count: N, across: layer,
+  seed: S}` draws N neurons spread across layers, and needs `kind:
+  neuron`. The layers are put in an order drawn from S; then, round
+  after round, each layer in that order gives one neuron, drawn from S,
+  until there are N. So the layers give the same number, give or take
+  one, until one runs out, and the same list and seed always draw the
+  same neurons in the same order. A count above what the filters leave
+  is refused.
+
+Without `keys` or `sample`, every row the filters keep is pushed, in the
+list's order.
+
+The condition with `each_candidate` becomes one condition per chosen
+candidate, labelled `<label>-0001`, `<label>-0002` and so on in the
+order they were chosen: a constant push of the candidate's unit in its
+direction, at `alpha` = direction × strength × each of `doses`. The
+strength is the candidate's reference dose: the library's for one of its
+neurons, and 1 for one of Mayner's sets, his strength (decision 0019).
+`each_candidate` takes:
+
+- `doses`: multiples of the reference dose, numbers above 0, each once;
+  `[1.0]` by default. A key's own `doses` replace them. A candidate with
+  several doses gets a grid labelled by alpha, as `pushlab ladder`'s
+  `u01 alpha=-0.75`, such as `candidate-0002 alpha=-0.625`; one with one
+  dose keeps its label alone.
+- `include_prompt`: `true` by default, which pushes the prompt pass too,
+  as a `constant` shape does; `false` pushes reply tokens only.
+- `allow_over_ceiling`: `false` by default; `true` lets a dose go above
+  the ceiling of 1.4, as some of the library's strengths do.
+
+It may also have `controls` and `control_seed`, which every condition it
+makes gets; a set cannot have controls yet. It takes no schedule of its
+own. An experiment has at most one condition with `each_candidate`, and
+only with `candidates`, and `candidates` with no such condition is
+refused; the other conditions keep their places around it, and a label
+it makes that another condition has is refused. A set's schedule is
+written out with its definition (above), so a run's record holds the
+set. Each condition records its candidate's key, which `expand
+--summary` counts and the folder's `experiment.json` keeps.
+
 ## What expand does
 
-1. It checks every setting, naming any problem.
-2. It reads the prompt set, and refuses an experiment of more than
-   999,999 runs, which six-digit run IDs cannot number.
+1. It checks every setting, naming any problem, and reads the
+   candidates list, if the file names one.
+2. It reads the prompt set, and the prompts `prompt_ids` names, if
+   any, refusing one the set lacks, and refuses an experiment of more
+   than 999,999 runs, which six-digit run IDs cannot number.
 3. It checks every condition's schedule against the model and
    `max_new_tokens` with `validate()`, before it makes any run. The
    first problem stops it, with the condition's label and the rule it
    broke. A segment that will not take effect in a reply this long, such
    as one starting after the last token, gets a warning instead.
 4. It draws the controls and checks each one's schedule the same way.
-5. It makes one run per prompt, seed, condition (each grid value its
-   own) and control, in that order: all of the first prompt's runs, its
-   first seed first, and within a seed the conditions in the file's
-   order, each condition's own run followed by its controls. Run IDs
+5. It makes one run per prompt (in the order of `prompt_ids`, when the
+   file gives them), seed, condition (each grid value its own) and
+   control, in that order: all of the first prompt's runs, its first
+   seed first, and within a seed the conditions in the file's order,
+   each condition's own run followed by its controls. Run IDs
    count up in that order, from `<name>-000001`.
 6. It puts the runs into batches in order. A batch holds runs of one
    prompt and one seed, so no row is padded, and at most `batch_size` of
@@ -222,7 +305,13 @@ unit it replaces) and `control_seed`.
 
 Three hashes say what the runs came from. The `spec sha256` changes
 whenever any setting does, but not with comments, spacing, the order of
-keys (except a grid's), or 1 against 1.0. The `prompts sha256` is the
-prompt set file's, and the `known sha256` is that of `units/known.csv`,
-which the controls avoid, so a change there shows even when the spec is
-the same. Decision 0014 explains these choices.
+keys (except a grid's), or 1 against 1.0. `calibration`, `prompt_ids`
+and `candidates` count only when the file sets them otherwise than their
+defaults, so a file written before them keeps the hash its runs record.
+With `candidates`, it covers every unit and dose they resolve to, each
+condition written out in full, and nothing else of the list: a list
+changed so that a unit or dose changes gives a new hash, and one changed
+otherwise, such as a persona's name, keeps it. The `prompts sha256` is
+the prompt set file's, and the `known sha256` is that of
+`units/known.csv`, which the controls avoid, so a change there shows
+even when the spec is the same. Decision 0014 explains these choices.

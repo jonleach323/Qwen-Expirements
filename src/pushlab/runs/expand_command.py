@@ -4,7 +4,8 @@ Nothing is run and no model is loaded. The command reads the file, checks
 every condition with validate(), reads the prompt set and draws the random
 controls (pushlab.runs.expand). Then it prints a line naming the columns
 and every planned run, one per line with tab-separated columns, or with
---summary the settings and how many runs each condition's schedules give.
+--summary the settings, the calibration and candidates among them, and how
+many runs each condition's schedules give.
 validate()'s warnings go to stderr; a problem goes there too, naming the
 file, with exit status 1.
 """
@@ -18,6 +19,7 @@ from pathlib import Path
 from pushlab.runs.estimate import exact
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.spec import ExperimentSpec, read_spec
+from pushlab.runs.spec_candidates import CandidatesRule
 
 COLUMNS = (
     "run_id",
@@ -92,6 +94,25 @@ def _table(counts: dict[str, tuple[int, int]]) -> list[str]:
     return lines
 
 
+def candidates_text(rule: CandidatesRule, count: int) -> str:
+    """How many candidates a spec pushes, and the rule that chose them.
+
+    Example:
+        >>> from pushlab.runs.spec_candidates import Sample
+        >>> rule = CandidatesRule("c.csv", "library", "neuron", None, Sample(50, 0))
+        >>> candidates_text(rule, 50)
+        '50 of c.csv: source library and kind neuron, a sample across layers, seed 0'
+    """
+    filters = rule.filters()
+    if rule.keys is not None:
+        how = "by key"
+    elif rule.sample is not None:
+        how = f"a sample across {rule.sample.across}s, seed {rule.sample.seed}"
+    else:
+        how, filters = f"every one with {filters}" if filters else "every one", ""
+    return f"{count:,} of {rule.file}: {', '.join(p for p in (filters, how) if p)}"
+
+
 def summary(spec: ExperimentSpec, expansion: Expansion) -> str:
     """The spec's settings and how many runs each condition's schedules give.
 
@@ -110,17 +131,22 @@ def summary(spec: ExperimentSpec, expansion: Expansion) -> str:
     how = decoding["strategy"]
     if how == "sample":
         how += f", temperature {decoding['temperature']}, top_p {decoding['top_p']}"
+    chosen = ", by prompt_ids" if spec.prompt_ids is not None else ""
     settings = [
         ("experiment", spec.name),
         ("spec sha256", expansion.spec_sha256),
         ("model", records[0].model),
-        ("prompts", f"{spec.prompts}, {_count(prompts, 'prompt')}"),
+        ("prompts", f"{spec.prompts}, {_count(prompts, 'prompt')}{chosen}"),
         ("prompts sha256", expansion.prompts_sha256),
     ]
+    if spec.candidates is not None:
+        count = len({c.candidate for c in spec.conditions if c.candidate})
+        settings.append(("candidates", candidates_text(spec.candidates, count)))
     if expansion.known_sha256 is not None:
         settings.append(("known sha256", expansion.known_sha256))
     settings += [
         ("decoding", f"{how}, {decoding['dtype']}"),
+        ("calibration", spec.calibration),
         ("seeds", ", ".join(str(seed) for seed in spec.seeds)),
         ("max_new_tokens", f"{spec.max_new_tokens}"),
         ("batches", f"{len(sizes):,}, of {each} each"),
