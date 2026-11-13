@@ -12,16 +12,17 @@ or personas given on the command line, the same for every reply, and the
 text; it must be of another family than the experiment's model, which is
 checked before anything is judged.
 
-An item scored "ok" already, for the same key and reply, is skipped
+An item scored "ok" already, for the same key, reply and text, is skipped
 (pushlab.scoring.score_rows); a failed one is judged again. Of the rest,
 the cache answers those judged before, a blank text fails at once, and the
 judge is called for each other distinct text. --dry-run prints these
 counts and the cost (pushlab.scoring.judge_costs) and builds no backend, so
 it needs no key, package or server, takes no lock and writes nothing. A
 real run holds the folder's lock, which keeps a runner and other scorers
-out, and saves each chunk's rows before judging the next: a stopped job
-loses at most a chunk, whose verdicts are cached anyway. A judge that
-cannot answer at all stops the job once the verdicts it found are saved.
+out, and saves each chunk's rows before judging the next, so a job killed
+outright loses at most a chunk, whose ok verdicts are cached anyway. A
+judge that cannot answer at all, or Ctrl-C, stops the job once the
+verdicts found before the stop are saved, failures included.
 """
 
 import argparse
@@ -292,17 +293,14 @@ def run_score(
     try:
         with folder.locked(experiment.folder):
             return _score(spec_path, runs_dir, question, judge, size, workers, decode)
-    except folder.FolderInUse:
-        return _refuse(
-            f"pushlab run is working on {experiment.folder}: score it once that "
-            "finishes"
-        )
+    except folder.FolderInUse as error:  # a runner's or another scorer's
+        return _refuse(f"{error}: try again once it finishes")
     except (OSError, ValueError) as error:
         return _refuse(str(error))
     except KeyboardInterrupt:
         print(
-            "\nStopped by Ctrl-C. The chunks judged before it are saved, and the "
-            "verdicts found since are cached: run the same command to go on."
+            "\nStopped by Ctrl-C. The verdicts found before it are saved: run the "
+            "same command to go on."
         )
         return EXIT_INTERRUPTED
 

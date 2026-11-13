@@ -225,7 +225,8 @@ def test_a_second_runner_is_refused_naming_the_first_one_s_pid(
     with locked(folder):  # as the first runner holds it
         assert _run(spec, runs) == 1
     err = capsys.readouterr().err
-    assert f"pushlab run: another pushlab run is working on {folder} (pid 4321)" in err
+    working = "another pushlab run or pushlab score is working on"
+    assert f"pushlab run: {working} {folder} (pid 4321)" in err
     assert len(read_index(folder)) == 1  # nothing more is saved
 
 

@@ -75,7 +75,8 @@ def test_a_second_runner_on_a_folder_in_use_is_refused(
     try:
         assert other.stdout is not None and other.stdout.readline() == "locked\n"
         assert _run(tiny_spec(), tmp_path / "runs") == 1
-        assert f"another pushlab run is working on {folder}" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert f"another pushlab run or pushlab score is working on {folder}" in err
         with pytest.raises(FolderInUse), locked(folder):
             pass
     finally:

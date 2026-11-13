@@ -23,7 +23,8 @@ and steps its latest marks count (pushlab.runs.shards). It checks that:
    experiment.json's experiment, version, experiment file, hashes and model
    download, and has the revision that download names, experiment.json's
    number of runs and the index's counts by status. It is not checked while
-   a runner is working on the folder, as a session rewrites it when it ends.
+   a runner or pushlab score holds the folder's lock, as a runner's session
+   rewrites it when it ends.
 A counted shard may hold other runs, such as runs of a batch that a later
 attempt ran again; only the runs it counts are read from it. It loads no
 model and writes nothing.
@@ -155,8 +156,8 @@ class _Check:
         planned = {run.record.run_id: run.record for run in expansion.runs}
         if missing := [run_id for run_id in planned if run_id not in self.states]:
             if self.busy:
-                how = "a runner is still working on the folder, and pushlab status"
-                how += " says how far it has got"
+                how = "another pushlab run or pushlab score is working on the "
+                how += "folder, and pushlab status says how far the run has got"
             else:
                 how = "pushlab status says how far the run has got"
             unsaved = f"{_are(missing, 'planned run')} not saved yet"
@@ -253,7 +254,7 @@ class _Check:
             self.say(f"{run_id} failed but steps/{shard} has {len(steps)} of its steps")
 
     def _manifest(self) -> None:
-        """Check 7, unless a runner is working on the folder."""
+        """Check 7, unless a runner or pushlab score holds the folder."""
         if self.busy:
             return
         try:
@@ -349,6 +350,9 @@ def run_verify(spec_path: Path, runs_dir: Path | None = None) -> int:
     for line in shown_problems(verdict.problems):
         print(line)
     if busy:
-        print("note: a runner is working on the folder; manifest.json is not checked")
+        print(
+            "note: another pushlab run or pushlab score is working on the folder; "
+            "manifest.json is not checked"
+        )
     print(verdict.summary())
     return 1 if verdict.problems else 0

@@ -368,8 +368,10 @@ def test_no_folder_the_runs_family_a_held_folder_and_no_key_are_refused(
         assert "pushlab score: the judge tiny-judge is of the family of tiny-vl" in err
     with folder.locked(runs / NAME):
         assert run_score(spec, "coherence", runs_dir=runs, judge=judge) == 1
-    err = capsys.readouterr().err
-    assert f"is working on {runs / NAME}: score it once that finishes" in err
+    assert capsys.readouterr().err == (
+        "pushlab score: another pushlab run or pushlab score is working on "
+        f"{runs / NAME}: try again once it finishes\n"
+    )
     monkeypatch.setattr(api_backend, "_anthropic", lambda: SimpleNamespace())
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cache = tmp_path / "api-cache"

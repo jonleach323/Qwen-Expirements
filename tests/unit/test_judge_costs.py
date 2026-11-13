@@ -165,6 +165,26 @@ def test_a_local_estimate_prices_the_gpu_time_at_the_pods_prices(
     assert lines["input tokens"].startswith("about 240,000:")
 
 
+# Calls at 2 a second, at $0.34 to $0.74 an hour: 48 cost $0.0023 to $0.0049,
+# 49 $0.0023 to $0.0050, 60 $0.0028 to $0.0062, and 106 $0.0050 to $0.0109.
+@pytest.mark.parametrize(
+    ("calls", "cost"),
+    [
+        (48, "under $0.01"),
+        (49, "under $0.01 to $0.01"),
+        (60, "under $0.01 to $0.01"),
+        (106, "about $0.01 to $0.01"),
+    ],
+)
+def test_a_local_estimate_under_a_cent_is_never_about(
+    tmp_path: Path, calls: int, cost: str
+) -> None:
+    lines = dict(
+        estimate_judging("local", "granite-4.1-8b", [], calls, _costs(tmp_path))
+    )
+    assert lines["cost"] == f"{cost}, on an RTX 4090 at $0.34 to $0.74 an hour"
+
+
 def test_an_api_model_without_prices_has_an_unknown_cost(tmp_path: Path) -> None:
     costs = _costs(tmp_path)
     lines = dict(estimate_judging("api", "claude-opus-5-5", REQUESTS[:2], 2, costs))

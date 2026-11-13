@@ -6,16 +6,17 @@ or personas from the command line, the same whatever condition made the
 text. make_plan finds what a job judges and what needs no call. An item is
 scored already when, of the rows of its key that scored the run's current
 reply, the newest is "ok", as the scores and sentences views take it
-(pushlab.store.score_views). A key is ScoreRow.key: the run and the
-folder's version, the rubric and its version, the judge, the question
-(everything asked but the text) and, for a window, its first sentence, how
-many it holds and the splitter's version. So a failed verdict is judged
-again, and so is a reply that a new version replaced. judge_chunks judges
+(pushlab.store.score_views), and judged the item's text as it is now. A
+key is ScoreRow.key: the run and the folder's version, the rubric and its
+version, the judge, the question (everything asked but the text) and, for
+a window, its first sentence, how many it holds and the splitter's
+version. So a failed verdict is judged again, and so is a reply that a new
+version replaced, or a window whose text changed. judge_chunks judges
 the rest a chunk at a time and saves each chunk's rows before the next; a
 row records the verdict as it is, never a guess.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -24,7 +25,14 @@ from typing import Any
 from pushlab.runs.folder import SCORES, SENTENCES
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.items import Experiment, Item, reply_items, window_items
-from pushlab.scoring.judge import Job, Judge, JudgeUnavailable, Verdict, request_key
+from pushlab.scoring.judge import (
+    Job,
+    Judge,
+    JudgeUnavailable,
+    Verdict,
+    request_key,
+    text_sha256,
+)
 from pushlab.scoring.personas import Persona, pick_persona, read_personas
 from pushlab.scoring.rubrics import Request, Rubric
 from pushlab.scoring.sentences import (
@@ -148,20 +156,30 @@ def item_key(
 
 
 def already_scored(
-    rows: Sequence[ScoreRow], runs: Iterable[RunRecord]
+    rows: Sequence[ScoreRow],
+    runs: Iterable[RunRecord],
+    texts: Mapping[tuple[Any, ...], str],
 ) -> set[tuple[Any, ...]]:
-    """The keys whose verdict is saved. Of a key's rows that scored the
-    run's current reply, the newest counts, as in the views: the latest
+    """The keys whose verdict is saved, of those in texts, which gives the
+    SHA-256 of each key's text as the judge reads it, stripped, as
+    Verdict.text_sha256 has it. Of a key's rows that scored the run's
+    current reply, the newest counts, as in the views: the latest
     created_at, then the later in rows, which read_rows gives file by file
-    in name order. The key's verdict is saved when that row is "ok"."""
+    in name order. The key's verdict is saved when that row is "ok" and
+    judged the text the key has now: a window whose text changed under one
+    splitter version is judged again."""
     replies = {run.run_id: output_sha256(run) for run in runs}
-    newest: dict[tuple[Any, ...], tuple[str, int, str]] = {}
+    newest: dict[tuple[Any, ...], tuple[str, int, ScoreRow]] = {}
     for place, row in enumerate(rows):
         if replies.get(row.run_id) != row.output_sha256:
             continue  # another reply's, or a run not judged now
         if row.key not in newest or (row.created_at, place) >= newest[row.key][:2]:
-            newest[row.key] = (row.created_at, place, row.status)
-    return {key for key, (_, _, status) in newest.items() if status == "ok"}
+            newest[row.key] = (row.created_at, place, row)
+    return {
+        key
+        for key, (_, _, row) in newest.items()
+        if row.status == "ok" and row.text_sha256 == texts.get(key)
+    }
 
 
 def make_plan(
@@ -185,11 +203,13 @@ def make_plan(
     runs = experiment.runs
     items = reply_items(runs) if size is None else window_items(runs, size)
     rows = read_rows(experiment.folder, SCORES if size is None else SENTENCES)
-    scored = already_scored(rows, runs)
-    version = experiment.version
-    todo = [
-        item for item in items if item_key(item, version, question, judge) not in scored
-    ]
+    keys = [item_key(item, experiment.version, question, judge) for item in items]
+    texts = {
+        key: text_sha256(item.text.strip())  # as the judge reads it
+        for key, item in zip(keys, items, strict=True)
+    }
+    scored = already_scored(rows, runs, texts)
+    todo = [item for key, item in zip(keys, items, strict=True) if key not in scored]
     requests: dict[str, Request] = {}
     cached = blank = 0
     for item in todo:

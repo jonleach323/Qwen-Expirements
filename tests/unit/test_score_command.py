@@ -6,7 +6,8 @@ and a pulse on each of the five smoke prompts. The invented fixture has
 generate() give each run an invented reply of two or three sentences
 (REPLIES) in place of the tiny model's. A FakeBackend judges: nothing here
 reaches the network. test_cli_scoring.py covers the options, the refusals
-and the command on the tiny model's own replies.
+and the command on the tiny model's own replies, and test_score_stops.py a
+job that stops.
 """
 
 import doctest
@@ -31,7 +32,7 @@ from pushlab.scoring import score_command, score_rows
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.fake_backend import FakeBackend
 from pushlab.scoring.items import judged_runs
-from pushlab.scoring.judge import CallError, Judge
+from pushlab.scoring.judge import Judge
 from pushlab.scoring.personas import Persona
 from pushlab.scoring.rubrics import Request, load_rubric
 from pushlab.scoring.score_command import run_score
@@ -380,32 +381,6 @@ def test_the_judge_never_sees_the_prompt_run_condition_or_unit(
     for request in fake.requests:
         seen = f"{request.system}\n{request.user}"
         assert not [secret for secret in hidden if secret in seen]
-
-
-def test_a_judge_that_cannot_answer_stops_the_job_keeping_what_it_found(
-    tiny_spec: Callable[..., Path],
-    invented: None,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    spec, runs = _saved(tiny_spec, tmp_path)
-
-    def answer(request: Request) -> str | CallError:
-        if fake.calls > 5:  # from the sixth call on
-            return CallError("HTTP 401: invalid x-api-key", fatal=True)
-        return _answer(request)
-
-    judge, fake = _judge(tmp_path / "cache", answer)
-    capsys.readouterr()  # the runner's
-    assert run_score(spec, "coherence", runs_dir=runs, judge=judge, workers=1) == 1
-    err = capsys.readouterr().err
-    assert err.startswith("pushlab score: fake:fake: HTTP 401: invalid x-api-key")
-    rows = _rows(runs)
-    assert len(rows) == 5 and all(row.status == "ok" for row in rows)
-    assert fake.calls >= 6  # calls already queued may run before the job stops
-    judge, fake = _judge(tmp_path / "cache")
-    assert run_score(spec, "coherence", runs_dir=runs, judge=judge) == 0
-    assert fake.calls == 5 and len(_rows(runs)) == 10
 
 
 @pytest.mark.parametrize("module", [score_command, score_rows])

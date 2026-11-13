@@ -242,9 +242,8 @@ def estimate_judging(
         time = estimate.duration(hours * 3600)
         rate = f"{costs.calls_per_second:g} calls a second, assumed"
         low, high = (hours * price for price in costs.dollars_per_hour)
-        cost = (
-            _about(high) if high < 0.005 else f"about {dollars(low)} to {dollars(high)}"
-        )
+        # With only the low end under a cent: "under $0.01 to $0.01", no "about".
+        cost = _about(high) if high < 0.005 else f"{_about(low)} to {dollars(high)}"
         prices = " to ".join(dollars(price) for price in costs.dollars_per_hour)
         return lines + [
             ("gpu-hours", f"about {shown}: {time} at {rate}"),

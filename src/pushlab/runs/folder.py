@@ -11,8 +11,8 @@ The folder is <runs dir>/<experiment name>, and holds:
   counts, saying which runs it holds and how each ended, with the batch's
   time and tokens.
 - heartbeat.json and progress.json, rewritten after every batch, and the
-  experiment's manifest.json; .lock, held while a runner works on the
-  folder.
+  experiment's manifest.json; .lock, held while a runner or pushlab score
+  works on the folder.
 - scores/ and sentences/, once pushlab score has judged the runs: Parquet
   files of verdicts on whole replies and on windows of their sentences
   (pushlab.store.scores), written whole while pushlab score holds the lock.
@@ -23,8 +23,9 @@ the index. So a crash at any moment leaves each batch either marked, and
 saved, or not marked: a shard the index does not name is ignored, and its
 batch is run again under the next attempt's name. A line of the index
 that a crash cut short is ignored when read, and cut off by the next
-runner. Only a runner holding the lock writes, and the system lets go of
-the lock when the process ends, however it ends.
+runner. Only a process holding the lock writes: a runner, or pushlab
+score, which writes only scores/ and sentences/. The system lets go of the
+lock when the process ends, however it ends.
 """
 
 import fcntl
@@ -63,7 +64,8 @@ def default_runs_dir() -> Path:
 
 
 class FolderInUse(RuntimeError):
-    """Another process holds the folder's lock: a runner is working on it."""
+    """Another process holds the folder's lock: a runner or pushlab score is
+    working on it."""
 
 
 @contextmanager
@@ -89,7 +91,9 @@ def locked(folder: Path) -> Iterator[None]:
             except BlockingIOError:
                 time.sleep(0.005)
         else:
-            raise FolderInUse(f"another pushlab run is working on {folder}")
+            raise FolderInUse(
+                f"another pushlab run or pushlab score is working on {folder}"
+            )
         yield
     finally:
         os.close(handle)  # which lets go of the lock

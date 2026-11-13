@@ -4,19 +4,26 @@ split_sentences cuts a reply into sentences whose spans tile its text: the
 space before a sentence starts it, as Qwen's tokens carry a word's space,
 and a blank text has none. Version 1 of the rule (SPLITTER_VERSION), which
 a change that moves any span must raise:
-- a line break ends a sentence (pushlab.analysis.markers.LINE_BREAK);
+- a line break ends a sentence, of every kind str.splitlines knows, a
+  carriage return and line feed together as one
+  (pushlab.analysis.markers.LINE_BREAK);
 - so do ".", "!", "?" and "…", alone or repeated, with the closing quotes
-  and brackets after them, before a space and a character that is not a
-  lowercase letter; but not a "." after a number that starts its line (a
-  list's "1."), after a single capital (an initial, "J."), or after a
-  listed abbreviation ("Dr.", "e.g.");
-- so do "。", "！" and "？", with or without a space after them.
-A piece of only space joins the sentence before it.
+  and brackets after them (_CLOSING), before a space and a character that
+  is not a lowercase letter; but not a "." after a number that starts its
+  line (a list's "1."), after a single capital (an initial, "J."), or after
+  a listed abbreviation (ABBREVIATIONS: "Dr.", "e.g.");
+- so do "。", "！" and "？", with the closing quotes and brackets after
+  them, whether a space follows or not.
+A piece of only space joins the sentence before it. A test pins version 1
+(tests/unit/test_sentences.py): its spans on examples of every rule, and
+the rule's own parts, its abbreviations, closing marks and patterns.
 
 sentence_windows groups the sentences into windows of `size`, one after
 another, the last one shorter if the sentences run out; a judge sees only
 a window's own sentences (decision 0021). window_steps gives each window's
-reply tokens: a token belongs to the window its text starts in.
+reply tokens: a token belongs to the window its text starts in, so a
+window starts at the first token whose text starts in it, and a window
+that a token from before it covers holds none (start_step == end_step).
 """
 
 import os
@@ -144,12 +151,15 @@ def window_steps(
 ) -> list[tuple[int, int]]:
     """Each window's reply tokens, (start_step, end_step), end not included.
 
-    Step j is the reply's token j. A window starts at the first step whose
-    text starts at or after the window's first character, the step where
-    text and decode(tokens[:step]) stop agreeing, as markers.places finds
-    it; the first window starts at 0 and the last ends at len(tokens), so
-    the spans tile the reply's tokens. decode is the tokenizer's, without
-    special tokens, as the reply's text was made.
+    Step j is the reply's token j, whose text starts where text and
+    decode(tokens[:j]) stop agreeing, as markers.places finds it. A token
+    belongs to the window its text starts in: a window starts at the first
+    token whose text starts in it, so a window that a token from before it
+    covers, as one token "。www" covers the start of "www", holds no token,
+    and its start_step is its end_step. The first window starts at 0 and
+    the last ends at len(tokens), so the spans tile the reply's tokens.
+    decode is the tokenizer's, without special tokens, as the reply's text
+    was made.
 
     Example:
         >>> text = "Hi. Bye."
