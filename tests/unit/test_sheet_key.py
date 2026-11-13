@@ -32,6 +32,7 @@ def _key_data() -> dict[str, Any]:
         "created_at": "2026-11-13T09:00:00Z",
         "seed": 0,
         "size": 200,
+        "runs_dir": "/workspace/runs",
         "rubrics": {
             name: {"version": version, "sha256": sha256}
             for name, (version, sha256) in RUBRICS.items()
@@ -71,11 +72,22 @@ def test_the_key_is_read(tmp_path: Path) -> None:
         "1" * 64,
         ITEMS,
         hashlib.sha256(path.read_bytes()).hexdigest(),
+        Path("/workspace/runs"),
     )
     assert list(key.rubrics) == list(RUBRIC_NAMES)  # in the sheet's order
     data = _key_data() | {"persona": None, "personas": []}
     path.write_text(json.dumps(data), encoding="utf-8")
     assert (read_key(path).persona, read_key(path).personas) == (None, ())
+
+
+def test_a_key_written_before_export_recorded_its_runs_folder_is_read(
+    tmp_path: Path,
+) -> None:
+    data = _key_data()
+    del data["runs_dir"]
+    path = tmp_path / "key.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert read_key(path).runs_dir is None  # label check reads the default
 
 
 def _drop_run_id(data: dict[str, Any]) -> None:
@@ -107,6 +119,14 @@ def _drop_run_id(data: dict[str, Any]) -> None:
         ),
         (lambda data: data.update(personas={"name": "Owl"}), "personas must be a list"),
         (lambda data: data.update(labels_csv_sha256=7), "labels_csv_sha256 must be"),
+        (
+            lambda data: data.update(runs_dir="runs"),
+            "runs_dir must be a folder's absolute path, not 'runs'",
+        ),
+        (
+            lambda data: data.update(runs_dir=3),
+            "runs_dir must be a folder's absolute path, not 3",
+        ),
     ],
 )
 def test_a_key_that_is_not_a_sheets_is_refused(

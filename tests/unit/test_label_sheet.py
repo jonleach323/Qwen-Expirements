@@ -1,25 +1,30 @@
 """A labeling sheet's sample and files (pushlab.scoring.label_sheet): the
-share rule, the seeded sample, the formula guard, the item IDs, labels.csv
-and instructions.md.
+share rule, the seeded sample, the formula guard, the sample's token and
+the item IDs, labels.csv, instructions.md and disagreements.csv.
 
 The replies are invented, in runs made by hand; test_label_export.py
 samples runner folders that the real runner saved.
 """
 
+import codecs
 import csv
 import doctest
+import hashlib
 import io
+import re
 
 import pytest
 
 from pushlab.scoring import label_sheet
 from pushlab.scoring.label_sheet import (
     LabelItem,
+    disagreements_csv,
     distinct,
     guard,
     instructions,
     item_ids,
     sample,
+    sample_token,
     shares,
     sheet_csv,
 )
@@ -133,6 +138,17 @@ def test_item_ids_count_from_one_in_at_least_three_digits() -> None:
     assert item_ids("s", 1000)[0] == "s-0001" and item_ids("s", 1000)[-1] == "s-1000"
 
 
+def test_a_samples_token_is_its_runs_in_sheet_order() -> None:
+    items = _items()[:3]
+    names = "x/x-000001\nx/x-000002\nx/x-000003"
+    token = hashlib.sha256(names.encode("utf-8")).hexdigest()[:4]
+    assert sample_token(items) == token
+    assert sample_token(list(items)) == token  # the same sample, the same token
+    others = {sample_token(items[::-1]), sample_token(items[:2]), sample_token([])}
+    assert token not in others and len(others) == 3  # another order, another run
+    assert re.fullmatch("[0-9a-f]{4}", token)  # four hex digits
+
+
 def test_the_sheet_has_a_byte_order_mark_guarded_cells_and_empty_labels() -> None:
     items = [_item(1, "none", "=1+1"), _item(2, "pulse", '- item\nand, "more"')]
     data = sheet_csv(["s-001", "s-002"], items, list(RUBRIC_NAMES))
@@ -143,6 +159,27 @@ def test_the_sheet_has_a_byte_order_mark_guarded_cells_and_empty_labels() -> Non
         ["s-001", "'=1+1", "", "", "", ""],
         ["s-002", '\'- item\nand, "more"', "", "", "", ""],
     ]
+
+
+def test_disagreements_csv_has_a_byte_order_mark_and_guarded_cells() -> None:
+    rows = [
+        ["s-001", "coherence", 7, 4, "- Too many slips, said with a, comma."],
+        ["s-002", "which_persona", "Brass Owl", "failed", "malformed answer: x"],
+        ["s-003", "speaks_as", "assistant", "speaks_as", "Broken \ud83d here."],
+    ]
+    data = disagreements_csv(rows)
+    assert data.startswith(codecs.BOM_UTF8 + b"item_id,rubric,yours,judge,reason\r\n")
+    found = list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline="")))
+    assert found == [
+        ["item_id", "rubric", "yours", "judge", "reason"],
+        ["s-001", "coherence", "7", "4", "'- Too many slips, said with a, comma."],
+        ["s-002", "which_persona", "Brass Owl", "failed", "malformed answer: x"],
+        # A lone surrogate, which UTF-8 cannot hold, is written as its escape.
+        ["s-003", "speaks_as", "assistant", "speaks_as", "Broken \\ud83d here."],
+    ]
+    assert disagreements_csv([]) == codecs.BOM_UTF8 + (
+        b"item_id,rubric,yours,judge,reason\r\n"
+    )
 
 
 def test_the_instructions_give_each_rubrics_answers_and_the_rules() -> None:

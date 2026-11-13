@@ -5,7 +5,8 @@ Each sheet is made by hand over a runner folder saved by the real runner on
 the tiny model, with invented replies, and labeled as a spreadsheet saves a
 sheet; a FakeBackend answers by each reply's text, so every number here is
 worked out by hand (tests/unit/label_sheets.py). Item k is run k.
-test_label_check_refusals.py has what the check refuses, and
+test_label_check_refusals.py has what the check refuses,
+test_label_check_outputs.py too few labels and disagreements.csv, and
 test_label_report.py the report's parts.
 """
 
@@ -42,6 +43,7 @@ _SPEC.loader.exec_module(sheets)  # type: ignore[union-attr]
 
 NOW = datetime(2026, 11, 13, 9, 0, 0, tzinfo=UTC)
 OUT = "check-fake-fake-judge-20261113T090000Z.json"
+FEW = 6  # the labels a rubric needs to pass here: these sheets are small
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +94,7 @@ def test_a_sheet_as_a_spreadsheet_saves_it_is_compared_with_the_judge(
             "coherence": [*[7] * 9, 8, *[3] * 9, 2],
         }
     )
-    assert run_label_check(sheet, judge=judge, runs_dir=runs) == 0
+    assert run_label_check(sheet, judge=judge, runs_dir=runs, min_labels=FEW) == 0
     printed = capsys.readouterr().out
     # speaks_as: 15 of 18 agree. Yours: speaks_as 10, assistant 8; the
     # judge's: speaks_as 9, about_theme 2, assistant 7. s = 10 * 9 + 8 * 7 =
@@ -134,7 +136,7 @@ def test_a_sheet_as_a_spreadsheet_saves_it_is_compared_with_the_judge(
     key = json.loads((sheet / "key.json").read_text(encoding="utf-8"))
     assert (record["sheet"], record["judge"]) == ("sheet-1", "fake:fake-judge")
     assert record["checked_at"] == "2026-11-13T09:00:00Z"
-    assert record["rule"] == {"accuracy": 0.85, "kappa": 0.7}
+    assert record["rule"] == {"accuracy": 0.85, "kappa": 0.7, "labels": FEW}
     assert record["labels_csv_sha256"] == key["labels_csv_sha256"]
     filled = (sheet / "labels.csv").read_bytes()
     assert record["labels_file_sha256"] == hashlib.sha256(filled).hexdigest()
@@ -251,7 +253,7 @@ def test_pass_and_fail_at_the_rules_edges(
     cells = [str(score) for score in yours]
     sheets.save(sheet / "labels.csv", sheets.rows(sheet, {"coherence": cells}))
     judge = sheets.fake_judge({"coherence": theirs})
-    assert run_label_check(sheet, judge=judge, runs_dir=saved[1]) == 0
+    assert run_label_check(sheet, judge=judge, runs_dir=saved[1], min_labels=FEW) == 0
     assert f"coherence (version 1): {result}" in capsys.readouterr().out
     numbers = _record(sheet / OUT)["rubrics"]["coherence"]
     assert (numbers["accuracy"], numbers["kappa"]) == (accuracy, kappa)
@@ -270,7 +272,7 @@ def test_a_failed_verdict_counts_as_a_disagreement(
     malformed = Reply('{"reason": "Hm.", "choice": "Owl"}')
     answers = [*["Brass Owl"] * 2, malformed, *["none"] * 3]
     judge = sheets.fake_judge({"which_persona": answers})
-    assert run_label_check(sheet, judge=judge, runs_dir=saved[1]) == 0
+    assert run_label_check(sheet, judge=judge, runs_dir=saved[1], min_labels=FEW) == 0
     assert judge.backend.calls == 2 + 4 + 3
     printed = capsys.readouterr().out
     # 5 of 6 agree: the failure is never a label. s = 3 * 2 + 3 * 3 = 15
@@ -308,7 +310,7 @@ def test_empty_cells_rows_left_out_and_empty_columns_are_skipped(
     table.insert(8, [""] * 5)
     sheets.save(sheet / "labels.csv", table)
     judge = sheets.fake_judge({"coherence": [7] * 10 + [3] * 10})
-    assert run_label_check(sheet, judge=judge, runs_dir=saved[1]) == 0
+    assert run_label_check(sheet, judge=judge, runs_dir=saved[1], min_labels=FEW) == 0
     printed = capsys.readouterr().out
     assert "1 of the 20 replies is not in labels.csv: skipped for every rubric." in (
         printed
@@ -338,7 +340,8 @@ def test_a_second_check_is_answered_by_the_cache(
     first = sheets.fake_judge(
         {"coherence": [5] * 20}, VerdictCache(cache, "fake:fake-judge")
     )
-    assert run_label_check(sheet, labels=mine, judge=first, runs_dir=saved[1]) == 0
+    options = {"labels": mine, "runs_dir": saved[1], "min_labels": FEW}
+    assert run_label_check(sheet, judge=first, **options) == 0
     printed = capsys.readouterr().out
     # Every label and score is 5: chance agreement is 1, so kappa is
     # undefined, and an undefined kappa fails.
@@ -349,10 +352,7 @@ def test_a_second_check_is_answered_by_the_cache(
     assert _record(sheet / OUT)["labels_file"] == str(mine)
     second = sheets.fake_judge({}, VerdictCache(cache, "fake:fake-judge"))
     out = tmp_path / "again.json"
-    assert (
-        run_label_check(sheet, labels=mine, judge=second, runs_dir=saved[1], out=out)
-        == 0
-    )
+    assert run_label_check(sheet, judge=second, out=out, **options) == 0
     assert second.backend.calls == 0
     assert "The judge gave 20 verdicts: 20 from its cache, 0 calls made, 0 failed." in (
         capsys.readouterr().out

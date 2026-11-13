@@ -4,13 +4,15 @@ docs/plan/development-plan.md, "Judge validation").
 
 It reads a sheet that `pushlab label export` wrote and you labeled: its
 key.json (pushlab.scoring.sheet_key) and your labels.csv, however a
-spreadsheet saved it (pushlab.scoring.filled_sheet). It reads each labeled
-reply back from its runner folder (pushlab.scoring.items), and refuses a
-sheet whose replies changed since the export. Then the judge labels each
-reply you labeled, for each rubric, through its cache, exactly as
-`pushlab score` asks: the rubric, the sheet's persona (speaks_as) or
-personas (which_persona), and the text; never the reply's condition, run
-or prompt.
+spreadsheet saved it (pushlab.scoring.filled_sheet). A labeled rubric that
+changed since the export is refused as changed, its cells unchecked, for
+your labels are not what changed. It reads each labeled reply back from its
+runner folder, in the runs folder key.json names unless --runs-dir names
+another, and refuses a sheet whose replies cannot be found or changed since
+the export (sheet_key.reply_texts). Then the judge labels each reply you
+labeled, for each rubric, through its cache, exactly as `pushlab score`
+asks: the rubric, the sheet's persona (speaks_as) or personas
+(which_persona), and the text; never the reply's condition, run or prompt.
 
 For each rubric it prints the labels read and skipped; the judge's failed
 verdicts, each counted as a disagreement, for a failure is never a label;
@@ -19,16 +21,20 @@ coherence, also the accuracy within 1 point and the quadratic-weighted
 kappa; the confusion matrix, your labels as rows and the judge's as
 columns, its failures in a column of their own; the items you and the
 judge label differently, by ID; and PASS at an accuracy of 0.85 and a kappa
-of 0.70 or more, an undefined kappa failing, else FAIL. For a score the
-rule is applied to exact scores, which is strict. Numbers are cut to three
+of 0.70 or more, an undefined kappa failing, else FAIL, or TOO FEW, whatever
+the numbers, with fewer labels than the plan's 200. For a score the rule
+is applied to exact scores, which is strict. Numbers are cut to three
 places, never rounded up, so one shown as 0.700 is at least 0.70
 (pushlab.scoring.label_report).
 
 The numbers go into a JSON record, in the sheet's folder unless --out names
-another file: the judge, the rubrics' versions and hashes, the sheet's and
-key's hashes, and per rubric its counts, scores, matrix and disagreeing
-item IDs; no reply text and no reason of the judge's. It returns 0 once
-the record is written, whatever the verdicts, and 1 when it refuses.
+another file: the judge, the rule, the rubrics' versions and hashes, the
+sheet's and key's hashes, and per rubric its counts, scores, matrix and
+disagreeing item IDs; no reply text and no reason of the judge's. The
+judge's reasons, which may quote replies, go into disagreements.csv in the
+sheet's folder, beside the replies: a row per item and rubric where you and
+the judge differ. It returns 0 once both are written, whatever the
+verdicts, and 1 when it refuses.
 """
 
 import json
@@ -43,15 +49,9 @@ from pushlab.scoring.backends import judge_model, make_backend
 from pushlab.scoring.cache import VerdictCache, cache_file_name, default_cache_dir
 from pushlab.scoring.family import check_family
 from pushlab.scoring.filled_sheet import FilledSheet, listing, read_labels
-from pushlab.scoring.items import judged_runs
-from pushlab.scoring.judge import (
-    Job,
-    Judge,
-    JudgeUnavailable,
-    Verdict,
-    judge_name,
-)
+from pushlab.scoring.judge import Job, Judge, JudgeUnavailable, Verdict, judge_name
 from pushlab.scoring.label_report import (
+    MIN_LABELS,
     about,
     compare,
     not_labeled,
@@ -59,13 +59,20 @@ from pushlab.scoring.label_report import (
     report,
     verdict_counts,
 )
-from pushlab.scoring.label_sheet import KEY_FILE, SHEET_FILE, plural
+from pushlab.scoring.label_sheet import (
+    DISAGREEMENTS_FILE,
+    KEY_FILE,
+    SHEET_FILE,
+    disagreements_csv,
+    plural,
+)
 from pushlab.scoring.rubrics import Rubric, load_rubric
-from pushlab.scoring.sheet_key import SheetKey, read_key
-from pushlab.store.scores import output_sha256
+from pushlab.scoring.sheet_key import NEW_SHEET, SheetKey, read_key, reply_texts
 
 PROGRESS = 50  # verdicts between progress lines
-NEW_SHEET = "export a new sheet (pushlab label export)"
+FAILED = "failed"  # the judge's label, in disagreements.csv, of a failure
+
+Jobs = dict[str, tuple[list[str], list[Job]]]  # by rubric: item IDs and jobs
 
 
 def _refuse(message: str) -> int:
@@ -98,102 +105,40 @@ def _out(sheet: Path, judge: str, moment: datetime) -> Path:
     return sheet / f"check-{name}-{moment:%Y%m%dT%H%M%SZ}.json"
 
 
-def reply_texts(
-    key: SheetKey, runs_dir: Path | None = None
-) -> tuple[dict[str, str], list[str]]:
-    """Each item's reply, by item ID, read back from its experiment's runner
-    folder in runs_dir (None: the default), and the experiments' models.
-
-    ValueError refuses an experiment file that is not there (key.json gives
-    its path as export was given it) or cannot be read (judged_runs), and a
-    sheet whose replies changed since the export: an experiment file that
-    names another experiment now, a runner folder at another version, a run
-    with no reply now, and a reply that is not the one exported.
-
-    Example:
-        >>> reply_texts(read_key(Path("sheet/key.json")))  # doctest: +SKIP
-        ({'sheet-001': 'Hello!', ...}, ['qwen3-8b'])
-    """
-    texts: dict[str, str] = {}
-    models: list[str] = []
-    problems: list[str] = []
-    for spec in dict.fromkeys(item.spec for item in key.items):
-        if not Path(spec).exists():  # a path relative to where export ran
-            raise ValueError(
-                f"{spec}, an experiment file the sheet was exported from, is not "
-                "there: run pushlab label check from the folder pushlab label "
-                "export ran in"
-            )
-        experiment = judged_runs(Path(spec), runs_dir)
-        models.append(experiment.spec.model)
-        items = [item for item in key.items if item.spec == spec]
-        name = experiment.spec.name
-        if others := sorted({item.experiment for item in items} - {name}):
-            problems.append(
-                f"{spec} is the experiment {name} now, not {listing(others)}"
-            )
-            continue
-        versions = sorted({item.version for item in items} - {experiment.version})
-        if versions:
-            exported = listing([str(version) for version in versions])
-            problems.append(
-                f"{name}'s runner folder is at version {experiment.version} now, but "
-                f"the sheet's replies are of version {exported}"
-            )
-            continue
-        runs = {run.run_id: run for run in experiment.runs}
-        gone = [item.run_id for item in items if item.run_id not in runs]
-        changed = [
-            item.run_id
-            for item in items
-            if item.run_id in runs
-            and output_sha256(runs[item.run_id]) != item.output_sha256
-        ]
-        if gone:
-            verb = "has" if len(gone) == 1 else "have"
-            problems.append(f"{listing(gone)} {verb} no saved reply now")
-        if changed:
-            replies = "reply" if len(changed) == 1 else "replies"
-            problems.append(
-                f"the {replies} of {listing(changed)} changed since the export"
-            )
-        texts |= {
-            item.item_id: runs[item.run_id].output_text
-            for item in items
-            if item.run_id in runs
-        }
-    if problems:
-        raise ValueError(f"{'; '.join(problems)}: {NEW_SHEET}")
-    return texts, models
-
-
-def _check_rubrics(
-    key: SheetKey, rubrics: dict[str, Rubric], labeled: Sequence[str]
-) -> None:
-    """Refuse a labeled rubric that changed since the export, or whose
-    persona or personas the key lacks."""
-    changed, names = [], []
-    for name in labeled:
-        rubric, (version, sha256) = rubrics[name], key.rubrics[name]
+def _changed(key: SheetKey, rubrics: dict[str, Rubric]) -> dict[str, str]:
+    """The key's rubrics that changed since the export, each with how: its
+    file is another version now, or the same version with other words."""
+    changed = {}
+    for name, rubric in rubrics.items():
+        version, sha256 = key.rubrics[name]
         if rubric.version != version:
-            changed.append(
+            changed[name] = (
                 f"{name} was version {version} when the sheet was exported, and "
                 f"rubrics/{name}.yaml is version {rubric.version} now"
             )
         elif rubric.sha256 != sha256:
-            changed.append(
+            changed[name] = (
                 f"rubrics/{name}.yaml changed since the sheet was exported, though "
                 f"it is still version {version}"
             )
-        else:
-            continue
-        names.append(name)
-    if changed:
+    return changed
+
+
+def _check_rubrics(
+    key: SheetKey,
+    rubrics: dict[str, Rubric],
+    changed: dict[str, str],
+    labeled: Sequence[str],
+) -> None:
+    """Refuse a labeled rubric that changed since the export (changed says
+    how), or whose persona or personas the key lacks."""
+    if names := [name for name in labeled if name in changed]:
         column = "column" if len(names) == 1 else "columns"
         raise ValueError(
-            f"{'; '.join(changed)}: a rubric's new version is checked on a new "
-            "sheet (pushlab label export); to check the sheet's other rubrics now, "
-            f"give --labels a copy of the sheet without the {listing(names)} {column}"
+            f"{'; '.join(changed[name] for name in names)}: a rubric's new version "
+            "is checked on a new sheet (pushlab label export); to check the "
+            "sheet's other rubrics now, give --labels a copy of the sheet without "
+            f"the {listing(names)} {column}"
         )
     for name in labeled:
         if rubrics[name].needs == "persona" and key.persona is None:
@@ -214,7 +159,7 @@ def _jobs(
     filled: FilledSheet,
     texts: dict[str, str],
     labeled: Sequence[str],
-) -> dict[str, tuple[list[str], list[Job]]]:
+) -> Jobs:
     """For each labeled rubric, the items you labeled, in the key's order,
     and a job for each: the rubric, the key's persona (speaks_as) or
     personas (which_persona), and the reply's text, as pushlab score asks."""
@@ -230,21 +175,27 @@ def _jobs(
     return jobs
 
 
+def _by_rubric(jobs: Jobs, found: Sequence[Verdict]) -> dict[str, Sequence[Verdict]]:
+    """found, the verdicts on every job in the order of jobs, by rubric."""
+    verdicts, start = {}, 0
+    for name, (_, each) in jobs.items():
+        verdicts[name] = found[start : start + len(each)]
+        start += len(each)
+    return verdicts
+
+
 def _summaries(
     key: SheetKey,
     rubrics: dict[str, Rubric],
     options: dict[str, list[Any]],
     filled: FilledSheet,
-    jobs: dict[str, tuple[list[str], list[Job]]],
-    found: Sequence[Verdict],
+    jobs: Jobs,
+    verdicts: dict[str, Sequence[Verdict]],
+    min_labels: int,
 ) -> dict[str, dict[str, Any]]:
     """Each rubric's entry in the record, in the key's order: its numbers,
-    from found, the verdicts on every job in the order of jobs; or, with
-    no label, why it has none."""
-    verdicts, start = {}, 0
-    for name, (_, each) in jobs.items():
-        verdicts[name] = found[start : start + len(each)]
-        start += len(each)
+    from the judge's verdicts, by rubric; or, with no label, why it has
+    none. A rubric with fewer labels than min_labels is TOO FEW."""
     summaries = {}
     for name, rubric in rubrics.items():
         numbers = about(name, rubric, key)
@@ -258,10 +209,29 @@ def _summaries(
             yours = [filled.labels[name][item_id] for item_id in ids]
             skipped = len(key.items) - len(ids)
             numbers |= compare(
-                rubric, options[name], ids, yours, verdicts[name], skipped
+                rubric, options[name], ids, yours, verdicts[name], skipped, min_labels
             )
         summaries[name] = numbers
     return summaries
+
+
+def _disagreements(
+    jobs: Jobs,
+    verdicts: dict[str, Sequence[Verdict]],
+    summaries: dict[str, dict[str, Any]],
+) -> list[list[Any]]:
+    """disagreements.csv's rows: for each labeled rubric, each item you and
+    the judge label differently, your label, the judge's or "failed", and
+    its reason or, for a failure, its error."""
+    rows = []
+    for name, (ids, _) in jobs.items():
+        said = dict(zip(ids, verdicts[name], strict=True))
+        for entry in summaries[name]["disagreements"]:
+            verdict = said[entry["item_id"]]
+            judged = entry["judge"] if verdict.ok else FAILED
+            why = verdict.reason if verdict.ok else verdict.error
+            rows.append([entry["item_id"], name, entry["yours"], judged, why])
+    return rows
 
 
 def run_label_check(
@@ -276,6 +246,7 @@ def run_label_check(
     runs_dir: Path | None = None,
     out: Path | None = None,
     judge: Judge | None = None,
+    min_labels: int = MIN_LABELS,
 ) -> int:
     """Check a judge against your labels in the sheet folder `pushlab label
     export` wrote; return the exit status.
@@ -284,16 +255,19 @@ def run_label_check(
     backend's (api or local) asking model (None: the backend's default) at
     base_url (local only), workers calls at a time, through its cache in
     cache_dir (None: default_cache_dir()); judge, given, replaces all that
-    (for tests). runs_dir holds the runner folders (None: the default).
-    out is the record's path (None: in the sheet, named after the judge and
-    the time). Returns 0 once the record is written, whatever the verdicts,
-    and 1 with the reason on stderr when it refuses: a sheet that is not a
-    folder; a key or labels it cannot read, or labels with problems, every
-    one named with its rows (pushlab.scoring.filled_sheet); no label at
-    all; a labeled rubric that changed since the export, or whose persona
-    the key lacks; an out that is a folder or exists; replies that changed
-    since the export; a judge of the tested model's family, or one that
-    cannot be made; and a judge that cannot answer at all.
+    (for tests). runs_dir holds the runner folders (None: the one key.json
+    names, else the default). out is the record's path (None: in the sheet,
+    named after the judge and the time). min_labels is how many labels a
+    rubric needs to pass: the plan's 200, fewer only for tests or a pilot.
+    Returns 0 once the record and disagreements.csv are written, whatever
+    the verdicts, and 1 with the reason on stderr when it refuses: a sheet
+    that is not a folder; a key or labels it cannot read, or labels with
+    problems, every one named with its rows (pushlab.scoring.filled_sheet);
+    no label at all; a labeled rubric that changed since the export, or
+    whose persona the key lacks; an out that is a folder or exists; replies
+    that cannot be found or changed since the export; a judge of the tested
+    model's family, or one that cannot be made; and a judge that cannot
+    answer at all.
 
     Example:
         >>> run_label_check(Path("/workspace/labels/coherence-1"))  # doctest: +SKIP
@@ -308,9 +282,13 @@ def run_label_check(
     try:
         key = read_key(sheet / KEY_FILE)
         rubrics = {name: load_rubric(name) for name in key.rubrics}
+        # A changed rubric's cells are not checked against its new labels,
+        # so that the refusal says it changed, not that your labels are wrong.
+        changed = _changed(key, rubrics)
         options = {
             name: rubric.options(key.personas if rubric.kind == "choice" else ())
             for name, rubric in rubrics.items()
+            if name not in changed
         }
         filled = read_labels(labels, key, options)
         labeled = [name for name in filled.columns if filled.labels[name]]
@@ -319,7 +297,7 @@ def run_label_check(
                 f"{labels} holds no label: fill in its rubrics' columns as "
                 "instructions.md says, save it as CSV, then check again"
             )
-        _check_rubrics(key, rubrics, labeled)
+        _check_rubrics(key, rubrics, changed, labeled)
         asks = judge_model(backend, model) if judge is None else judge.backend.model
         name = judge_name(backend, asks) if judge is None else judge.name
     except ValueError as error:
@@ -331,7 +309,7 @@ def run_label_check(
     if out.exists():
         return _refuse(f"{out} already exists: give another --out")
     try:
-        texts, models = reply_texts(key, runs_dir)
+        texts, models = reply_texts(key, key.runs_dir if runs_dir is None else runs_dir)
         check_family(asks, models)
     except ValueError as error:
         return _refuse(str(error))
@@ -356,10 +334,17 @@ def run_label_check(
         found = judge.verdicts(every, workers, _progress)
     except (JudgeUnavailable, ValueError) as error:
         return _refuse(str(error))
-    summaries = _summaries(key, rubrics, options, filled, jobs, found)
+    verdicts = _by_rubric(jobs, found)
+    summaries = _summaries(key, rubrics, options, filled, jobs, verdicts, min_labels)
     counts = verdict_counts(found)
-    print(report(key, filled, name, counts, summaries, rubrics))
-    data = record(key, filled, name, moment, counts, summaries)
+    print(report(key, filled, name, counts, summaries, rubrics, min_labels))
+    data = record(key, filled, name, moment, counts, summaries, min_labels)
+    reasons = sheet / DISAGREEMENTS_FILE  # beside the replies, never in the record
+    rows = _disagreements(jobs, verdicts, summaries)
+    try:
+        reasons.write_bytes(disagreements_csv(rows))
+    except OSError as error:
+        return _refuse(f"cannot write {reasons}: {error}")
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("x", encoding="utf-8") as file:
@@ -368,5 +353,9 @@ def run_label_check(
             )
     except OSError as error:
         return _refuse(f"cannot write {out}: {error}")
+    print(
+        "Saved the judge's reasons where you differ, which may quote replies: "
+        f"{reasons}"
+    )
     print(f"Saved the numbers, with no reply text: {out}")
     return 0

@@ -9,8 +9,12 @@ of the experiments (pushlab.scoring.label_sheet) and writes three files
 into the folder:
 - labels.csv, for you to label in any spreadsheet;
 - instructions.md: how to label, and each rubric's answers and meanings;
-- key.json, never for the labeler: the sheet's settings, and each item's
-  experiment, run and condition, for `pushlab label check`.
+- key.json, never for the labeler: the sheet's settings, the runs folder
+  it read, as an absolute path, and each item's experiment, run and
+  condition, for `pushlab label check`.
+An item's ID is the folder's name, the sample's token and a number, such
+as coherence-1-3f2a-001: labels of another sample, even one in a folder of
+the same name, match none of this sheet's items, and check refuses them.
 It prints how many replies each stratum gave, and the files' paths, never a
 reply's text. It loads no model and calls no judge.
 """
@@ -25,6 +29,7 @@ from typing import Any
 
 from pushlab import PROJECT_ROOT
 from pushlab.cli_labels import SHEET_SIZE
+from pushlab.runs.folder import default_runs_dir
 from pushlab.scoring.label_sheet import (
     INSTRUCTIONS_FILE,
     KEY_FILE,
@@ -36,6 +41,7 @@ from pushlab.scoring.label_sheet import (
     item_ids,
     plural,
     sample,
+    sample_token,
     sheet_csv,
 )
 from pushlab.scoring.personas import Persona, pick_persona, read_personas
@@ -184,7 +190,8 @@ def run_label_export(
 
     rubrics are its label columns, in order (None: all, as RUBRIC_NAMES
     lists them); personas_file and persona give the persona or personas they
-    ask about; runs_dir holds the runner folders (None: the default). Returns
+    ask about; runs_dir holds the runner folders (None: the default), and
+    key.json records it as an absolute path, for label check. Returns
     0 once labels.csv, instructions.md and key.json are written, and 1 with
     the reason on stderr when it refuses: an unknown rubric; a size below 1
     or a seed below 0; out inside the repository, a file, not empty, or with
@@ -224,17 +231,19 @@ def run_label_export(
         )
     chosen = sample(kept, size, seed)
     folder = out.resolve()
-    ids = item_ids(folder.name, len(chosen))
+    ids = item_ids(f"{folder.name}-{sample_token(chosen)}", len(chosen))
     table = sheet_csv(ids, chosen, [rubric.name for rubric in loaded])
     available = Counter(item.stratum for item in kept)  # in the strata's order
     taken = dict.fromkeys(available, 0)
     for item in chosen:
         taken[item.stratum] += 1
+    runs = default_runs_dir() if runs_dir is None else Path(runs_dir)
     key = {
         "sheet": folder.name,
         "created_at": now(),
         "seed": seed,
         "size": size,
+        "runs_dir": str(runs.resolve()),  # where label check reads the replies
         "rubrics": {
             rubric.name: {"version": rubric.version, "sha256": rubric.sha256}
             for rubric in loaded

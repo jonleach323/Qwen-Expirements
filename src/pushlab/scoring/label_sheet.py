@@ -15,16 +15,22 @@ then shuffles the chosen, so one seed always gives the same sheet.
 labels.csv (sheet_csv) has a row per reply, under item_id, text, a column
 per rubric and note, in UTF-8 with a byte-order mark, which spreadsheets
 read; it names no run, condition, unit, dose or prompt, so you label blind,
-as the judge does. instructions.md (instructions) says how to label, and
-each rubric's answers and their meanings, from the rubric files.
+as the judge does. An item's ID is the folder's name, the sample's token
+(sample_token) and a number, so that the labels of another sample, even
+one in a folder of the same name, match none of its items. instructions.md
+(instructions) says how to label, and each rubric's answers and their
+meanings, from the rubric files. disagreements.csv (disagreements_csv),
+which `pushlab label check` writes beside them, gives the judge's reason
+for each of its labels that differs from yours; a reason may quote a reply.
 """
 
 import codecs
 import csv
+import hashlib
 import io
 import random
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,7 +42,10 @@ from pushlab.store.records import RunRecord
 SHEET_FILE = "labels.csv"
 INSTRUCTIONS_FILE = "instructions.md"
 KEY_FILE = "key.json"
+DISAGREEMENTS_FILE = "disagreements.csv"
+DISAGREEMENT_COLUMNS = ("item_id", "rubric", "yours", "judge", "reason")
 NOTE = "note"  # the sheet's last column, for the labeler's own notes
+TOKEN_DIGITS = 4  # hex digits of a sample's token, in its items' IDs
 # A cell that starts with one of these gets an apostrophe before it, so that
 # a spreadsheet shows it rather than running it as a formula.
 GUARDED = ("=", "+", "-", "@")
@@ -212,16 +221,40 @@ def guard(cell: str) -> str:
     return f"'{cell}" if cell.startswith(GUARDED) else cell
 
 
-def item_ids(sheet: str, count: int) -> list[str]:
-    """The IDs of a sheet's count items: its name and a number from 1, in at
-    least three digits.
+def sample_token(items: Sequence[LabelItem]) -> str:
+    """A sample's token: the first TOKEN_DIGITS hex digits of the SHA-256 of
+    its items' experiments and runs, "<experiment>/<run ID>" a line, in
+    sheet order. The same sample always has the same token; another has
+    another, but for one in 65,536.
 
     Example:
-        >>> item_ids("coherence-1", 2)
-        ['coherence-1-001', 'coherence-1-002']
+        >>> sample_token([])  # the SHA-256 of no text starts with e3b0
+        'e3b0'
+    """
+    runs = "\n".join(f"{item.experiment}/{item.run.run_id}" for item in items)
+    return hashlib.sha256(runs.encode("utf-8")).hexdigest()[:TOKEN_DIGITS]
+
+
+def item_ids(prefix: str, count: int) -> list[str]:
+    """The IDs of a sheet's count items: prefix, which export makes of the
+    folder's name and the sample's token, and a number from 1, in at least
+    three digits.
+
+    Example:
+        >>> item_ids("coherence-1-3f2a", 2)
+        ['coherence-1-3f2a-001', 'coherence-1-3f2a-002']
     """
     width = max(3, len(str(count)))
-    return [f"{sheet}-{number:0{width}d}" for number in range(1, count + 1)]
+    return [f"{prefix}-{number:0{width}d}" for number in range(1, count + 1)]
+
+
+def _csv(rows: Iterable[Sequence[object]]) -> bytes:
+    """rows as CSV, every cell guarded, in UTF-8 with a byte-order mark; a
+    character that UTF-8 cannot hold, such as a lone surrogate that an
+    error may quote, is written as its escape."""
+    buffer = io.StringIO()
+    csv.writer(buffer).writerows([guard(str(cell)) for cell in row] for row in rows)
+    return codecs.BOM_UTF8 + buffer.getvalue().encode("utf-8", "backslashreplace")
 
 
 def sheet_csv(
@@ -235,12 +268,23 @@ def sheet_csv(
         >>> sheet_csv([], [], ["coherence"])
         b'\\xef\\xbb\\xbfitem_id,text,coherence,note\\r\\n'
     """
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(["item_id", "text", *rubrics, NOTE])
-    for item_id, item in zip(ids, items, strict=True):
-        writer.writerow([guard(item_id), guard(item.text), *[""] * len(rubrics), ""])
-    return codecs.BOM_UTF8 + buffer.getvalue().encode("utf-8")
+    empty = [""] * (len(rubrics) + 1)  # the labels' cells and the note's
+    pairs = zip(ids, items, strict=True)
+    rows = ([item_id, item.text, *empty] for item_id, item in pairs)
+    return _csv([["item_id", "text", *rubrics, NOTE], *rows])
+
+
+def disagreements_csv(rows: Iterable[Sequence[object]]) -> bytes:
+    """disagreements.csv: a header of item_id, rubric, yours, judge and
+    reason, then rows, each an item and rubric where you and the judge
+    differ: your label, the judge's or "failed", and its reason or, for a
+    failure, its error; every cell guarded, in UTF-8 with a byte-order mark.
+
+    Example:
+        >>> disagreements_csv([["s-001", "coherence", 7, 4, "-Slips."]])[3:]
+        b"item_id,rubric,yours,judge,reason\\r\\ns-001,coherence,7,4,'-Slips.\\r\\n"
+    """
+    return _csv([DISAGREEMENT_COLUMNS, *rows])
 
 
 def score_scale(rubric: Rubric) -> list[tuple[str, str]]:

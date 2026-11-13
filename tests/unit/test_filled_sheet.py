@@ -5,7 +5,7 @@ key.json's reading.
 
 The sheets here are written by the tests, with invented replies, as
 spreadsheets save them: with or without a byte-order mark, in UTF-8 or
-cp1252, cut by commas, semicolons or tabs, with \\r\\n or \\n.
+cp1252, cut by commas, semicolons or tabs, with \\r\\n, \\n or \\r.
 """
 
 import codecs
@@ -146,6 +146,35 @@ def test_the_delimiter_is_the_one_the_header_holds_most_of() -> None:
     assert delimiter_of("item_id,text,coherence\n") == ","
     assert delimiter_of("item_id\ttext\tcoherence\n") == "\t"
     assert delimiter_of("item_id\n") == ","  # none at all: a comma
+    # The header line ends at its \r, with or without a \n after it.
+    assert delimiter_of("item_id;text\rs-001;One, two, three.\r") == ";"
+
+
+def test_a_sheet_whose_lines_end_with_a_carriage_return_alone_is_read(
+    tmp_path: Path,
+) -> None:
+    # As an old Mac saves CSV: \r alone. The replies' commas outnumber the
+    # file's semicolons, so only the header line tells the delimiter.
+    rows = [["item_id", "text", "coherence"]]
+    rows += [[f"sheet-1-00{k}", "One, two, three, four, five.", "5"] for k in (1, 2)]
+    path = _save(tmp_path / "labels.csv", rows, newline="\r")
+    assert b"\n" not in path.read_bytes()
+    sheet = read_labels(path, KEY, OPTIONS)
+    assert sheet.labels == {"coherence": {"sheet-1-001": 5, "sheet-1-002": 5}}
+
+
+def test_a_rubric_without_options_is_read_unchecked(tmp_path: Path) -> None:
+    # label check gives no options for a rubric changed since the export, so
+    # that it can say the rubric changed rather than refuse its labels.
+    rows = [["item_id", "speaks_as", "coherence"]]
+    rows += [["sheet-1-001", " Pirate ", "5"], ["sheet-1-002", "", "6"]]
+    path = _save(tmp_path / "labels.csv", rows)
+    sheet = read_labels(path, KEY, {"coherence": OPTIONS["coherence"]})
+    assert sheet.labels == {
+        "speaks_as": {"sheet-1-001": "Pirate"},  # as written, never matched
+        "coherence": {"sheet-1-001": 5, "sheet-1-002": 6},
+    }
+    assert sheet.empty == {"speaks_as": 1, "coherence": 0}
 
 
 @pytest.mark.parametrize(

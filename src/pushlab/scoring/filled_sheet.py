@@ -5,9 +5,10 @@ read_labels reads your labeled labels.csv, for the items and rubrics of
 the sheet's key (pushlab.scoring.sheet_key), however a spreadsheet saved
 it: with or without a byte-order mark; in UTF-8, else Windows' cp1252; its
 cells cut by commas, semicolons or tabs, whichever its header line holds
-most of; its lines ended by \\r\\n or \\n; its header's names in any case
-and with spaces around. Only the item_id column and the key's rubrics'
-columns are read: not text, note or any other.
+most of; its lines ended by \\r\\n, \\n or \\r alone, as an old Mac saves
+them; its header's names in any case and with spaces around. Only the
+item_id column and the key's rubrics' columns are read: not text, note or
+any other.
 
 A label is matched ignoring case and the space around it, and given in the
 rubric's own spelling: one of speaks_as's labels; a persona's name or
@@ -16,7 +17,10 @@ may format it), from 0 to 10. An empty cell is not a label: that reply is
 skipped for that rubric. A blank row is passed over. Every problem is
 refused at once, each naming its rows as a spreadsheet numbers them, the
 header being row 1: a row with no item_id, an item_id the key does not
-have, an item given twice, and a label the rubric does not have.
+have, an item given twice, and a label the rubric does not have. A rubric
+given no labels to match is read unchecked, each cell as written: label
+check gives none for a rubric changed since the export, so that it can
+say the rubric changed, rather than that your labels are wrong.
 """
 
 import codecs
@@ -27,9 +31,10 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pushlab.scoring.sheet_key import SheetKey
+if TYPE_CHECKING:  # sheet_key imports listing from here
+    from pushlab.scoring.sheet_key import SheetKey
 
 ITEM_ID = "item_id"
 DELIMITERS = (",", ";", "\t")  # a comma wins a tie
@@ -42,8 +47,9 @@ _WHOLE = re.compile(r"([0-9]+)(?:[.,]0+)?")
 class FilledSheet:
     """Your labels, read: for each of the key's rubrics that has a column
     (columns, in the key's order), its labels by item ID, in the rubric's
-    spelling, and how many of its cells were empty. items are the item IDs
-    of the rows, in their order; sha256 is the file's."""
+    spelling (as written, for one read unchecked), and how many of its
+    cells were empty. items are the item IDs of the rows, in their order;
+    sha256 is the file's."""
 
     path: Path
     sha256: str
@@ -120,13 +126,16 @@ def decode_sheet(data: bytes, path: Path) -> str:
 
 def delimiter_of(text: str) -> str:
     """The delimiter of a saved sheet: the one of a comma, a semicolon and a
-    tab that its header line holds most of; a comma on a tie.
+    tab that its header line, up to the first \\r or \\n, holds most of; a
+    comma on a tie.
 
     Example:
         >>> delimiter_of("item_id;text;coherence;note\\r\\nsheet-1-001;Hi, you.;7;")
         ';'
+        >>> delimiter_of("item_id;text\\rsheet-1-001;One, two, three.\\r")
+        ';'
     """
-    line = text.split("\n", 1)[0]
+    line = re.split(r"[\r\n]", text, maxsplit=1)[0]
     return max(DELIMITERS, key=line.count)
 
 
@@ -193,11 +202,12 @@ def _bad(name: str, found: list[tuple[int, str]], options: Sequence[Any]) -> str
 
 
 def read_labels(
-    path: Path, key: SheetKey, options: Mapping[str, Sequence[Any]]
+    path: Path, key: "SheetKey", options: Mapping[str, Sequence[Any]]
 ) -> FilledSheet:
     """Your labels in the sheet at path, for the key's items and rubrics;
     options gives each rubric's labels, in its own spelling, such as
-    Rubric.options gives them.
+    Rubric.options gives them, and a rubric it does not give is read
+    unchecked, each cell as written, the space around it stripped.
 
     ValueError when the file cannot be read, has no header or no item_id
     column, or names a column twice; and, every one at once, with their
@@ -258,6 +268,8 @@ def read_labels(
             value = cell(row, name)
             if not value:
                 empty[name] += 1
+            elif name not in options:  # unchecked
+                labels[name][item_id] = value
             elif (label := match_label(value, options[name])) is None:
                 bad[name].append((number, value))
             else:

@@ -5,13 +5,15 @@ compare works out a labeled rubric's numbers from your labels and the
 judge's verdicts on the same items (pushlab.scoring.agreement): a failed
 verdict counts as a disagreement, never as a label. passes is the plan's
 rule (docs/plan/development-plan.md, "Judge validation"): an accuracy of
-0.85 and a Cohen's kappa of 0.70 or more, an undefined kappa failing. For
-a score, such as coherence, the rule is applied to exact scores, which is
-strict; the accuracy within 1 point and the quadratic-weighted kappa are
-reported beside it. report writes the numbers out for a person, cut to
-three places, never rounded up, so that one shown as 0.700 is at least
-0.70; record gathers them for the JSON file. Neither holds a reply's text
-or a reason the judge gave: items go by their IDs.
+0.85 and a Cohen's kappa of 0.70 or more, an undefined kappa failing. The
+plan asks for 200 labels per rubric (MIN_LABELS): a rubric with fewer is
+TOO FEW, whatever its numbers, which are still shown. For a score, such as
+coherence, the rule is applied to exact scores, which is strict; the
+accuracy within 1 point and the quadratic-weighted kappa are reported
+beside it. report writes the numbers out for a person, cut to three
+places, never rounded up, so that one shown as 0.700 is at least 0.70;
+record gathers them for the JSON file. Neither holds a reply's text or a
+reason the judge gave: items go by their IDs.
 """
 
 import math
@@ -36,14 +38,12 @@ from pushlab.scoring.sheet_key import SheetKey
 
 PASS_ACCURACY = 0.85
 PASS_KAPPA = 0.70
+# The plan's hand labels per rubric: a rubric with fewer cannot pass.
+MIN_LABELS = 200
+TOO_FEW = "TOO FEW"
 WITHIN = 1  # points a score may be off and count as close
 WIDTH = 88  # the report's lines are wrapped to this
 NOT_LABELED = "not labeled"
-RULE = (
-    "A rubric passes at an accuracy of 0.85 and a Cohen's kappa of 0.70 or more "
-    '(docs/plan/development-plan.md, "Judge validation"); numbers are cut to 3 '
-    "places, never rounded up."
-)
 STRICT = (
     "The rule is applied to exact scores, which is strict: a score 1 point off "
     "counts as a disagreement. Weigh the two lines above beside it."
@@ -51,14 +51,32 @@ STRICT = (
 
 
 def passes(share: float, kappa: float | None) -> bool:
-    """Whether a rubric passes the plan's rule: an accuracy of 0.85 and a
-    Cohen's kappa of 0.70 or more; an undefined kappa fails.
+    """Whether a rubric's numbers pass the plan's rule: an accuracy of 0.85
+    and a Cohen's kappa of 0.70 or more; an undefined kappa fails. A rubric
+    also needs enough labels to pass (compare).
 
     Example:
         >>> passes(0.85, 0.70), passes(0.9, None), passes(0.849, 0.9)
         (True, False, False)
     """
     return share >= PASS_ACCURACY and kappa is not None and kappa >= PASS_KAPPA
+
+
+def rule(min_labels: int = MIN_LABELS) -> str:
+    """The rule, as the report states it: the labels a rubric needs to pass,
+    min_labels, and the plan's own number when it is not that, then the
+    numbers it needs.
+
+    Example:
+        >>> rule(10).split(", at")[0]
+        'A rubric passes with 10 labels or more (the plan asks for 200)'
+    """
+    plan = "" if min_labels == MIN_LABELS else f" (the plan asks for {MIN_LABELS})"
+    return (
+        f"A rubric passes with {min_labels} labels or more{plan}, at an accuracy of "
+        "0.85 and a Cohen's kappa of 0.70 or more (docs/plan/development-plan.md, "
+        '"Judge validation"); numbers are cut to 3 places, never rounded up.'
+    )
 
 
 def shown(value: float | None) -> str:
@@ -130,25 +148,29 @@ def compare(
     yours: Sequence[Any],
     verdicts: Sequence[Verdict],
     skipped: int,
+    min_labels: int = MIN_LABELS,
 ) -> dict[str, Any]:
     """A labeled rubric's numbers: your labels (in the rubric's spelling,
     options giving them all) against the judge's verdicts on the same items,
     a failed verdict counting as a disagreement; skipped counts the items
-    you did not label. ValueError, as agreement's, for lists of different
-    lengths or no labels.
+    you did not label. Its result is TOO FEW with fewer labels than
+    min_labels, whatever its numbers; else PASS or FAIL by the rule
+    (passes). ValueError, as agreement's, for lists of different lengths or
+    no labels.
 
     Example:
         >>> compare(
         ...     rubric, options, ["s-001"], ["assistant"], [verdict], 0
         ... )  # doctest: +SKIP
-        {'result': 'FAIL', 'labels': 1, ...}
+        {'result': 'TOO FEW', 'labels': 1, ...}
     """
     theirs = [_judged(rubric, verdict) for verdict in verdicts]
     failures = Counter(_kind(verdict.error) for verdict in verdicts if not verdict.ok)
     share, kappa = accuracy(yours, theirs), cohen_kappa(yours, theirs)
     pairs = list(zip(item_ids, yours, theirs, strict=True))
+    result = "PASS" if passes(share, kappa) else "FAIL"
     numbers: dict[str, Any] = {
-        "result": "PASS" if passes(share, kappa) else "FAIL",
+        "result": TOO_FEW if len(yours) < min_labels else result,
         "labels": len(yours),
         "skipped": skipped,
         "failed": sum(failures.values()),
@@ -244,8 +266,13 @@ def _wrapped(first: str, entries: Sequence[str]) -> list[str]:
     return [*lines, line]
 
 
-def section(name: str, numbers: Mapping[str, Any], rubric: Rubric) -> list[str]:
-    """A rubric's part of the report.
+def section(
+    name: str,
+    numbers: Mapping[str, Any],
+    rubric: Rubric,
+    min_labels: int = MIN_LABELS,
+) -> list[str]:
+    """A rubric's part of the report; min_labels is the labels it needed.
 
     Example:
         >>> from pushlab.scoring.rubrics import load_rubric
@@ -263,6 +290,11 @@ def section(name: str, numbers: Mapping[str, Any], rubric: Rubric) -> list[str]:
     labels, failed = numbers["labels"], numbers["failed"]
     lines = [f"{head}: {numbers['result']}"]
     lines.append(f"  Your labels: {labels} read, {numbers['skipped']} skipped.")
+    if numbers["result"] == TOO_FEW:
+        needed = f"the {min_labels} needed"
+        if min_labels == MIN_LABELS:
+            needed = f"the plan's {MIN_LABELS}"
+        lines.append(f"  Too few labels to pass: {labels} of {needed}.")
     if failed:
         kinds = ", ".join(
             f"{kind}: {count}" for kind, count in numbers["failures"].items()
@@ -309,9 +341,11 @@ def report(
     counts: Mapping[str, int],
     summaries: Mapping[str, Mapping[str, Any]],
     rubrics: Mapping[str, Rubric],
+    min_labels: int = MIN_LABELS,
 ) -> str:
-    """The report: the sheet, the judge, its verdicts and the rule, then a
-    section per rubric and every rubric's result."""
+    """The report: the sheet, the judge, its verdicts and the rule, with the
+    labels a rubric needed, then a section per rubric and every rubric's
+    result."""
     replies = plural(len(key.items), "reply", "replies")
     lines = [f"Sheet {key.sheet}: {replies}; judge {judge}."]
     if missing := len(key.items) - len(filled.items):
@@ -325,9 +359,9 @@ def report(
         f"The judge gave {plural(counts['count'], 'verdict', 'verdicts')}: "
         f"{counts['cached']} from its cache, {calls} made, {counts['failed']} failed."
     )
-    lines += textwrap.wrap(RULE, WIDTH, break_on_hyphens=False)
+    lines += textwrap.wrap(rule(min_labels), WIDTH, break_on_hyphens=False)
     for name, numbers in summaries.items():
-        lines += ["", *section(name, numbers, rubrics[name])]
+        lines += ["", *section(name, numbers, rubrics[name], min_labels)]
     results = ", ".join(
         f"{name} {numbers['result']}" for name, numbers in summaries.items()
     )
@@ -341,15 +375,17 @@ def record(
     moment: datetime,
     counts: Mapping[str, int],
     summaries: Mapping[str, Mapping[str, Any]],
+    min_labels: int = MIN_LABELS,
 ) -> dict[str, Any]:
     """The JSON record of a check: what was compared, by which judge and
-    when, with the hashes that pin the sheet, and every rubric's numbers;
-    no reply text and no reason of the judge's."""
+    when, under which rule (min_labels, the labels a rubric needed), with
+    the hashes that pin the sheet, and every rubric's numbers; no reply text
+    and no reason of the judge's."""
     return {
         "sheet": key.sheet,
         "checked_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "judge": judge,
-        "rule": {"accuracy": PASS_ACCURACY, "kappa": PASS_KAPPA},
+        "rule": {"accuracy": PASS_ACCURACY, "kappa": PASS_KAPPA, "labels": min_labels},
         "key_sha256": key.sha256,
         "labels_csv_sha256": key.labels_csv_sha256,
         "labels_file": str(filled.path),

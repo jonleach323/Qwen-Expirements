@@ -95,7 +95,9 @@ def make_sheet(
 ) -> Path:
     """A sheet folder as `pushlab label export` writes one, made by hand in
     folder/sheet-1: an item per saved run, item k for run k, labels.csv
-    still empty, instructions.md and key.json."""
+    still empty, instructions.md and key.json, which names runs as the
+    runs folder. Its item IDs are sheet-1-001 on, without the sample's
+    token that export puts in them: label check only matches IDs."""
     sheet = folder / SHEET
     sheet.mkdir(parents=True)
     saved = sorted(read_results(runs / NAME), key=lambda run: run.run_id)
@@ -132,6 +134,7 @@ def make_sheet(
         "created_at": "2026-11-13T08:00:00Z",
         "seed": 0,
         "size": 200,
+        "runs_dir": str(runs.resolve()),
         "rubrics": {
             name: {
                 "version": load_rubric(name).version,

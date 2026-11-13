@@ -53,10 +53,10 @@ def _add_export(steps: argparse._SubParsersAction) -> None:
         "to label in any spreadsheet, a row per reply with an empty column for "
         "each rubric and one for your notes; instructions.md, how to label and "
         "what each answer means; and key.json, which names each reply's run and "
-        "condition for `pushlab label check`: never open it while labeling. "
-        "labels.csv names no run, condition, unit, dose or prompt, so you label "
-        "blind, as the judge does. It prints how many replies each condition "
-        "gave. It loads no model and calls no judge.",
+        "condition, and the runs folder read, for `pushlab label check`: never "
+        "open it while labeling. labels.csv names no run, condition, unit, dose "
+        "or prompt, so you label blind, as the judge does. It prints how many "
+        "replies each condition gave. It loads no model and calls no judge.",
     )
     export.add_argument(
         "specs",
@@ -72,7 +72,9 @@ def _add_export(steps: argparse._SubParsersAction) -> None:
         type=Path,
         metavar="DIR",
         help="a new or empty folder outside the repository for the sheet, such as "
-        "/workspace/labels/coherence-1; each reply's ID starts with its name",
+        "/workspace/labels/coherence-1; each reply's ID is its name, a token of "
+        "the sample and a number, such as coherence-1-3f2a-001, so that labels "
+        "of another sample are never read as this one's",
     )
     export.add_argument(
         "--rubric",
@@ -126,10 +128,14 @@ def _add_check(steps: argparse._SubParsersAction) -> None:
         "each counted as a disagreement, its accuracy and Cohen's kappa against "
         "your labels, and a table of your labels against its own; for coherence "
         "also the accuracy within one point and a weighted kappa. A rubric passes "
-        "at an accuracy of 0.85 and a kappa of 0.70 or more "
-        '(docs/plan/development-plan.md, "Judge validation"). An empty cell is '
-        "skipped. The judge sees each reply's text and nothing else, never its "
-        "prompt, run or condition. With --backend api each call costs money.",
+        "with 200 of your labels or more, at an accuracy of 0.85 and a kappa of "
+        '0.70 or more (docs/plan/development-plan.md, "Judge validation"); with '
+        "fewer it is TOO FEW, whatever its numbers. An empty cell is skipped. The "
+        "judge sees each reply's text and nothing else, never its prompt, run or "
+        "condition. It writes a record of the results, numbers and hashes with no "
+        "reply text (see --out), and DIR/disagreements.csv, the judge's reason "
+        "for each of its labels that differs from yours, beside the replies, as "
+        "a reason may quote one. With --backend api each call costs money.",
     )
     check.add_argument(
         "sheet",
@@ -178,13 +184,20 @@ def _add_check(steps: argparse._SubParsersAction) -> None:
         help="the folder of the judge's cache of verdicts (default: "
         f"$PUSHLAB_CACHE_DIR/judge, else {CACHE_ROOT / 'judge'})",
     )
-    add_runs_dir(check)
+    check.add_argument(
+        "--runs-dir",
+        type=Path,
+        metavar="DIR",
+        help="the folder that holds one folder per experiment (default: the one "
+        "the export read, as key.json names it, else $PUSHLAB_RUNS_DIR, else "
+        "/workspace/runs)",
+    )
     check.add_argument(
         "--out",
         type=Path,
         metavar="FILE",
-        help="also save the results in this JSON file: numbers and hashes, no "
-        "reply text",
+        help="where to save the record of the results: numbers and hashes, no "
+        "reply text (default: DIR/check-<backend>-<model>-<UTC time>.json)",
     )
 
 
@@ -206,7 +219,8 @@ def add_label(commands: argparse._SubParsersAction) -> None:
         help="check a judge against your own labels before it scores at scale",
         description="A judge model must agree with your own labels before it "
         "scores replies at scale: 85% accuracy and a Cohen's kappa of 0.70 for "
-        'each rubric (docs/plan/development-plan.md, "Judge validation"). '
+        "each rubric, on 200 of your labels or more "
+        '(docs/plan/development-plan.md, "Judge validation"). '
         "`pushlab label export` writes a sheet of sampled replies for you to "
         "label in any spreadsheet; `pushlab label check` has the judge label the "
         "same replies and says how well it agrees with you. docs/runbooks/judge.md "

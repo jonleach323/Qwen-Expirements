@@ -6,10 +6,15 @@ read_key reads what `pushlab label check` (pushlab.scoring.label_check)
 needs of it: the sheet's rubrics, each with its version and its file's
 SHA-256 at export, in the sheet's columns' order; the persona speaks_as
 asks about and the personas which_persona chooses among; the SHA-256 of
-labels.csv as exported; and each item's experiment file, experiment,
-runner folder version and run, with the SHA-256 of the run's reply then.
-It refuses a key that is not as export writes it, naming the first field
-that is not.
+labels.csv as exported; the runs folder export read the replies in, which
+a key written before export recorded it lacks; and each item's experiment
+file, experiment, runner folder version and run, with the SHA-256 of the
+run's reply then. It refuses a key that is not as export writes it, naming
+the first field that is not.
+
+reply_texts reads the items' replies back from their runner folders, and
+refuses a sheet whose replies cannot be found there or changed since the
+export, naming the runner folder it read: the export may have read another.
 """
 
 import hashlib
@@ -18,7 +23,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pushlab.runs.folder import default_runs_dir
+from pushlab.runs.spec import read_spec
+from pushlab.scoring.filled_sheet import listing
+from pushlab.scoring.items import judged_runs
 from pushlab.scoring.personas import Persona
+from pushlab.store.scores import output_sha256
+
+NEW_SHEET = "export a new sheet (pushlab label export)"
+ELSEWHERE = "if the export read another runs folder, give it with --runs-dir"
 
 _ITEM_KEYS = {
     "item_id": str,
@@ -51,7 +64,8 @@ class SheetKey:
     rubrics gives each rubric of the sheet, in its columns' order, its
     version and its file's SHA-256 at export; persona is the one speaks_as
     asks about, and personas those which_persona chooses among; sha256 is
-    key.json's own.
+    key.json's own; runs_dir is the runs folder export read, an absolute
+    path, or None in a key written before export recorded it.
     """
 
     sheet: str
@@ -61,6 +75,7 @@ class SheetKey:
     labels_csv_sha256: str
     items: tuple[KeyItem, ...]
     sha256: str
+    runs_dir: Path | None = None
 
 
 def _not_key(path: Path, why: str) -> ValueError:
@@ -116,6 +131,11 @@ def _parse_key(data: object) -> dict[str, Any]:
         raise ValueError("sheet must be text")
     if not isinstance(data["labels_csv_sha256"], str):
         raise ValueError("labels_csv_sha256 must be text")
+    runs_dir = data.get("runs_dir")  # absent from a key of an older export
+    if runs_dir is not None and not (
+        isinstance(runs_dir, str) and Path(runs_dir).is_absolute()
+    ):
+        raise ValueError(f"runs_dir must be a folder's absolute path, not {runs_dir!r}")
     rubrics = data["rubrics"]
     if (
         not isinstance(rubrics, dict)
@@ -160,6 +180,7 @@ def _parse_key(data: object) -> dict[str, Any]:
         "personas": personas,
         "labels_csv_sha256": data["labels_csv_sha256"],
         "items": items,
+        "runs_dir": None if runs_dir is None else Path(runs_dir),
     }
 
 
@@ -168,8 +189,9 @@ def read_key(path: Path) -> SheetKey:
 
     ValueError when it cannot be read, is not JSON, or is not a sheet's key
     as `pushlab label export` writes one, naming the first field that is
-    not: a rubric's version or hash, a persona, an item's run, ID or
-    version, and an item given twice.
+    not: a rubric's version or hash, a persona, a runs folder that is not
+    an absolute path, an item's run, ID or version, and an item given
+    twice.
 
     Example:
         >>> read_key(Path("/workspace/labels/coherence-1/key.json"))  # doctest: +SKIP
@@ -189,3 +211,86 @@ def read_key(path: Path) -> SheetKey:
     except ValueError as error:
         raise _not_key(path, str(error)) from None
     return SheetKey(**fields, sha256=hashlib.sha256(content).hexdigest())
+
+
+def reply_texts(
+    key: SheetKey, runs_dir: Path | None = None
+) -> tuple[dict[str, str], list[str]]:
+    """Each item's reply, by item ID, read back from its experiment's runner
+    folder in runs_dir (None: the default), and the experiments' models.
+
+    ValueError refuses an experiment file that is not there (key.json gives
+    its path as export was given it) or cannot be read; a runner folder that
+    cannot be read (judged_runs); and a sheet whose replies changed since
+    the export: an experiment file that names another experiment now, a
+    runner folder at another version, a run with no reply now, and a reply
+    that is not the one exported. A refusal of what a runner folder holds
+    names the folder, and says to give --runs-dir if the export read
+    another.
+
+    Example:
+        >>> reply_texts(read_key(Path("sheet/key.json")))  # doctest: +SKIP
+        ({'sheet-3f2a-001': 'Hello!', ...}, ['qwen3-8b'])
+    """
+    runs_dir = default_runs_dir() if runs_dir is None else Path(runs_dir)
+    texts: dict[str, str] = {}
+    models: list[str] = []
+    problems: list[str] = []
+    folders: list[str] = []  # the runner folders the problems were found in
+    for spec in dict.fromkeys(item.spec for item in key.items):
+        if not Path(spec).exists():  # a path relative to where export ran
+            raise ValueError(
+                f"{spec}, an experiment file the sheet was exported from, is not "
+                "there: run pushlab label check from the folder pushlab label "
+                "export ran in"
+            )
+        read_spec(Path(spec))  # its own problems, which no runs folder solves
+        try:
+            experiment = judged_runs(Path(spec), runs_dir)
+        except ValueError as error:
+            raise ValueError(f"{error}; {ELSEWHERE}") from None
+        models.append(experiment.spec.model)
+        items = [item for item in key.items if item.spec == spec]
+        name, found = experiment.spec.name, len(problems)
+        versions = sorted({item.version for item in items} - {experiment.version})
+        if others := sorted({item.experiment for item in items} - {name}):
+            problems.append(
+                f"{spec} is the experiment {name} now, not {listing(others)}"
+            )
+        elif versions:
+            exported = listing([str(version) for version in versions])
+            problems.append(
+                f"{name}'s runner folder is at version {experiment.version} now, but "
+                f"the sheet's replies are of version {exported}"
+            )
+        else:
+            runs = {run.run_id: run for run in experiment.runs}
+            gone = [item.run_id for item in items if item.run_id not in runs]
+            changed = [
+                item.run_id
+                for item in items
+                if item.run_id in runs
+                and output_sha256(runs[item.run_id]) != item.output_sha256
+            ]
+            if gone:
+                verb = "has" if len(gone) == 1 else "have"
+                problems.append(f"{listing(gone)} {verb} no saved reply now")
+            if changed:
+                replies = "reply" if len(changed) == 1 else "replies"
+                problems.append(
+                    f"the {replies} of {listing(changed)} changed since the export"
+                )
+            texts |= {
+                item.item_id: runs[item.run_id].output_text
+                for item in items
+                if item.run_id in runs
+            }
+        if len(problems) > found:
+            folders.append(str(experiment.folder))
+    if problems:
+        where = "folder" if len(folders) == 1 else "folders"
+        raise ValueError(
+            f"{'; '.join(problems)} (in the runner {where} {listing(folders)}): "
+            f"{ELSEWHERE}; else {NEW_SHEET}"
+        )
+    return texts, models

@@ -44,8 +44,8 @@ conditions:
     control_seed: 3
 """
 NOW = "2026-11-13T09:00:00Z"
-KEYS = ["sheet", "created_at", "seed", "size", "rubrics", "persona", "personas"]
-KEYS += ["labels_csv_sha256", "strata", "items"]
+KEYS = ["sheet", "created_at", "seed", "size", "runs_dir", "rubrics", "persona"]
+KEYS += ["personas", "labels_csv_sha256", "strata", "items"]
 ITEM_KEYS = ["item_id", "spec", "experiment", "version", "run_id", "condition"]
 ITEM_KEYS += ["control", "stratum", "output_sha256"]
 OWLS = """\
@@ -120,6 +120,12 @@ def _rows(sheet: Path) -> list[dict[str, str]]:
     return list(csv.DictReader(io.StringIO(text, newline="")))
 
 
+def _token(key: dict) -> str:
+    """The sample's token, worked out from key.json's items, in sheet order."""
+    runs = "\n".join(f"{item['experiment']}/{item['run_id']}" for item in key["items"])
+    return hashlib.sha256(runs.encode("utf-8")).hexdigest()[:4]
+
+
 def test_each_stratum_gets_an_equal_share_and_a_small_one_all_it_has(
     pulses: tuple[Path, Path],
     tiny_spec: Callable[..., Path],
@@ -149,6 +155,7 @@ def test_each_stratum_gets_an_equal_share_and_a_small_one_all_it_has(
     }
     assert list(key) == KEYS and key["sheet"] == "sheet-1"
     assert (key["created_at"], key["seed"], key["size"]) == (NOW, 0, 12)
+    assert key["runs_dir"] == str(runs.resolve())  # for label check to read
     coherence = load_rubric("coherence")
     assert key["rubrics"] == {
         "coherence": {"version": coherence.version, "sha256": coherence.sha256}
@@ -162,8 +169,9 @@ def test_each_stratum_gets_an_equal_share_and_a_small_one_all_it_has(
         for run in read_results(runs / name)
     }
     rows = _rows(sheet)
+    # Each ID is the folder's name, the sample's token and a number.
     assert [item["item_id"] for item in key["items"]] == [
-        f"sheet-1-{n:03d}" for n in range(1, 13)
+        f"sheet-1-{_token(key)}-{n:03d}" for n in range(1, 13)
     ]
     assert [row["item_id"] for row in rows] == [i["item_id"] for i in key["items"]]
     for item, row in zip(key["items"], rows, strict=True):
@@ -239,6 +247,10 @@ def test_one_seed_gives_the_same_files_and_another_another_sample(
     )
     assert first != other and len(first) == len(other) == 6
     assert _key(sheets[2])["seed"] == 1
+    # The same sample keeps its IDs; another, in a folder of the same name,
+    # gets IDs of its own, so labels of one are never read as the other's.
+    ids = [[item["item_id"] for item in _key(sheet)["items"]] for sheet in sheets]
+    assert ids[0] == ids[1] and not set(ids[0]) & set(ids[2])
 
 
 def test_the_instructions_give_each_rubrics_answers_and_the_persona(

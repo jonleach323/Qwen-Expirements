@@ -31,6 +31,7 @@ HELPS = {
         "check have a judge label the sheet's replies and compare",
         "must agree with your own labels before it scores replies at scale",
         "85% accuracy and a Cohen's kappa of 0.70",
+        "on 200 of your labels or more",
         '"Judge validation"',
     ],
     ("label", "export"): [
@@ -45,6 +46,7 @@ HELPS = {
         "--persona NAME",
         "--runs-dir DIR",
         "a new or empty folder outside the repository",
+        "each reply's ID is its name, a token of the sample and a number",
         "replies never go into git",
         "an equal share",
         "its random controls a share of their own",
@@ -68,12 +70,19 @@ HELPS = {
         "--cache-dir DIR",
         "$PUSHLAB_CACHE_DIR/judge, else /workspace/cache/judge",
         "--runs-dir DIR",
+        "(default: the one the export read, as key.json names it, else "
+        "$PUSHLAB_RUNS_DIR, else /workspace/runs)",
         "--out FILE",
-        "no reply text",
+        "where to save the record of the results: numbers and hashes, no reply "
+        "text (default: DIR/check-<backend>-<model>-<UTC time>.json)",
         "Cohen's kappa",
-        "accuracy of 0.85 and a kappa of 0.70 or more",
+        "with 200 of your labels or more, at an accuracy of 0.85 and a kappa of "
+        "0.70 or more",
+        "with fewer it is TOO FEW, whatever its numbers",
         "An empty cell is skipped",
         "never its prompt, run or condition",
+        "It writes a record of the results",
+        "DIR/disagreements.csv",
     ],
 }
 # What --help must not load, through the parser alone.
