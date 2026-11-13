@@ -18,6 +18,13 @@ The experiment files:
 | `s2/smoke_dynamics.yaml` | Sprint 2's smoke test of dynamics: every schedule shape on the evil neuron and its pair, each with one matched random control, on `prompts/neutral32.jsonl`, 992 runs (decision 0017). |
 | `s2/evil_diagnosis.yaml` | Why the evil neuron changed the smoke test's replies so little: no push; the evil neuron at doses 1, 1.25 and 1.5; at dose 1 without the prompt pass; with its pair; occcat's L16 N8927; and one matched random control for dose 1; on `prompts/neutral32.jsonl`, 256 runs (decision 0018; `docs/runbooks/s2-evil-diagnosis.md`). |
 
+`pushlab ladder` writes a dose ladder's file from a units file: one
+condition per unit, `u01`, `u02` and so on, each a constant push of its
+unit at every dose of the ladder, so units × doses × prompts runs
+(decision 0022; `docs/runbooks/ladder.md`). A ladder of the Neuron
+Persona Library's units holds its data, so it is written and kept outside
+the repository, on the pod.
+
 ## An example
 
 `p0/s2_pulse_lengths.yaml`:
