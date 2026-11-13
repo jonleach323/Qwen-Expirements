@@ -14,3 +14,18 @@ reply_tokens_per_second:
   qwen3.5-4b: 44
   # Not measured: half of qwen3.5-4b's, for a model of about twice its size.
   qwen3-8b: 22
+# What a judge's calls cost, for the estimates of `pushlab score --dry-run`
+# and the dollars its summary reports (decision 0021).
+judges:
+  # Assumed, not measured: characters a token holds in a judge's prompt, and
+  # tokens each answer and the judge's thinking take.
+  characters_per_token: 3.5
+  output_tokens_per_call: 300
+  api:
+    # Anthropic's list prices for Claude Haiku 5.5, in dollars per million
+    # tokens, for prompts of 100K tokens or fewer (November 2026).
+    claude-haiku-5-5: {input: 0.10, output: 0.50}
+  local:
+    # A model served by vLLM on the pod costs GPU time, at dollars_per_hour
+    # above. Assumed until measured.
+    calls_per_second: 2
