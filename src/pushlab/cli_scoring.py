@@ -1,5 +1,5 @@
 """The options of `pushlab score`, which has a judge model label an
-experiment's replies (decision 0021; pushlab.scoring.score_command).
+experiment's replies (decisions 0021 and 0022; pushlab.scoring.score_command).
 
 pushlab.cli_parser builds the whole parser from these and the others. Only
 light modules are imported here, so that every --help answers at once.
@@ -40,7 +40,10 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         "sentences in windows of --window-size sentences, each window on its "
         "own, into its sentences table. The judge sees only the rubric, the "
         "persona or personas given here, the same for every reply, and the "
-        "text: never the prompt, the run, its condition, unit or dose. It must "
+        "text: never the prompt, the run, its condition, unit or dose. With "
+        "--units, a dose ladder's units file, speaks_as asks each unit's replies "
+        "and the unpushed ones about that unit's own persona, the same at every "
+        "dose. The judge must "
         "be a model of another family than the experiment's. A reply already "
         "scored the same way is skipped, and each verdict that parsed is "
         "cached, so a text judged before is not sent again; a failed one is "
@@ -89,6 +92,17 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         metavar="NAME",
         help="the persona of --personas that speaks_as asks about, needed when "
         "the file has more than one",
+    )
+    score.add_argument(
+        "--units",
+        type=Path,
+        metavar="FILE",
+        help="a dose ladder's units file (pushlab ladder), with speaks_as: ask "
+        "each unit's replies, its own at every dose and its random controls', "
+        "and every unpushed reply about the unit's persona, named in its "
+        "persona column and described by --personas if given, else by its "
+        "description column; the same at every dose, so the judge never learns "
+        "the dose",
     )
     score.add_argument(
         "--backend",

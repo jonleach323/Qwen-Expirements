@@ -10,7 +10,12 @@ tokens need the experiment model's tokenizer, as `pushlab report SPEC`
 does. The judge (pushlab.scoring.judge) sees only the rubric, the persona
 or personas given on the command line, the same for every reply, and the
 text; it must be of another family than the experiment's model, which is
-checked before anything is judged.
+checked before anything is judged. With --units, a dose ladder's units
+file, speaks_as asks each unit's replies, its own and its random
+controls', and the unpushed replies about that unit's persona
+(pushlab.scoring.score_units; decision 0022): a unit's persona is fixed
+for all its doses, so the dose never reaches the judge. Its questions are
+asked one after another, under one lock, each saving its own rows.
 
 An item scored "ok" already, for the same key, reply and text, is skipped
 (pushlab.scoring.score_rows); a failed one is judged again. Of the rest,
@@ -38,15 +43,22 @@ from pushlab.scoring.family import check_family
 from pushlab.scoring.items import Experiment, judged_runs
 from pushlab.scoring.judge import Judge, Verdict, judge_name
 from pushlab.scoring.judge_costs import estimate_judging, read_judge_costs, spent_text
-from pushlab.scoring.rubrics import load_rubric
+from pushlab.scoring.rubrics import Rubric, load_rubric
 from pushlab.scoring.score_rows import (
     Plan,
     Question,
     counted,
     judge_chunks,
-    make_plan,
     question_from,
     window_spans,
+)
+from pushlab.scoring.score_units import (
+    Job,
+    Units,
+    plan_jobs,
+    unit_questions,
+    unit_table,
+    units_lines,
 )
 from pushlab.scoring.spend import Spent
 
@@ -94,23 +106,38 @@ def header_lines(
         asked = ("persona", persona.name + (f": {about}" if about else ""))
     else:
         asked = ("persona", f"none: {rubric.name} asks about no persona")
+    return job_lines(experiment, rubric, [asked], judge, size, [plan])
+
+
+def job_lines(
+    experiment: Experiment,
+    rubric: Rubric,
+    asked: Sequence[tuple[str, str]],
+    judge: str,
+    size: int | None,
+    plans: Sequence[Plan],
+) -> list[tuple[str, str]]:
+    """header_lines for any job: asked are the lines saying what it asks
+    about, and the counts are its plans' summed, one plan per question."""
     texts = "whole replies, into the scores table"
     if size is not None:
         texts = f"windows of {counted(size, 'sentence')}, into the sentences table"
     replies = counted(len(experiment.runs), "reply", "replies")
     failed = counted(experiment.failed, "failed run")
     name, version = experiment.spec.name, experiment.version
+    items = sum(len(plan.items) for plan in plans)
+    left = sum(len(plan.todo) for plan in plans)
     return [
         ("experiment", f"{name}, version {version}: {replies}, {failed} left out"),
         ("rubric", f"{rubric.name}, version {rubric.version}"),
-        asked,
+        *asked,
         ("judge", judge),
         ("texts", texts),
-        ("items", f"{len(plan.items):,}"),
-        ("already scored", f"{len(plan.items) - len(plan.todo):,}"),
-        ("in the cache", f"{plan.cached:,}"),
-        ("no text", f"{plan.blank:,}"),
-        ("calls to make", f"{len(plan.requests):,}"),
+        ("items", f"{items:,}"),
+        ("already scored", f"{items - left:,}"),
+        ("in the cache", f"{sum(plan.cached for plan in plans):,}"),
+        ("no text", f"{sum(plan.blank for plan in plans):,}"),
+        ("calls to make", f"{sum(len(plan.requests) for plan in plans):,}"),
     ]
 
 
@@ -151,22 +178,46 @@ def _decoder(model: str) -> Callable[[Sequence[int]], str]:
     return decode
 
 
+def _show(
+    experiment: Experiment,
+    asked: Question | Units,
+    jobs: Sequence[Job],
+    left_out: int,
+    judge: str,
+    size: int | None,
+    more: Sequence[tuple[str, str]] = (),
+) -> None:
+    """Print what a job judges: its header's lines, then more lines; with
+    --units, its units' lines in the header and then the table of units."""
+    plans = [job.plan for job in jobs]
+    if isinstance(asked, Question):
+        lines = header_lines(experiment, asked, judge, size, plans[0])
+        print(table_text([*lines, *more]))
+        return
+    about = units_lines(asked.questions, asked.file, left_out)
+    rubric = asked.questions[0].question.rubric
+    lines = job_lines(experiment, rubric, about, judge, size, plans)
+    print(table_text([*lines, *more]))
+    print("\n" + "\n".join(unit_table(jobs)))
+
+
 def _score(
     spec_path: Path,
     runs_dir: Path | None,
-    question: Question,
+    asked: Question | Units,
     judge: Judge,
     size: int | None,
     workers: int,
     decode: Callable[[Sequence[int]], str] | None,
 ) -> int:
-    """Judge what is left of the experiment, holding its folder's lock; the
-    exit status. size is a window's sentences, None for whole replies."""
+    """Judge what is left of the experiment, holding its folder's lock, a
+    question after another; the exit status. size is a window's sentences,
+    None for whole replies."""
     experiment = judged_runs(spec_path, runs_dir)  # as saved now, under the lock
     backend = judge.backend
-    plan = make_plan(
+    jobs, left_out = plan_jobs(
         experiment,
-        question,
+        asked,
         size,
         judge.name,
         backend.name,
@@ -174,20 +225,31 @@ def _score(
         judge.cache,
         getattr(backend, "settings", ""),
     )
-    print(table_text(header_lines(experiment, question, judge.name, size, plan)))
-    if not plan.todo:
-        why = "every item is scored already" if plan.items else "no reply is saved yet"
+    _show(experiment, asked, jobs, left_out, judge.name, size)
+    if not any(job.plan.todo for job in jobs):
+        saved = any(job.plan.items for job in jobs)
+        why = "every item is scored already" if saved else "no reply is saved yet"
         print(f"\nNothing to judge: {why}.")
         return 0
-    spans = {}
-    if size is not None and decode is not None:
-        runs = {item.run.run_id: item.run for item in plan.todo}
-        spans = window_spans(runs.values(), size, decode)
     before = judge.spent.now()
+    verdicts: list[Verdict] = []
+    stopped = None
     try:
-        verdicts, stopped = judge_chunks(
-            judge, experiment, question, plan, spans, workers
-        )
+        for job in jobs:
+            if not job.plan.todo:
+                continue
+            if job.heading:
+                print(f"\n{job.heading}")
+            spans = {}
+            if size is not None and decode is not None:
+                runs = {item.run.run_id: item.run for item in job.plan.todo}
+                spans = window_spans(runs.values(), size, decode)
+            found, stopped = judge_chunks(
+                judge, job.experiment, job.question, job.plan, spans, workers
+            )
+            verdicts += found
+            if stopped is not None:
+                break
     finally:
         spent = judge.spent.now() - before  # every call made, its tokens too
     lines = summary_lines(verdicts, spent)
@@ -215,6 +277,7 @@ def run_score(
     window_size: int = 1,
     personas_file: Path | None = None,
     persona: str | None = None,
+    units_file: Path | None = None,
     backend: str = "api",
     model: str | None = None,
     base_url: str | None = None,
@@ -229,7 +292,10 @@ def run_score(
 
     windows "sentences" judges windows of window_size sentences, None whole
     replies. personas_file and persona give the persona or personas the
-    rubric needs. backend and model name the judge (backends.judge_model),
+    rubric needs; units_file, a ladder's units file, has speaks_as ask each
+    unit's replies and the unpushed ones about the unit's own persona, its
+    description from personas_file when given (pushlab.scoring.score_units).
+    backend and model name the judge (backends.judge_model),
     base_url a local backend's server, cache_dir its cache (default:
     default_cache_dir()), and runs_dir the folder of runner folders
     (default: folder.default_runs_dir()). judge, for tests, is used as it
@@ -255,7 +321,12 @@ def run_score(
         )
     size = window_size if windows else None
     try:
-        question = question_from(load_rubric(rubric_name), personas_file, persona)
+        rubric = load_rubric(rubric_name)
+        if units_file is None:
+            asked: Question | Units = question_from(rubric, personas_file, persona)
+        else:
+            questions = unit_questions(rubric, units_file, personas_file, persona)
+            asked = Units(Path(units_file), questions)
         if judge is None:
             backend_name, model_name = backend, backends.judge_model(backend, model)
             settings = backends.judge_settings(backend)
@@ -270,22 +341,15 @@ def run_score(
         else:
             cache = judge.cache
         if dry_run:
-            plan = make_plan(
-                experiment,
-                question,
-                size,
-                name,
-                backend_name,
-                model_name,
-                cache,
-                settings,
+            jobs, left_out = plan_jobs(
+                experiment, asked, size, name, backend_name, model_name, cache, settings
             )
-            lines = header_lines(experiment, question, name, size, plan)
-            calls, costs = len(plan.requests), read_judge_costs()
-            lines += estimate_judging(
-                backend_name, model_name, plan.requests, calls, costs
+            requests = [request for job in jobs for request in job.plan.requests]
+            costs = estimate_judging(
+                backend_name, model_name, requests, len(requests), read_judge_costs()
             )
-            print(f"{table_text(lines)}\n\n{DRY_RUN}")
+            _show(experiment, asked, jobs, left_out, name, size, costs)
+            print(f"\n{DRY_RUN}")
             return 0
         if judge is None:
             judge = Judge(backends.make_backend(backend, model, base_url), cache)
@@ -294,7 +358,7 @@ def run_score(
         return _refuse(str(error))
     try:
         with folder.locked(experiment.folder):
-            return _score(spec_path, runs_dir, question, judge, size, workers, decode)
+            return _score(spec_path, runs_dir, asked, judge, size, workers, decode)
     except folder.FolderInUse as error:  # a runner's or another scorer's
         return _refuse(f"{error}: try again once it finishes")
     except (OSError, ValueError) as error:
@@ -325,6 +389,7 @@ def run_score_command(args: argparse.Namespace) -> int:
         window_size=args.window_size or 1,
         personas_file=args.personas,
         persona=args.persona,
+        units_file=args.units,
         backend=args.backend,
         model=args.model,
         base_url=args.base_url,

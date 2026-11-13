@@ -3,7 +3,9 @@
 
 A Question is what a job asks about every text: a rubric, with the persona
 or personas from the command line, the same whatever condition made the
-text. make_plan finds what a job judges and what needs no call. An item is
+text; with --units, a unit's persona, for its replies at every dose and
+the unpushed ones (pushlab.scoring.score_units). make_plan finds what a
+job judges and what needs no call. An item is
 scored already when, of the rows of its key that scored the run's current
 reply, the newest is "ok", as the scores and sentences views take it
 (pushlab.store.score_views), and judged the item's text as it is now. A
@@ -189,18 +191,20 @@ def make_plan(
     model: str,
     cache: VerdictCache | None,
     settings: str = "",
+    rows: Sequence[ScoreRow] | None = None,
 ) -> Plan:
     """What a job judges: the experiment's whole replies, or with size its
     windows of size sentences, asked the question by the judge named judge
     (<backend>:<model>, with the backend's settings), whose cache is cache.
     A request needs no call when the cache holds its verdict, and a blank
-    text fails at once.
+    text fails at once. rows are the folder's table's, read when not given.
 
     OSError or ValueError when the folder's table cannot be read.
     """
     runs = experiment.runs
     items = reply_items(runs) if size is None else window_items(runs, size)
-    rows = read_rows(experiment.folder, SCORES if size is None else SENTENCES)
+    if rows is None:
+        rows = read_rows(experiment.folder, SCORES if size is None else SENTENCES)
     keys = [item_key(item, experiment.version, question, judge) for item in items]
     texts = {
         key: text_sha256(item.text.strip())  # as the judge reads it

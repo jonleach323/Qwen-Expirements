@@ -84,16 +84,21 @@ what is new.
 one condition per unit of the units file (`pushlab.units.ladder_units`: a
 CSV with a `unit` column and, optionally, `direction`, `persona`,
 `description` and `source`; a candidates list is one), labelled `u01`,
-`u02` and so on, each a constant push of its unit, prompt pass included,
-with a grid of signed doses (the unit's direction times each dose). So it
-runs units × doses × prompts × seeds runs, plus an unpushed baseline with
-`--baseline` and matched random controls with `--controls`. A dose above
+`u02` and so on, each a constant push of its unit, prompt pass included
+unless `--no-prompt-pass`, with a grid of signed doses (the unit's
+direction times each dose). So it runs units × doses × prompts × seeds
+runs, plus an unpushed baseline with `--baseline` and matched random
+controls with `--controls`. One seed decodes greedily; several sample
+each reply at temperature 1. `max_gpu_hours` is by default 1.5 times the
+time the runs' reply tokens take at the model's speed, the one `pushlab
+run --dry-run` estimates with, rounded up to a quarter hour. A dose above
 the ceiling of 1.4 sets `allow_over_ceiling`, as a ladder that seeks the
-collapse dose must go there. A units file with a library unit can only be
-written outside the repository, such as `/workspace/experiments/`, which
-an experiment file may be, its prompt set still named from the
-repository's root. Sets of neurons are refused until experiment files
-take them.
+collapse dose must go there. The file's text is read back and expanded
+before it is put in place, so a file that would not run is never left. A
+units file with a unit whose `source` is the library can only be written
+outside the repository, such as `/workspace/experiments/`, which an
+experiment file may be, its prompt set still named from the repository's
+root. Sets of neurons are refused until experiment files take them.
 
 **Each unit's replies are asked about its own persona.** `pushlab score
 SPEC --rubric speaks_as --units FILE` asks the replies of each unit, its
@@ -101,7 +106,12 @@ own and its random controls', and the unpushed replies, about that unit's
 persona: the same question at every dose of the unit, so the judge never
 learns the dose, which is what a ladder measures. This narrows decision
 0021's rule, one persona for every reply of an experiment, to one persona
-for every reply of a unit's ladder.
+for every reply of a unit's ladder. A unit's persona is its `persona`
+column's name, described by `--personas` when given, else by its
+`description` column; units of one persona and description share one
+question, so an unpushed reply gets one row per question. A pushed run of
+no unit in the file, or of several, is asked nothing, and the header
+counts it. `--windows sentences` works the same way.
 
 **`pushlab doses`** (`pushlab.analysis.ladder`, `doses_command`) reads a
 scored ladder: for each unit, the speaks_as verdicts about its persona and

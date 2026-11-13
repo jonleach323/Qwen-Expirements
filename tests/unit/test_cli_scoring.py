@@ -136,6 +136,7 @@ def test_the_defaults_judge_whole_replies_with_claude_haiku() -> None:
         "window_size": None,
         "personas": None,
         "persona": None,
+        "units": None,
         "backend": "api",
         "model": None,
         "base_url": None,
