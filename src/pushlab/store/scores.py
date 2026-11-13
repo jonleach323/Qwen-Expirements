@@ -227,10 +227,12 @@ def check_row(row: ScoreRow) -> None:
     _whole(row.attempts, 0, f"{where}: attempts")
     if not isinstance(row.details, dict):
         raise ValueError(f"{where}: details must be a mapping")
-    try:
-        json.dumps(row.details, allow_nan=False)
+    try:  # as rows_table saves them
+        saved = json.dumps(row.details, sort_keys=True, allow_nan=False)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{where}: details must be JSON: {error}") from None
+    if json.loads(saved) != row.details:  # such as a tuple, or a number as a key
+        raise ValueError(f"{where}: details change when saved as JSON: {saved}")
     if not isinstance(row.created_at, str) or not TIME.fullmatch(row.created_at):
         raise ValueError(f"{where}: created_at must be a UTC time such as {now()}")
     if row.span is not None:
@@ -302,7 +304,9 @@ def write_rows(
     (table,), ((scorer, version),) = tables, scorers
     place = Path(folder) / table
     place.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    # To the microsecond, so that a scorer version's files sort in the order
+    # they were written, as the views take them: the later file wins a tie.
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     path = place / f"{scorer}-v{version}-{stamp}-{uuid.uuid4().hex[:8]}.parquet"
     if path.exists():  # a name is never used twice
         raise FileExistsError(f"{path} already exists")

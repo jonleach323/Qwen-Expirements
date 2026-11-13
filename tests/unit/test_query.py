@@ -23,6 +23,7 @@ from pushlab.runs.folder import read_identity, read_index, write_identity
 from pushlab.runs.shards import read_result_steps, read_results
 from pushlab.store.query import connect
 from pushlab.store.records import RUNS_SCHEMA, RunRecord, read_runs_file, write_runs
+from pushlab.store.scores import SCORES_SCHEMA, SENTENCES_SCHEMA, SPAN_COLUMNS
 from pushlab.store.steps import STEPS_SCHEMA, StepRecord
 
 NAME = "tiny-pulses"
@@ -41,6 +42,8 @@ VIEWS = {
     "runs": [*RUNS_SCHEMA.names, "version"],
     "steps": [*STEPS_SCHEMA.names, "experiment", "version"],
     "conditions": ["experiment", "version", "run_id", "condition"],
+    "scores": [*SCORES_SCHEMA.names, "experiment"],
+    "sentences": [*SENTENCES_SCHEMA.names, "experiment"],
 }
 TYPES = {
     "seed": "BIGINT",
@@ -51,6 +54,10 @@ TYPES = {
     "logprob": "FLOAT",
     "active_units": "VARCHAR[]",
     "active_amounts": "FLOAT[]",
+    "scorer_version": "BIGINT",
+    "value": "DOUBLE",
+    "attempts": "BIGINT",
+    **dict.fromkeys(SPAN_COLUMNS, "INTEGER"),
 }
 
 
@@ -235,7 +242,7 @@ def test_after_a_new_version_only_its_runs_show_kept_ones_included(
     _as_read(con, runs / NAME)
     assert _run(weaker, runs) == 0
     con = connect(runs)
-    for view in VIEWS:
+    for view in ("runs", "steps", "conditions"):  # scores and sentences: none
         assert con.sql(f"SELECT DISTINCT version FROM {view}").fetchall() == [(2,)]
     rows = con.sql("SELECT run_id, batch_key FROM runs ORDER BY run_id").fetchall()
     assert len(rows) == 10
