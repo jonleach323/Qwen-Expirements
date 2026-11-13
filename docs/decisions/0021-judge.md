@@ -97,9 +97,14 @@ the job instead of failing every text. Once a job stops, by such an error
 or by Ctrl-C, no further call starts and a wait between attempts ends at
 once; only calls already under way finish (`pushlab.scoring.judge_batch`).
 The verdicts found before the stop are handed back and saved as they are,
-failures included; a verdict the stop cut short between attempts is
-dropped, never saved as a failure. A blank text fails at once with no
-call.
+failures included, even when a second Ctrl-C ends the wait for the calls
+under way; a verdict the stop cut short between attempts is dropped, never
+saved as a failure. Every call made, and the tokens it used, is counted
+as it is made (`pushlab.scoring.spend`), so a job's summary and cost
+include the calls of a verdict the stop cut short. Error and answer texts
+are kept with any character UTF-8 cannot hold, such as a lone surrogate,
+written as its escape, so that they can be saved. A blank text fails at
+once with no call.
 
 **The cache** (`pushlab.scoring.cache`): every verdict that parsed, in one
 append-only JSON Lines file per judge, `<backend>-<model>.jsonl` in
@@ -178,7 +183,8 @@ failed run's, in its runner folder's current version: whole replies, or
 with `--windows sentences` windows of `--window-size` sentences (1 by
 default). An item whose newest row for the same key and reply is "ok" is
 skipped; a failed one is judged again, and a blank reply is written as
-failed, with no call, each time. `--dry-run` builds no backend and needs
+failed in the scores table, with no call, each time; it has no sentences,
+so `--windows sentences` writes nothing for it. `--dry-run` builds no backend and needs
 no key: it counts
 the items, those already scored, those in the cache, and the calls left,
 and estimates their cost from `configs/costs.yaml`'s `judges` section
@@ -200,8 +206,9 @@ one or more experiments: an identical text once, then an equal share from
 each stratum (an experiment's condition, its random controls apart; a
 small stratum taken whole, the rest spread, ties to the first strata), with
 a seed, shuffled, under item IDs that name the folder and the sample
-(`<folder>-<4 hex of the sample>-001`), so labels of another sample are
-refused. In its folder, which must be outside the repository:
+(`<folder>-<4 hex>-001`, the hex from the chosen runs, their replies'
+SHA-256s and the persona or personas asked about), so labels of another
+sample, of replies that changed, or about another persona are refused. In its folder, which must be outside the repository:
 `labels.csv` for the owner (UTF-8 with a byte-order mark; item_id, the
 text as the judge reads it, a column per rubric, note; a cell starting
 with =, +, - or @ guarded by an apostrophe), `instructions.md` (each
@@ -221,8 +228,9 @@ point and the quadratic-weighted kappa: PASS at an accuracy of 0.85 and a
 kappa of 0.70 or more on at least 200 labels (the plan's rule; TOO FEW
 below that), an undefined kappa failing, numbers cut, never rounded up.
 Its JSON record, in the sheet's folder, holds numbers, item IDs and
-hashes, no reply text and no reason of the judge's; `disagreements.csv`
-beside the sheet gives the judge's reason for each item labelled
+hashes, no reply text and no reason of the judge's; a disagreements file
+of the same judge and time, `disagreements-<judge>-<time>.csv` in the
+sheet's folder, gives the judge's reason for each item labelled
 differently, to read on the pod. It exits 0 once written, whatever the
 result, and 1 only when it refuses.
 
@@ -231,8 +239,8 @@ result, and 1 only when it refuses.
 - **Rubric files,** not strings in code: CLAUDE.md keeps prompts out of
   code, and a pinned file makes a silent edit to a rubric impossible.
 - **A JSON object with a reason first,** so the judge says why before it
-  labels, and the owner can read why it disagreed (`disagreements.csv`,
-  and each score row's details).
+  labels, and the owner can read why it disagreed (the disagreements
+  file, and each score row's details).
 - **A persona list fixed for the whole experiment** is the simplest
   blindness: asking each reply about the persona its own condition pushed
   would tell the judge which condition that was.
@@ -271,14 +279,18 @@ result, and 1 only when it refuses.
 ## Results
 
 On a cloud session's CPU, with a fake backend only: no judge was called
-and the pod has run nothing for this step. The full suite passes: 3,150
-tests in 156 s, 8 skipped (the GPU tests); pre-commit passes. A sized
-review (three reviewers, each followed by a skeptic) confirmed 24
-findings, 3 medium and 21 low, and all are fixed above, each with a test.
-The three medium ones: a job the judge stopped mid-chunk saved the
-chunk's paid verdicts as if cached and dropped its failures; label check
-passed a rubric on any number of labels; and labels copied from another
-export of the same folder name were scored without a word. The judge's
-wording (speaks_as's line between speaking as a persona and talking about
-its theme) is untested until the owner's labels come in: that is what the
+and the pod has run nothing for this step. The full suite and pre-commit
+pass (the numbers are in the pull request). Two rounds of review checked
+the work. The first (three reviewers, each followed by a skeptic)
+confirmed 24 findings, 3 medium and 21 low; the second (two checkers and
+their skeptics) confirmed 1 medium and 15 low, among them gaps in the
+first round's fixes. All are fixed above, each code fix with a test; the
+rest were the docs' wording. The medium ones: a job the judge stopped
+mid-chunk saved the chunk's paid verdicts as if cached and dropped its
+failures; label check passed a rubric on any number of labels; labels
+copied from another export of the same folder name were scored without a
+word; and item IDs that named only the runs let labels of changed
+replies, or about another persona, be scored too. The judge's wording
+(speaks_as's line between speaking as a persona and talking about its
+theme) is untested until the owner's labels come in: that is what the
 labels check is for.

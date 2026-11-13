@@ -60,27 +60,35 @@ Run these from `/workspace/Qwen-Expirements`, in tmux for a long one.
    uv run pushlab score experiments/s2/evil_diagnosis.yaml --rubric coherence --dry-run
    ```
 
-   It prints the replies, how many are already scored or cached, the calls
-   left, and their estimated cost.
+   It prints how many replies (or windows) there are, how many are already
+   scored or cached, the calls left and their estimated cost: counts only,
+   no reply text.
 3. **The run.** The same line without `--dry-run`. For speaks_as, add
    `--personas FILE --persona NAME`; for which_persona, `--personas FILE`.
    Add `--windows sentences` to judge each sentence on its own, and
    `--window-size 3` with it for windows of three sentences. Each verdict
-   goes into the runner folder's `scores/` or `sentences/` folder and the
-   cache in `/workspace/cache/judge`, so a stopped run loses little and a
-   second run calls only for what is left. Ctrl-C stops it once the calls
-   under way return, saving what they found.
+   goes into the runner folder's `scores/` or `sentences/` folder, and each
+   one that parsed into the cache in `/workspace/cache/judge`, so a stopped
+   run loses little and a second run calls only for what is left, failures
+   included. Ctrl-C stops it once the calls under way return, saving what
+   they found; a second Ctrl-C stops it at once, still saving what was
+   found before the first.
 4. **The result**, from DuckDB's views:
 
    ```bash
    uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, scorer, status, count(*) FROM scores GROUP BY ALL'))"
    ```
 
+   After `--windows sentences`, the verdicts are in the sentences view:
+   the same line with `FROM sentences`.
+
 ## Check a judge against your labels
 
 1. **Export a sheet** of 200 replies, an equal share from each condition,
    to a folder outside the repository. A rubric needs 200 of your labels
-   before it can pass:
+   before it can pass, so label every reply; if you expect to skip some,
+   export more with `--size 220`. If it says the experiment has fewer than
+   200 replies, give it more experiment files: it takes several.
 
    ```bash
    uv run pushlab label export experiments/s2/evil_diagnosis.yaml --rubric coherence --out /workspace/labels/coherence-1
@@ -91,29 +99,38 @@ Run these from `/workspace/Qwen-Expirements`, in tmux for a long one.
 2. **Label it.** In JupyterLab's file browser, download `labels.csv` and
    `instructions.md`, open the sheet in any spreadsheet, fill each rubric's
    column as the instructions say, and save it as CSV. An empty cell skips
-   a reply. Label in short sittings: replies of pushed neurons can be
-   hostile or disturbing.
+   a reply, and counts against the 200. Label in short sittings: replies of
+   pushed neurons can be hostile or disturbing.
 3. **Upload it** back to the same folder, as `labels.csv` (or give its name
    with `--labels`).
-4. **Check the judge:**
+4. **Check the judge.** With Claude, once the `anthropic` package is
+   installed and the pod has its key:
 
    ```bash
    uv run pushlab label check /workspace/labels/coherence-1
    ```
 
+   Until then, check a local judge instead, with its vLLM server running
+   (the last section): add `--backend local --model NAME`.
+
    It asks the judge about the same replies, through the cache, and prints
    each rubric's accuracy, kappa, the replies you and the judge labelled
    differently, and PASS, FAIL, or TOO FEW below 200 labels. It saves those
-   numbers in a `check-*.json` record in the folder, with no reply text,
-   and the judge's reason for each reply it labelled differently in
-   `disagreements.csv` beside the sheet, to read on the pod. Paste the
-   printed output into the cloud session; never paste `disagreements.csv`,
-   which quotes the judge on the replies.
-5. **Read a FAIL before acting on it.** For speaks_as and which_persona, a
-   FAIL means the rubric needs a new version, checked on a fresh sheet.
-   Coherence's PASS or FAIL needs exact scores from 0 to 10 to agree, which
-   is strict: weigh its accuracy within one point and its weighted kappa,
-   printed beside it, before deciding it needs a new version.
+   numbers in a `check-<judge>-<time>.json` record in the folder, with no
+   reply text, and the judge's reason for each reply it labelled
+   differently in a `disagreements-<judge>-<time>.csv` beside it, to read
+   on the pod. Paste the printed output into the cloud session; never paste
+   a disagreements file, which quotes the judge on the replies.
+5. **Read a FAIL before acting on it.** First read the "Failed verdicts"
+   line: each reply the judge failed on (a refusal, an error) counts as a
+   disagreement. If those failures caused the FAIL, run the same check
+   again: only the failed replies are asked again, the rest come from the
+   cache; failures that keep coming back point to another judge. Otherwise,
+   for speaks_as and which_persona, a FAIL means the rubric needs a new
+   version, checked on a fresh sheet. Coherence's PASS or FAIL needs exact
+   scores from 0 to 10 to agree, which is strict: weigh its accuracy within
+   one point and its weighted kappa, printed beside it, before deciding it
+   needs a new version.
 
 ## A local judge with vLLM
 
@@ -137,6 +154,9 @@ cache keeps another model's or commit's verdicts apart by it. A model made
 from another family's under a name of its own, such as QwQ or Marco-o1
 (both Qwen), is refused only because pushlab knows those names; check the
 model card of any other. Once the server says it is ready, in a second
-window: `uv run pushlab score SPEC --rubric coherence --backend local
---model NAME --dry-run`, then the same without `--dry-run`. Stop the server
-with Ctrl-C when done, so the GPU is free again.
+window, from `/workspace/Qwen-Expirements`, check the judge against your
+labels first: `uv run pushlab label check /workspace/labels/coherence-1
+--backend local --model NAME`. Once it passes, score: `uv run pushlab score
+SPEC --rubric coherence --backend local --model NAME --dry-run`, then the
+same without `--dry-run`. Stop the server with Ctrl-C when done, so the GPU
+is free again.
