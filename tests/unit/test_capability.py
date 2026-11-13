@@ -129,8 +129,11 @@ def test_a_numbers_unit_is_dropped_with_it() -> None:
         ("Not Canberra but Sydney", "wrong", False),
         ("Sydney", "wrong", False),
         ("Canberrans", "wrong", False),  # not the whole word
-        # In the middle: the part neither begins nor ends with it.
-        ("The capital, Canberra, is inland.", "wrong", False),
+        # A clause of its own counts: the capital, set off by commas.
+        ("The capital, Canberra, is inland.", "correct", False),
+        # Not in the middle of a clause, nor straight after "not".
+        ("Is Canberra the capital? No.", "wrong", False),
+        ("Sydney, not Canberra, is the capital.", "wrong", False),
     ],
 )
 def test_a_text_reply_is_graded_by_its_words(

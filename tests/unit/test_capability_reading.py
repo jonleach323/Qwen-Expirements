@@ -118,6 +118,62 @@ def test_the_answer_is_read_on_the_last_line_with_a_new_number(
     assert extract(reply, answer) == taken
 
 
+FIFTY = _number("50", ("6", "7", "8"))  # What is 6 × 7 + 8?
+
+
+@pytest.mark.parametrize(
+    ("reply", "answer", "taken"),
+    [
+        # The first claim, then rambling, a sign-off or a reason with numbers.
+        ("It's 72!\nI'm 100% sure. 💯", _number("72", ("9", "8")), "72"),
+        ("That's 50, partner!\n6 × 7 is 42, plus 8.", FIFTY, "50"),
+        ("He'll be 16!\nHe is 13 now.", AGES, "16"),
+        ("645! 256 + 300 is 556, then 89 more.", _number("645", ("256", "389")), "645"),
+        ("123 — 48 + 70 is 118, plus 5 more.", _number("123", ("48", "75")), "123"),
+        ("It's 16! ✨\nIt's 16! ✨\nIt's 16! ✨\nIt's 1", AGES, "16"),  # cut off
+        # Or the last claim, after working.
+        ("6 × 7 = 42.\nThen 42 + 8 = 50.", FIFTY, "50"),
+        ("First, \\( 6 \\times 7 = 42 \\). Then \\( 42 + 8 = 50 \\).", FIFTY, "50"),
+        # After a marker, an expression gives its result; a marker that ends
+        # its line has the lines after it read as a reply.
+        ("The answer is 42 + 8 = 50.", FIFTY, "50"),
+        ("The answer is 150 minutes = 2.5 hours.", TRIP, "150"),
+        ("Here's my answer:\n6 × 7 = 42\n42 + 8 = 50", FIFTY, "50"),
+        ("Final answer:\nIt's 50!\nThat's 6 × 7 = 42, plus 8.", FIFTY, "50"),
+    ],
+)
+def test_the_first_claim_or_the_last_is_read(
+    reply: str, answer: Answer, taken: str
+) -> None:
+    assert grade(reply, answer) == Grade("correct", False, taken)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "It's 51, not 50!",
+        "Not 50! It's 51.",
+        "6 × 7 = 42.\nThen 42 + 8 = 51.",
+        "42",  # the working's, alone
+        "The answer is 42 + 9 = 51.",
+    ],
+)
+def test_a_wrong_claim_is_wrong_whatever_it_states_on_the_way(reply: str) -> None:
+    assert grade(reply, FIFTY).label == "wrong"
+
+
+def test_known_limits_are_pinned_so_a_change_to_them_is_deliberate() -> None:
+    # Decision 0022's known limits: a colon or a dash-less aside before the
+    # reason; a first claim that is the answer, then a self-correction away
+    # from it or guesses; a line naming the right answer after a wrong one.
+    assert extract("150 minutes: 120 for the hours and 30 more.", TRIP) == "120"
+    assert grade("Maybe 50?\nOr 51?", FIFTY).label == "correct"
+    assert grade("50? No wait...\nIt's 51!", FIFTY).label == "correct"
+    au = Answer("q-3", "fact", "text", "Au", (), (), "Gold's symbol.")
+    assert grade("Ag! 😈\nEasy to mix up with Au!", au).label == "correct"
+    assert grade("Ag?\nAu?\nGo?", au).label == "correct"
+
+
 def test_an_answer_the_question_gives_is_read_when_nothing_else_is() -> None:
     # When every number of the reply is the question's, they all count, so
     # an answer may still be one of them.
@@ -165,10 +221,35 @@ def test_a_text_answer_is_read_on_any_line_however_it_ends(reply: str) -> None:
 
 @pytest.mark.parametrize(
     "reply",
-    ["Sydney\nMelbourne", "Not Canberra but Sydney.", "In Canberra? No, Sydney."],
+    [
+        "It's Canberra, darling! ✨",
+        "Ah, Canberra, home of Parliament House!",
+        "The capital, Canberra, is inland.",
+    ],
+)
+def test_a_clause_of_its_own_that_is_the_answer_counts(reply: str) -> None:
+    assert grade(reply, CANBERRA).label == "correct"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Sydney\nMelbourne",
+        "Not Canberra but Sydney.",
+        "In Canberra? No, Sydney.",
+        "Sydney, not Canberra!",
+        "Sydney! Not Canberra, as tourists think.",
+        "Canberra?\nNo, no...\nFinal answer: Sydney!",  # only the marker on
+    ],
 )
 def test_a_text_answer_not_said_on_any_line_is_wrong(reply: str) -> None:
     assert grade(reply, CANBERRA).label == "wrong"
+
+
+def test_not_before_an_accepted_spelling_counts_whatever_the_spelling() -> None:
+    austen = Answer("q-4", "fact", "text", "Jane Austen", ("Austen",), (), "Hers.")
+    assert grade("Charlotte Brontë, not Jane Austen!", austen).label == "wrong"
+    assert grade("Austen, of course!", austen).label == "correct"
 
 
 def test_with_no_question_numbers_given_every_number_is_new() -> None:

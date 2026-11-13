@@ -18,19 +18,25 @@ every dose the same prompts, so it is paired. A resample that reaches no
 dose counts beyond the ladder's top, so an interval's high end can be open
 (dose_interval). The same resamples give each dose's mean coherence its
 interval. A dose's share of speaks_as has Wilson's interval
-(pushlab.analysis.intervals) when each prompt has one verdict there; with
-several, as with several seeds, a prompt's replies are not independent, so
-its interval comes from the same resamples too. pushlab.analysis.dose_text
+(pushlab.analysis.intervals), on the effective number of verdicts when a
+prompt has several there, as with several seeds, whose replies to one
+prompt are not independent (rate_bounds). pushlab.analysis.dose_text
 puts the findings in words; nothing here reads or writes a file.
 """
 
 import math
 import operator
 import random
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pushlab.analysis.intervals import dose_interval, wilson_interval, z_value
+from pushlab.analysis.intervals import (
+    dose_interval,
+    wilson_interval,
+    wilson_share,
+    z_value,
+)
 from pushlab.analysis.panel import Panel
 
 # How far a share or a mean may miss its threshold through rounding alone.
@@ -61,8 +67,9 @@ class LadderPoint:
 class DoseStats:
     """What a unit's replies at one dose show: how many there are; n with a
     speaks_as verdict and k of them speaking as the persona, their rate and
-    its interval (Wilson's, or the bootstrap's when a prompt has several
-    verdicts), None without a verdict; coherence_n with a score,
+    its interval (Wilson's, on the effective number of verdicts when a
+    prompt has several: rate_bounds), None without a verdict; coherence_n
+    with a score,
     their mean and its bootstrap interval, and the share of them below the
     panel's coherence_below, None without a score."""
 
@@ -263,10 +270,9 @@ def analyze_unit(points: Sequence[LadderPoint], panel: Panel) -> UnitDoses:
         mean_interval = rate_interval = None
         if means[place]:
             mean_interval = percentile_interval(means[place], panel.confidence)
-        if n and max(columns[place][0]) > 1:  # a prompt with several verdicts
-            rate_interval = percentile_interval(rates[place], panel.confidence)
-        elif n:
-            rate_interval = wilson_interval(k, n, panel.confidence)
+        if n:
+            asked = sum(1 for verdicts in columns[place][0] if verdicts)
+            rate_interval = rate_bounds(k, n, asked, rates[place], panel.confidence)
         stats[dose] = DoseStats(
             dose,
             replies[place],
@@ -284,6 +290,30 @@ def analyze_unit(points: Sequence[LadderPoint], panel: Panel) -> UnitDoses:
         _estimate(_working(doses, full, panel), working, panel),
         _estimate(_collapse(doses, full, panel), collapse, panel),
     )
+
+
+def rate_bounds(
+    k: int, n: int, prompts: int, resampled: Sequence[float], confidence: float
+) -> tuple[float, float]:
+    """A dose's speaks_as interval, k of n verdicts on prompts prompts:
+    Wilson's when each prompt has one verdict. With several, as with several
+    seeds, a prompt's verdicts are not independent, so Wilson's on the
+    effective number of verdicts: n over the design effect, the variance of
+    the rate over the resamples (resampled) over the variance of n
+    independent verdicts, kept between 1 and n / prompts; when every verdict
+    agrees, which leaves no variance, the number of prompts.
+
+    Example:
+        >>> [round(x, 3) for x in rate_bounds(0, 96, 32, [0.0] * 50, 0.95)]
+        [0.0, 0.107]
+    """
+    if prompts == n:
+        return wilson_interval(k, n, confidence)
+    share, design = k / n, n / prompts
+    if 0 < k < n and len(resampled) > 1:
+        spread = statistics.pvariance(resampled) / (share * (1 - share) / n)
+        design = min(max(spread, 1.0), n / prompts)
+    return wilson_share(share, n / design, confidence)
 
 
 def _estimate(

@@ -232,6 +232,7 @@ def report_text(
         ["working", f"at a speaks_as rate of {panel.working_rate:g} or more"],
         ["collapsed", f"at a mean coherence below {panel.coherence_below:g}"],
         ["intervals", f"{percent}: Wilson's for a rate; else from {resamples}"],
+        ["", "a rate's on its effective verdicts, with several seeds"],
     ]
     lines = aligned(head)
     if others:

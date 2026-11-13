@@ -57,31 +57,37 @@ why a fact is right). A second agent answered every question from the
 question alone and compared with the key: every answer was right; it
 found a missing spelling ("ampère"), a question whose answer hung on
 whether an owl counts as an animal (now a goat), and sentence replies that
-repeat the question's numbers. The grader (`pushlab.scoring.capability`,
-version 1) marks a reply as a person marking a test would, as a pushed
-model may wrap a right answer in a persona's remarks, and a review of an
-earlier draft found it marked such replies wrong: an opening remark or the
-question echoed on a line of its own, a sentence ending in "!", the answer
-followed by its reason. So a number answer is the first number the
-question does not give after the last "answer:" or "answer is"; without
-one, the first line if it is a number alone, else, on the last line that
-holds a number the question does not give, the last such number before
-any "because", "since", "as" or bracket after the first: "He will be 16,
-since he is 13 now." gives 16, and working over several lines its last
-line's result. A text answer is right when the part after the marker, or
-any line, is it, or begins or ends with it as whole words, punctuation,
-symbols and a leading article aside: "It is Paris!" and "*bows*\nParis"
-are right, "Not Paris but Lyon" is not. Numbers compare by value, without
-thousands commas or units, and texts without case, spaces, quotes or bold.
-A reply is strict when it is the answer alone, the form the prompt asked
-for. Tests grade every answer after its question echoed on the same line
-or the next, after a remark, with "!", and before a reason; no answer is a
-number its own question gives, so the question's numbers can be passed
-over. Known limits, left as they are: a colon before the reason ("150
-minutes: 120 for the hours and 30 more" gives 120), a text answer only in
-the middle of a sentence ("Why, Paris, of course!"), and a reply that names
-the answer at a line's start and then another, or lists guesses on lines
-of their own, which counts as right; strict has no such leniency.
+repeat the question's numbers (question 092 now gives its 3 in digits, so
+a reply's "3 weeks" is the question's), and two reviews of the grader
+found more. The grader (`pushlab.scoring.capability`, version 1, reading
+text and numbers with `pushlab.scoring.answer_text`) marks a reply as a
+person marking a test would, as a pushed model may wrap a right answer in
+a persona's remarks, reasons and rambling, and pushed replies mostly run
+to the token limit (decision 0018). A new number is one the question does
+not give, not straight after "not"; a sentence's claim is its last new
+number before any "because", "since", "as" or bracket after its first.
+A number answer is, after the last "answer:" or "answer is", its line's
+first new number, or an expression's result ("42 + 8 = 50"), or when the
+marker ends its line, the lines after it read as a reply; else a first
+line that is a new number alone; else the reply is right when its first
+claim or its last is the answer, as an answer may come first and then
+rambling, or last after working. A text answer is right when a line, or
+from a marker on, a line after it, has a clause (cut at commas,
+semicolons, colons and spaced dashes) that is the answer or begins or ends
+with it as whole words, punctuation, symbols and a leading article aside,
+not after "not": "It's Paris, darling!" is right, "Lyon, not Paris!" is
+not. Numbers compare by value, without thousands commas or units, and
+texts without case, spaces, quotes or bold. A reply is strict when it is
+the answer alone, the form the prompt asked for. On the second review's
+corpus of 3,701 replies of 110 shapes, labelled by hand, wrong replies
+marked right fell from 28% to 17% and right replies marked wrong from 21%
+to 5%; tests grade every answer after its question echoed, after a remark,
+in a persona's sentence, before a reason and after a marker. Known limits,
+left as they are and pinned by a test: a colon before a reason ("150
+minutes: 120 for the hours..." gives 120); a number in words; a first
+claim that is the answer, then a self-correction away from it; guesses on
+lines of their own, or a wrong answer and then a line naming the right
+one, which count as right when one is; strict has no such leniency.
 
 **Coherence without a judge** (`pushlab.scoring.text_measures`, version
 1): a reply is read as its words, lowercase, or, when most of its letters
@@ -157,9 +163,12 @@ percentile interval from 2,000 bootstrap resamples of the prompts, a
 prompt's replies under every seed and at every dose kept together, as the
 ladder is paired by prompt; a resample that reaches no dose counts beyond
 the ladder's top, so an interval can be open. A dose's share has Wilson's
-interval when each prompt has one verdict there; with several seeds a
-prompt's replies are not independent, so its interval comes from the same
-resamples. Random controls get their own speaks_as rate per dose, and the
+interval when each prompt has one verdict there. With several seeds a
+prompt's replies are not independent, so it is Wilson's on the effective
+number of verdicts: their number over the design effect, the variance of
+the rate over the resamples over that of independent verdicts, kept
+between 1 and verdicts per prompt, and when every verdict agrees, the
+number of prompts, so an interval is never a single point. Random controls get their own speaks_as rate per dose, and the
 judge-free measures, when saved, are shown per dose (the mean repetition,
 the share flagged, the median perplexity and the share right) from the
 rows `pushlab measure` would make now: the panel's n-gram and window, the
@@ -201,13 +210,17 @@ writes the numbers as JSON, outside the repository, never a reply's text.
 ## Results
 
 On a cloud session's CPU, on the tiny test models and a fake judge only;
-the pod has run no ladder yet. `uv run pytest -q`: 3,548 passed, the 8 GPU
-tests skipped. An independent check of the answer key, and a review of
-the four parts with each finding checked by a second agent, led to the
-fixes recorded above: how the grader reads a reply that wraps its answer,
-a rate's interval with several seeds, the measures `pushlab doses` reads,
-a ramp refused as no ladder, and the units file's row numbers. Three
+the pod has run no ladder yet. `uv run pytest -q`: 3,603 passed, the 8 GPU
+tests skipped. An independent check of the answer key, then two reviews of
+the four parts, each finding checked by a second agent, led to the fixes
+recorded above: how the grader reads a reply that wraps its answer, a
+rate's interval with several seeds, the measures `pushlab doses` reads, a
+ramp refused as no ladder, and the units file's row numbers. The second
+review measured the grader on 3,701 replies labelled by hand, and the
+rules above were chosen by measuring each candidate change on them. Eight
 findings did not hold: a loop with no spaces reads as one word, which the
 text measures define on purpose; a reply that begins with the answer and
-then names another, which the grader accepts on purpose; and the runbook's
-pull-request step, which a ladder kept on the pod does not take.
+then names another, which the grader accepts on purpose; the runbook's
+pull-request step, which a ladder kept on the pod does not take; a number
+in words; a thinking block a reply never opens; and three narrower cases
+of the grader's listed limits.

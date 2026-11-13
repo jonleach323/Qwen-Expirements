@@ -22,7 +22,7 @@ from pushlab.scoring.capability import grade
 
 SET = PROMPTS_DIR / "capability100.jsonl"
 ANSWERS = answers_path(SET)
-SET_SHA256 = "6b7285f550e6d593bb94121ceb127a8dd4ef5b2e907b26db397d4bd93323702d"
+SET_SHA256 = "6e064cc6ae8f8f63650f0bc2b69692de74fd0baa70b7bfe831e4db127975dc95"
 ANSWERS_SHA256 = "a83e818d977993caa40ac57b0a206ef9f0745ac93e57f9b743646f1eea4726fa"
 # Each prompt's last sentence, and the type of answer it asks for.
 FORMS = {
@@ -231,6 +231,10 @@ def test_no_number_answer_is_a_number_its_question_gives() -> None:
         "It is {answer}!",
         "{answer}, since {prompt}",
         "{answer}\nThat is my reply to: {prompt}",
+        "It's {answer}, darling!\n*counts 12345 gold coins*",
+        "Ah, {answer}, of course!",
+        "Here's my answer:\n{answer}",
+        "{prompt}\n\n**Answer:** {answer}",
     ],
 )
 def test_a_reply_that_rambles_around_its_answer_is_correct(form: str) -> None:

@@ -95,7 +95,7 @@ def dose_table(
     found: UnitDoses, panel: Panel, columns: dict[str, dict[float, str]]
 ) -> list[str]:
     """A unit's doses as a table: each dose's replies, its speaks_as verdicts
-    (k/n), their rate and Wilson interval, the mean coherence and its
+    (k/n), their rate and its interval, the mean coherence and its
     interval, the share below the panel's coherence_below, then columns,
     each a heading with its cells by dose ("-" for none).
 

@@ -15,12 +15,13 @@ import pytest
 
 from pushlab.analysis import ladder
 from pushlab.analysis.doses_command import ladder_points
-from pushlab.analysis.intervals import wilson_interval
+from pushlab.analysis.intervals import wilson_interval, wilson_share
 from pushlab.analysis.ladder import (
     DoseEstimate,
     LadderPoint,
     analyze_unit,
     percentile_interval,
+    rate_bounds,
     speaks_by_dose,
 )
 from pushlab.analysis.panel import read_panel
@@ -188,17 +189,28 @@ def test_a_ladder_with_no_reply_or_a_dose_that_is_no_dose_is_refused() -> None:
 def test_several_seeds_resample_whole_prompts_for_every_interval() -> None:
     # Ten prompts, two seeds each: five prompts speak under both seeds, five
     # under neither. A resample draws whole prompts, so the rate varies as
-    # ten draws do, not twenty: its interval is the bootstrap's, wider than
-    # Wilson's on 10 of 20, which would treat the seeds as independent.
+    # ten draws do, not twenty: the design effect is 2, and the interval is
+    # Wilson's on 10 effective verdicts, wider than on 20 independent ones.
     points = [LadderPoint(0.5, f"p-{i}", i < 5, 9.0) for i in range(10) for _ in "ab"]
     stats = analyze_unit(points, PANEL).stats[0.5]
     assert (stats.k, stats.n, stats.rate) == (10, 20, 0.5)
-    assert stats.rate_interval == (0.2, 0.8)  # the 2.5% and 97.5% of 10 draws
+    assert stats.rate_interval == pytest.approx(wilson_share(0.5, 10), abs=0.02)
     low, high = wilson_interval(10, 20)
-    assert stats.rate_interval[0] < low and stats.rate_interval[1] > high
+    assert stats.rate_interval[0] < low - 0.04 and stats.rate_interval[1] > high + 0.04
     # One verdict per prompt: Wilson's interval, as for one seed.
     single = analyze_unit(points[::2], PANEL).stats[0.5]
     assert single.rate_interval == wilson_interval(5, 10)
+
+
+def test_with_every_verdict_alike_the_prompts_count_and_never_a_point() -> None:
+    # 32 prompts, 3 seeds: 0 of 96 and 96 of 96 leave the resamples no
+    # spread, so the interval is Wilson's on the 32 prompts, not [0, 0].
+    none = [LadderPoint(0.0, f"p-{i}", False) for i in range(32) for _ in "abc"]
+    every = [LadderPoint(1.0, f"p-{i}", True) for i in range(32) for _ in "abc"]
+    stats = analyze_unit(none + every, PANEL).stats
+    assert stats[0.0].rate_interval == wilson_interval(0, 32)  # [0, 0.107]
+    assert stats[1.0].rate_interval == wilson_interval(32, 32)
+    assert rate_bounds(3, 3, 3, [], 0.95) == wilson_interval(3, 3)
 
 
 def test_ladder_points_key_each_reply_by_its_prompt_alone() -> None:

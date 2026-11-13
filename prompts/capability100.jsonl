@@ -74,7 +74,7 @@
 {"prompt_id": "capability100-074", "version": 1, "prompt": "A blue box is lighter than a red box, and a green box is lighter than the blue box. Which box is the heaviest? Answer with one word only."}
 {"prompt_id": "capability100-075", "version": 1, "prompt": "Jon arrived after Kai but before Lea. Who arrived first? Answer with the name only."}
 {"prompt_id": "capability100-076", "version": 1, "prompt": "Mo has more coins than Nia, and Omar has fewer coins than Nia. Who has the fewest coins? Answer with the name only."}
-{"prompt_id": "capability100-077", "version": 1, "prompt": "In a line, Raj is ahead of Sam, and Pia is ahead of Raj. Who is last in the line? Answer with the name only."}
+{"prompt_id": "capability100-077", "version": 1, "prompt": "In a line, Raj stands ahead of Sam and behind Pia. Who is last in the line? Answer with the name only."}
 {"prompt_id": "capability100-078", "version": 1, "prompt": "In a race, Tess beat Uma and Uma beat Vic. Of the three runners, who came second? Answer with the name only."}
 {"prompt_id": "capability100-079", "version": 1, "prompt": "If today is Monday, what day of the week will it be in three days? Answer with one word only."}
 {"prompt_id": "capability100-080", "version": 1, "prompt": "If today is Friday, what day of the week was it two days ago? Answer with one word only."}
@@ -89,7 +89,7 @@
 {"prompt_id": "capability100-089", "version": 1, "prompt": "How many even numbers are in this list: 5, 8, 11, 14, 20? Answer with the number only."}
 {"prompt_id": "capability100-090", "version": 1, "prompt": "How many sides do a triangle and a square have altogether? Answer with the number only."}
 {"prompt_id": "capability100-091", "version": 1, "prompt": "How many words are in the sentence \"Birds sing in the early morning\"? Answer with the number only."}
-{"prompt_id": "capability100-092", "version": 1, "prompt": "How many days are there in three weeks? Answer with the number only."}
+{"prompt_id": "capability100-092", "version": 1, "prompt": "How many days are there in 3 weeks? Answer with the number only."}
 {"prompt_id": "capability100-093", "version": 1, "prompt": "How many of these words name animals: cat, spoon, horse, cup, goat, tiger? Answer with the number only."}
 {"prompt_id": "capability100-094", "version": 1, "prompt": "Mia has 12 apples and gives 5 of them to a friend. How many apples does Mia have left? Answer with the number only."}
 {"prompt_id": "capability100-095", "version": 1, "prompt": "A box holds 6 eggs. How many eggs are there in 4 full boxes? Answer with the number only."}

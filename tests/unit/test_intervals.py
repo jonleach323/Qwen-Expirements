@@ -5,7 +5,12 @@ import doctest
 import pytest
 
 from pushlab.analysis import intervals
-from pushlab.analysis.intervals import dose_interval, wilson_interval, z_value
+from pushlab.analysis.intervals import (
+    dose_interval,
+    wilson_interval,
+    wilson_share,
+    z_value,
+)
 
 
 @pytest.mark.parametrize(
@@ -25,6 +30,19 @@ def test_wilson_matches_known_values(k: int, n: int, low: float, high: float) ->
 def test_a_share_that_is_no_share_is_refused(k: object, n: object) -> None:
     with pytest.raises(ValueError, match="a share needs"):
         wilson_interval(k, n)  # type: ignore[arg-type]
+
+
+def test_a_share_of_an_effective_number_is_wilsons_too() -> None:
+    # On whole numbers it is wilson_interval; between them, between theirs.
+    assert wilson_share(17 / 20, 20) == wilson_interval(17, 20)
+    # 15 effective replies: narrower than 10's interval, wider than 20's.
+    low, high = wilson_share(0.5, 15)
+    assert wilson_interval(5, 10)[0] < low < wilson_interval(10, 20)[0]
+    assert wilson_interval(10, 20)[1] < high < wilson_interval(5, 10)[1]
+    assert wilson_share(0.0, 32.5)[0] == 0.0 and wilson_share(1.0, 2.5)[1] == 1.0
+    for share, n in [(-0.1, 10), (1.1, 10), (0.5, 0)]:
+        with pytest.raises(ValueError, match="a share needs"):
+            wilson_share(share, n)
 
 
 def test_a_wider_confidence_gives_a_wider_interval() -> None:
