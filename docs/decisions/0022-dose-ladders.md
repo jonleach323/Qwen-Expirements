@@ -115,16 +115,22 @@ counts it. `--windows sentences` works the same way.
 
 **`pushlab doses`** (`pushlab.analysis.ladder`, `doses_command`) reads a
 scored ladder: for each unit, the speaks_as verdicts about its persona and
-the coherence scores of one judge, at each dose of its own runs, the
-unpushed runs at dose 0. Its working dose is the lowest dose at which at
-least 0.8 of its verdicts are speaks_as; its collapse dose, the lowest at
-which its replies' mean coherence is below 6. A dose's share has a Wilson
+the coherence scores of one judge (`--judge`, else the only one saved), at
+each dose of its own runs, the unpushed runs at dose 0. If a unit's replies
+were asked about it more than one way, the question asked last of its own
+replies counts at every dose. Its working dose is the lowest dose at which
+at least 0.8 of its verdicts are speaks_as; its collapse dose, the lowest at
+which its replies' mean coherence is below 6; a dose with no verdict is
+skipped, and a unit with no speaks_as or coherence verdict at all is
+refused, naming the command that makes them. A dose's share has a Wilson
 interval. Each found dose has a percentile interval from 2,000 bootstrap
-resamples of the prompts, a prompt's replies at every dose kept together,
-as the ladder is paired by prompt; a resample that reaches no dose counts
-beyond the ladder's top, so an interval can be open. Random controls get
-their own speaks_as rate per dose, and the judge-free measures, when
-saved, their means per dose.
+resamples of the prompts, a prompt's replies under every seed and at every
+dose kept together, as the ladder is paired by prompt; a resample that
+reaches no dose counts beyond the ladder's top, so an interval can be
+open. Random controls get their own speaks_as rate per dose, and the
+judge-free measures, when saved, are shown per dose: the mean repetition,
+the share flagged, the median perplexity and the share right. `--out`
+writes the numbers as JSON, outside the repository, never a reply's text.
 
 ## Why this shape
 
