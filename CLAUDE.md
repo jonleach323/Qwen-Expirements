@@ -44,9 +44,21 @@ be a NeuronSet, a few neurons pushed as one unit
 - An experiment's replies, with markers where its pushes switch (needs the
   model's tokenizer, as on the pod):
   uv run pushlab report experiments/p0/s2_pulse_lengths.yaml --conditions none "pulse length=16" --out /workspace/reports/s2-pulse-lengths.md
-- Query every experiment's runs and steps in /workspace/runs (DuckDB views
-  runs, steps and conditions; runs nothing):
+- Query every experiment's runs, steps and scores in /workspace/runs (DuckDB
+  views runs, steps, conditions, scores and sentences; runs nothing):
   uv run python -c "from pushlab.store.query import connect; print(connect().sql('SELECT experiment, status, count(*) FROM runs GROUP BY ALL'))"
+- Judge an experiment's replies by a rubric (speaks_as, which_persona or
+  coherence) into its scores table, or with --windows sentences its
+  sentences table; the api backend calls Claude Haiku with
+  ANTHROPIC_API_KEY, the local one a vLLM server (on the pod; the owner
+  runs it; docs/runbooks/judge.md). --dry-run counts the calls and their
+  cost and calls nothing:
+  uv run pushlab score experiments/s2/evil_diagnosis.yaml --rubric coherence --dry-run
+- Check a judge against your own labels before it scores at scale: export
+  a sheet outside the repository, label labels.csv in a spreadsheet, then
+  check (on the pod):
+  uv run pushlab label export experiments/s2/evil_diagnosis.yaml --rubric coherence --out /workspace/labels/coherence-1,
+  then uv run pushlab label check /workspace/labels/coherence-1
 - Download the persona candidates' two sources into /workspace/data (on the
   pod; the library about 26 MB, Mayner's files about 105 MB):
   uv run pushlab fetch library, then uv run pushlab fetch mayner

@@ -33,6 +33,12 @@ neurons from Will Mayner's persona-neurons data, which dose 1 pushes at his
 strength; and doses can be scaled by each prompt's own residual sizes, as
 the Neuron Persona Library scales them, instead of the fixed calibration
 (decision 0019). S3's main model for this work is Qwen3-8B.
+`pushlab score` has a judge model label an experiment's replies, whole or
+sentence by sentence: does the model speak as a persona, which persona, and
+how coherent is it. The judge sees only the text and the question, never
+which condition made the reply, and `pushlab label export` and
+`pushlab label check` measure how well it agrees with your own labels
+before it is trusted (decision 0021).
 
 ## Getting started
 
