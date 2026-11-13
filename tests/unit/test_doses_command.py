@@ -198,7 +198,8 @@ def test_each_units_doses_come_from_its_own_verdicts_with_intervals(
     record = _record(saved)
     assert [record[k] for k in ("experiment", "version", "judge")] == [NAME, 1, JUDGE]
     numbers = ("version", "working_rate", "coherence_below", "resamples")
-    assert [record["panel"][name] for name in numbers] == [1, 0.8, 6.0, 2000]
+    # configs/panel.yaml is version 2 since its selection section; same numbers.
+    assert [record["panel"][name] for name in numbers] == [2, 0.8, 6.0, 2000]
     owl = _unit(record, f"{OWL}+")
     assert (owl["persona"], owl["source"]) == ("Brass Owl", "invented")
     found = [(0, 0, 5), (0.25, 1, 5), (0.5, 4, 5), (0.75, 5, 5)]

@@ -17,9 +17,11 @@ from pushlab.cli_experiments import (
     add_verify,
     positive_int,
 )
+from pushlab.cli_golden import add_golden
 from pushlab.cli_labels import add_label
 from pushlab.cli_ladder import add_ladder
 from pushlab.cli_measure import add_measure
+from pushlab.cli_panel import add_panel
 from pushlab.cli_scoring import add_score
 from pushlab.models.registry import REGISTRY
 
@@ -288,4 +290,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_measure(commands)
     add_ladder(commands)
     add_doses(commands)
+    add_panel(commands)
+    add_golden(commands)
     return parser

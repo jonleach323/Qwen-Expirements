@@ -359,6 +359,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from pushlab.analysis.doses_command import run_doses_command
 
         return run_doses_command(args)
+    if args.command == "panel":
+        from pushlab.panel.command import run_panel_command
+
+        return run_panel_command(args)
+    if args.command == "golden":
+        from pushlab.runs.golden_command import run_golden_command
+
+        return run_golden_command(args)
     if args.command == "candidates":
         from pushlab.discovery.candidates_command import run_candidates
 

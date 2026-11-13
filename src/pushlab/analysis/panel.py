@@ -7,7 +7,8 @@ Intervals are at confidence, a dose's from resamples of a bootstrap over
 prompts, drawn from seed. ngram, window, repetitive_above and varied_below
 are the coherence measures that need no judge
 (pushlab.scoring.text_measures). Thresholds live in the file, never in
-code: read_panel checks every one, refusing a key it does not know.
+code: read_panel checks every one, refusing a key it does not know; the
+file's selection section is pushlab.panel.settings's (decision 0023).
 """
 
 import math
@@ -97,7 +98,9 @@ def read_panel(path: Path | None = None) -> Panel:
     names = [field.name for field in fields(Panel) if field.name != "path"]
     if missing := [name for name in names if name not in data]:
         raise ValueError(f"{path} lacks {', '.join(missing)}")
-    if unknown := sorted(str(key) for key in data if key not in names):
+    # The selection section is pushlab.panel.settings's to read.
+    known = [*names, "selection"]
+    if unknown := sorted(str(key) for key in data if key not in known):
         raise ValueError(f"{path} has unknown keys: {', '.join(unknown)}")
     values = {name: _checked(name, data[name], path) for name in names}
     return Panel(**values, path=path)  # type: ignore[arg-type]

@@ -1,8 +1,10 @@
 # The persona panel's thresholds: when a dose works, when it breaks, and
-# the measures beside them (decision 0022). pushlab.analysis.panel reads
-# this file; change it through a pull request, and raise version whenever
-# a number changes, so a report says which numbers it used.
-version: 1
+# the measures beside them (decision 0022); and how pushlab panel narrows
+# hundreds of candidates down to the panel (selection, decision 0023).
+# pushlab.analysis.panel and pushlab.panel.settings read this file; change
+# it through a pull request, and raise version whenever a number changes,
+# so a report says which numbers it used.
+version: 2
 
 # A unit's working dose: the lowest dose of its ladder at which at least
 # this share of its replies speak as its persona (the judge's speaks_as
@@ -28,3 +30,47 @@ ngram: 4
 window: 50
 repetitive_above: 0.3
 varied_below: 0.4
+
+# How pushlab panel narrows the candidates down to the panel, stage by
+# stage (decision 0023; docs/runbooks/panel.md). Every stage runs greedy,
+# max_new_tokens tokens a reply, thinking off, batch_size runs a batch, on
+# prompts, the held-out set, which no earlier experiment used.
+selection:
+  prompts: prompts/heldout32.jsonl
+  max_new_tokens: 160
+  batch_size: 16
+  # screen_a (experiments/s3/screen_a.yaml): every candidate at its
+  # reference dose on the set's first screen_prompts prompts.
+  screen_prompts: 8
+  # stage b: the stage_b_size candidates with the highest speaks_as rates,
+  # on every prompt of the set.
+  stage_b_size: 120
+  # stage ladder: stage b's ladder_size best, at each of ladder_doses, as
+  # multiples of each candidate's reference dose, on the set's first
+  # ladder_prompts prompts.
+  ladder_size: 40
+  ladder_prompts: 16
+  ladder_doses: [0.5, 0.75, 1.0, 1.25, 1.5]
+  # select: at most panel_size personas, or as many as pass, if at least
+  # panel_minimum do. Each must speak as itself on working_rate of the
+  # set's prompts at its working dose, meet coherence_below, and be named
+  # by the which_persona rubric for at least distinct_rate of
+  # distinct_sample of its replies, against every other finalist.
+  panel_size: 24
+  panel_minimum: 16
+  distinct_rate: 0.9
+  distinct_sample: 8
+  # The categories a panel spreads across; a categories file gives each
+  # finalist's.
+  categories: [people, animals, fictional, objects, mystical]
+  # stage preview: preview_pairs varied pairs of the panel, each pushed in
+  # four shapes, on the set's last preview_prompts prompts: a handoff at
+  # reply token handoff_at, alternation every alternate_every tokens, a
+  # pulse of the first for pulse_length tokens, and the second from reply
+  # token onset_at.
+  preview_pairs: 6
+  preview_prompts: 16
+  handoff_at: 20
+  alternate_every: 8
+  pulse_length: 16
+  onset_at: 30

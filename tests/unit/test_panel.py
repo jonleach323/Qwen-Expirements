@@ -13,7 +13,8 @@ GOOD = PANEL_FILE.read_text(encoding="utf-8")
 
 def test_the_panel_starts_at_the_prompts_numbers() -> None:
     panel = read_panel()
-    assert (panel.version, panel.working_rate, panel.coherence_below) == (1, 0.8, 6.0)
+    # Version 2 added the selection section (decision 0023); no number changed.
+    assert (panel.version, panel.working_rate, panel.coherence_below) == (2, 0.8, 6.0)
     assert (panel.confidence, panel.resamples, panel.seed) == (0.95, 2000, 0)
     assert (panel.ngram, panel.window) == (4, 50)
     assert (panel.repetitive_above, panel.varied_below) == (0.3, 0.4)
@@ -33,8 +34,8 @@ def test_the_panel_starts_at_the_prompts_numbers() -> None:
         ("seed: 0", "seed: -1", "from 0"),
         ("ngram: 4", "ngram: 1", "from 2"),
         ("window: 50", "window: true", "whole number"),
-        ("version: 1", "version: 1\ncolour: red", "unknown keys: colour"),
-        ("version: 1\n", "", "lacks version"),
+        ("version: 2", "version: 2\ncolour: red", "unknown keys: colour"),
+        ("version: 2\n", "", "lacks version"),
     ],
 )
 def test_a_malformed_panel_is_refused(
