@@ -115,7 +115,8 @@ def test_a_judge_that_cannot_answer_stops_the_job_keeping_what_it_found(
     assert settings["verdicts"] == (
         f"{len(refused) + len(answered)}: {len(answered)} ok, {len(refused)} failed"
     )
-    assert settings["calls made"] == "2"
+    # Every call made counts, the fatal third one too, which used no tokens.
+    assert settings["calls made"] == "3"
     assert settings["tokens used"] == "200 input and 40 output"
     assert settings["errors"] == f"{len(refused)}: {DECLINED}"
     # The next job asks about the refused text again and the rest, once each.

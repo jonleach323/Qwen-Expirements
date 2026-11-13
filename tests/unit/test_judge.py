@@ -23,6 +23,7 @@ from pushlab.scoring.judge import (
 from pushlab.scoring.personas import Persona
 from pushlab.scoring.rubrics import load_rubric
 from pushlab.scoring.sentences import sentence_windows
+from pushlab.scoring.spend import Spent
 
 OWL = Persona("Brass Owl", "A pompous mechanical owl who lectures in riddles.")
 CAT = Persona("Velvet Cat", "A sleepy cat.")
@@ -224,6 +225,34 @@ def test_a_stop_ends_the_wait_between_attempts(coherence) -> None:  # type: igno
     with pytest.raises(Stopped):
         judge.verdict(coherence, "Hello there.", stop=stop)
     assert time.monotonic() - began < 5  # not the 30 s wait
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '{"reason": "x", "score": 5, "\\ud83d": 1}',  # an unknown key
+        '{"reason": "x", "\\ud83d": 1, "\\ud83d": 2, "score": 5}',  # a repeat
+        '{"reason": "It says \\ud83d.", "score": 5}',  # in the reason
+    ],
+)
+def test_an_answer_utf8_cannot_hold_fails_with_text_that_can_be_saved(
+    coherence,  # type: ignore[no-untyped-def]
+    answer: str,
+) -> None:
+    judge, _ = _judge(FakeBackend([answer] * 4))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert verdict.status == "failed" and verdict.error.startswith("malformed")
+    verdict.error.encode("utf-8")  # no lone surrogate left: the row can be saved
+    verdict.raw.encode("utf-8")
+
+
+def test_the_judge_counts_every_call_and_its_tokens(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend(
+        [Reply(BROKEN, "end", 300, 40), busy(), Reply(GOOD, "end", 200, 30)]
+    )
+    judge, _ = _judge(backend)
+    assert judge.verdict(coherence, "Hello there.").ok
+    assert judge.spent.now() == Spent(3, 500, 70)  # the failed calls count too
 
 
 def test_window_scoring_sends_only_the_chosen_sentences() -> None:

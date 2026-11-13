@@ -28,7 +28,7 @@ verdicts found before the stop are saved, failures included.
 import argparse
 import sys
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pushlab.runs import folder
@@ -48,6 +48,7 @@ from pushlab.scoring.score_rows import (
     question_from,
     window_spans,
 )
+from pushlab.scoring.spend import Spent
 
 WINDOWS = ("sentences",)  # what --windows may cut a reply into
 ERRORS_SHOWN = 3  # the most common errors a summary names
@@ -113,29 +114,23 @@ def header_lines(
     ]
 
 
-def tokens_used(verdicts: Iterable[Verdict]) -> tuple[int, int]:
-    """The input and output tokens the calls behind verdicts used now: one
-    from the cache, or a repeat of a text in the job, used none."""
-    fresh = [verdict for verdict in verdicts if not verdict.cached]
-    return sum(v.input_tokens for v in fresh), sum(v.output_tokens for v in fresh)
-
-
-def summary_lines(verdicts: Sequence[Verdict]) -> list[tuple[str, str]]:
+def summary_lines(verdicts: Sequence[Verdict], spent: Spent) -> list[tuple[str, str]]:
     """What a job found, as (name, text) lines: its verdicts ok and failed,
-    those from the cache, the calls made, the tokens used, and the most
+    those from the cache, the calls made and the tokens they used (spent,
+    every call counted as it was made: pushlab.scoring.spend), and the most
     common errors, each with how often it came.
 
     Example:
-        >>> summary_lines([])[0]
-        ('verdicts', '0: 0 ok, 0 failed')
+        >>> summary_lines([], Spent(2, 300, 40))[2:]
+        [('calls made', '2'), ('tokens used', '300 input and 40 output')]
     """
     ok = sum(verdict.ok for verdict in verdicts)
-    used_in, used_out = tokens_used(verdicts)
+    tokens = f"{spent.input_tokens:,} input and {spent.output_tokens:,} output"
     lines = [
         ("verdicts", f"{len(verdicts):,}: {ok:,} ok, {len(verdicts) - ok:,} failed"),
         ("from the cache", f"{sum(verdict.cached for verdict in verdicts):,}"),
-        ("calls made", f"{sum(verdict.attempts for verdict in verdicts):,}"),
-        ("tokens used", f"{used_in:,} input and {used_out:,} output"),
+        ("calls made", f"{spent.calls:,}"),
+        ("tokens used", tokens),
     ]
     errors = Counter(verdict.error for verdict in verdicts if not verdict.ok)
     for place, (error, count) in enumerate(errors.most_common(ERRORS_SHOWN)):
@@ -188,11 +183,18 @@ def _score(
     if size is not None and decode is not None:
         runs = {item.run.run_id: item.run for item in plan.todo}
         spans = window_spans(runs.values(), size, decode)
-    verdicts, stopped = judge_chunks(judge, experiment, question, plan, spans, workers)
-    lines = summary_lines(verdicts)
+    before = judge.spent.now()
+    try:
+        verdicts, stopped = judge_chunks(
+            judge, experiment, question, plan, spans, workers
+        )
+    finally:
+        spent = judge.spent.now() - before  # every call made, its tokens too
+    lines = summary_lines(verdicts, spent)
     if backend.name == "api":
         try:
-            cost = spent_text(backend.model, *tokens_used(verdicts), read_judge_costs())
+            tokens = (spent.input_tokens, spent.output_tokens)
+            cost = spent_text(backend.model, *tokens, read_judge_costs())
         except ValueError as error:
             cost = f"unknown: {error}"
         lines.append(("cost", cost))

@@ -25,14 +25,8 @@ from typing import Any
 from pushlab.runs.folder import SCORES, SENTENCES
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.items import Experiment, Item, reply_items, window_items
-from pushlab.scoring.judge import (
-    Job,
-    Judge,
-    JudgeUnavailable,
-    Verdict,
-    request_key,
-    text_sha256,
-)
+from pushlab.scoring.judge import Job, Judge, JudgeUnavailable, Verdict
+from pushlab.scoring.keys import request_key, text_sha256
 from pushlab.scoring.personas import Persona, pick_persona, read_personas
 from pushlab.scoring.rubrics import Request, Rubric
 from pushlab.scoring.sentences import (
@@ -52,6 +46,10 @@ from pushlab.store.scores import (
 )
 
 CHUNK = 100  # items judged, then saved, at a time
+STOPPING = (
+    "Stopping once the calls under way return; Ctrl-C again stops at once, "
+    "saving what was found."
+)
 
 
 @dataclass(frozen=True)
@@ -364,7 +362,8 @@ def judge_chunks(
         jobs = [question.job(item.text) for item in chunk]
         stopped: BaseException | None = None
         try:
-            judged = list(zip(chunk, judge.verdicts(jobs, workers), strict=True))
+            found_all = judge.verdicts(jobs, workers, stopping=_say_stopping)
+            judged = list(zip(chunk, found_all, strict=True))
         except (JudgeUnavailable, KeyboardInterrupt) as error:
             # What was found before the stop, as found: paid for, so saved.
             found_now: dict[int, Verdict] = getattr(error, "found", {})
@@ -391,3 +390,7 @@ def judge_chunks(
         if isinstance(stopped, JudgeUnavailable):
             return found, stopped
     return found, None
+
+
+def _say_stopping() -> None:
+    print(STOPPING, flush=True)

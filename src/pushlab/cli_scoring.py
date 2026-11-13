@@ -42,8 +42,9 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         "persona or personas given here, the same for every reply, and the "
         "text: never the prompt, the run, its condition, unit or dose. It must "
         "be a model of another family than the experiment's. A reply already "
-        "scored the same way is skipped, and each verdict is cached, so a text "
-        "judged before is never sent again. A failed call is tried again with "
+        "scored the same way is skipped, and each verdict that parsed is "
+        "cached, so a text judged before is not sent again; a failed one is "
+        "asked again on the next run. A failed call is tried again with "
         "backoff and saved as failed: a label is never guessed. --dry-run "
         "counts the calls and estimates their cost first, calling and writing "
         "nothing.",
@@ -125,7 +126,8 @@ def add_score(commands: argparse._SubParsersAction) -> None:
     score.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the replies or windows to judge, those already scored or in "
-        "the cache, the calls to make and their estimated cost from "
-        "configs/costs.yaml; build no judge, need no key, call and write nothing",
+        help="print how many replies or windows there are to judge, how many are "
+        "already scored or in the cache, the calls to make and their estimated "
+        "cost from configs/costs.yaml, and no reply text; build no judge, need "
+        "no key, call and write nothing",
     )

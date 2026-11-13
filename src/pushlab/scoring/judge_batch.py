@@ -9,9 +9,12 @@ When the job stops, because a call says no call can pass
 (JudgeUnavailable), or Ctrl-C, or any other error, no further call starts:
 a job not yet begun is dropped, and one between attempts stops waiting and
 is dropped too, so a stopped job never saves a verdict that the stop cut
-short. Only calls already under way finish. The error is then raised with
-found, by job place, every verdict found before the stop, repeats
-included, so that the caller can save them: they were paid for.
+short. Only calls already under way finish, while stopping(), when given,
+can say so. The error is then raised with found, by job place, every
+verdict found before the stop, repeats included, so that the caller can
+save them: they were paid for. An error while it waits for those calls,
+such as a second Ctrl-C, is raised with the verdicts found before the
+first stop.
 """
 
 import threading
@@ -57,11 +60,13 @@ def judge_jobs(
     jobs: Sequence[Job],
     workers: int = 1,
     done: Callable[[int], None] | None = None,
+    stopping: Callable[[], None] | None = None,
 ) -> list[Verdict]:
     """Each job's verdict, in order, with up to workers calls at a time.
 
     done(n) is called as verdicts are found, with the count so far. When the
-    job stops, the error is raised with its found attribute set, as the
+    job stops, stopping() is called before the calls under way are waited
+    for, and the error is raised with its found attribute set, as the
     module's docstring says.
 
     Example:
@@ -100,27 +105,34 @@ def judge_jobs(
             raise
 
     found: dict[int, Verdict] = {}
-    failure: BaseException | None = None
-    with ThreadPoolExecutor(max(1, workers)) as pool:
-        futures = {place: pool.submit(one, place) for place in asked}
+    pool = ThreadPoolExecutor(max(1, workers))
+    futures: dict[int, Future] = {}
+    try:
+        for place in asked:
+            futures[place] = pool.submit(one, place)
+        for count, place in enumerate(asked, start=1):
+            verdict = futures[place].result()
+            if verdict is not None:
+                found[place] = verdict
+                if done is not None:
+                    done(count)
+    except BaseException as error:
+        stopped.set()
+        for future in futures.values():
+            future.cancel()
+        error.found = _with_repeats(found, keys, first)  # type: ignore[attr-defined]
+        if stopping is not None:
+            stopping()
         try:
-            for count, place in enumerate(asked, start=1):
-                verdict = futures[place].result()
-                if verdict is not None:
-                    found[place] = verdict
-                    if done is not None:
-                        done(count)
-        except BaseException as error:
-            stopped.set()
-            for future in futures.values():
-                future.cancel()
-            failure = error
-    # The pool has shut down: every job that was under way has ended.
-    if failure is not None:
+            pool.shutdown(wait=True)  # the calls under way end
+        except BaseException as again:  # such as a second Ctrl-C meanwhile
+            again.found = error.found  # type: ignore[attr-defined]
+            raise
         for place, future in futures.items():
             if place not in found and (verdict := _finished(future)) is not None:
                 found[place] = verdict
-        failure.found = _with_repeats(found, keys, first)  # type: ignore[attr-defined]
-        raise failure
+        error.found = _with_repeats(found, keys, first)  # type: ignore[attr-defined]
+        raise
+    pool.shutdown(wait=True)
     filled = _with_repeats(found, keys, first)
     return [filled[place] for place in range(len(jobs))]

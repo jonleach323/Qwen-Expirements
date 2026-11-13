@@ -12,6 +12,7 @@ from pushlab.scoring import judge_batch
 from pushlab.scoring.fake_backend import FakeBackend, busy
 from pushlab.scoring.judge import CallError, Job, Judge, JudgeUnavailable, Reply
 from pushlab.scoring.rubrics import load_rubric
+from pushlab.scoring.spend import Spent
 
 GOOD = '{"reason": "Fluent.", "score": 9}'
 
@@ -150,6 +151,56 @@ def test_ctrl_c_hands_back_what_was_found_too(coherence) -> None:  # type: ignor
     with pytest.raises(KeyboardInterrupt) as raised:
         judge.verdicts([Job(coherence, "One."), Job(coherence, "Two.")])
     assert list(raised.value.found) == [0]  # type: ignore[attr-defined]
+
+
+def test_a_stopping_job_says_so_once_before_it_waits(coherence) -> None:  # type: ignore[no-untyped-def]
+    said: list[str] = []
+    backend = FakeBackend([GOOD, CallError("HTTP 402: no credit", fatal=True)])
+    judge, _ = _judge(backend)
+    with pytest.raises(JudgeUnavailable):
+        judge.verdicts(
+            [Job(coherence, "One."), Job(coherence, "Two.")],
+            stopping=lambda: said.append("stopping"),
+        )
+    assert said == ["stopping"]
+
+
+def test_a_second_stop_while_waiting_keeps_what_was_found(
+    coherence,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Impatient(judge_batch.ThreadPoolExecutor):
+        """A pool whose wait for the calls under way meets a second Ctrl-C."""
+
+        def shutdown(self, wait: bool = True, **options: bool) -> None:
+            super().shutdown(wait, **options)
+            if judge_batch.threading.current_thread() is threading.main_thread():
+                raise KeyboardInterrupt
+
+    monkeypatch.setattr(judge_batch, "ThreadPoolExecutor", Impatient)
+    backend = FakeBackend([GOOD, CallError("HTTP 401: key rejected", fatal=True)])
+    judge, _ = _judge(backend)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        judge.verdicts([Job(coherence, "One."), Job(coherence, "Two.")])
+    assert list(raised.value.found) == [0]  # type: ignore[attr-defined]
+
+
+def test_the_spend_of_a_verdict_cut_short_is_counted(coherence) -> None:  # type: ignore[no-untyped-def]
+    malformed = threading.Event()
+
+    def answer(request):  # type: ignore[no-untyped-def]
+        if request.text == "Stops.":
+            malformed.wait(5)  # once the other has had its malformed answer
+            return CallError("HTTP 402: no credit", fatal=True)
+        malformed.set()
+        return Reply("not json", "end", 1000, 500)  # tried again after a wait
+
+    backend = FakeBackend(answer)
+    judge = Judge(backend, delay=30.0, jitter=lambda: 1.0)
+    with pytest.raises(JudgeUnavailable) as raised:
+        judge.verdicts([Job(coherence, "Stops."), Job(coherence, "Bad.")], 2)
+    assert raised.value.found == {}  # the malformed one was cut short: not saved
+    assert judge.spent.now() == Spent(2, 1000, 500)  # but its call is counted
 
 
 def test_docstring_examples_run() -> None:

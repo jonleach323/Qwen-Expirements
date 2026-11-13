@@ -67,6 +67,8 @@ def test_a_torn_line_is_skipped_and_the_next_verdict_starts_a_line(
         '{"key": "' + OTHER + '", "label": "x", "value": null, "reason": ""}',
         '{"key": "' + OTHER + '", "label": null, "value": true, "reason": "", '
         '"raw": "{}"}',
+        # Not JSON that Python can read: nested too deep.
+        "[" * 100_000 + "]" * 100_000,
     ],
 )
 def test_a_line_that_is_no_verdict_is_skipped(tmp_path: Path, line: str) -> None:
@@ -94,3 +96,14 @@ def test_docstring_examples_run() -> None:
     result = doctest.testmod(cache_module)
     assert result.attempted > 0
     assert result.failed == 0
+
+
+def test_a_value_too_big_for_a_float_is_read_not_a_crash(tmp_path: Path) -> None:
+    # A whole number of 309 digits passes a float's range; it is kept as it
+    # is, and the judge reads the raw answer again before using it anyway.
+    big = "9" * 309
+    path = tmp_path / cache_file_name("api:m")
+    line = f'{{"key": "{OTHER}", "label": null, "value": {big}, "reason": "", '
+    path.write_text(line + '"raw": "{}"}\n', encoding="utf-8")
+    cache = VerdictCache(tmp_path, "api:m")
+    assert cache.skipped == 0 and cache.get(OTHER)["value"] == int(big)

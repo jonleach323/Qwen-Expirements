@@ -1,13 +1,16 @@
 """The judge's cache: every verdict that parsed, by its key.
 
 One JSON Lines file per judge, <cache dir>/<backend>-<model>.jsonl, each
-line a verdict: its key (pushlab.scoring.judge.request_key, a SHA-256 of
-the backend, the model, the rubric and its version, and the whole request,
-the text included), its label or value and the judge's reason, the rubric
-and when it was found. Lines are only ever added. A line a crash cut short,
-or any line that is not such a verdict, is skipped when the file is read,
-so the verdict is asked for again. The cache holds the judge's reasons,
-which may quote replies: it lives on the pod's volume, never in git.
+line a verdict: its key (pushlab.scoring.keys.request_key, a SHA-256 of the
+key's version, the backend, the model, the backend's settings, the rubric
+and its version, and the whole request, the text included); its label,
+value, reason and raw answer, each of which a line must have; and the
+rubric, its version and when it was found. Lines are only ever added. A
+line a crash cut short, or any line that is not such a verdict, is skipped
+when the file is read, so the verdict is asked for again; and the judge
+reads a cached raw answer again by its rubric before it uses it
+(Judge.verdict). The cache holds the judge's reasons, which may quote
+replies: it lives on the pod's volume, never in git.
 """
 
 import json
@@ -50,7 +53,7 @@ def _verdict(line: bytes) -> dict[str, Any] | None:
     """The verdict on a line of the file, or None for one that is not."""
     try:
         entry = json.loads(line)
-    except ValueError:
+    except (ValueError, RecursionError):  # not JSON, or nested too deep
         return None
     if not (
         isinstance(entry, dict)
@@ -62,7 +65,8 @@ def _verdict(line: bytes) -> dict[str, Any] | None:
         and (entry["label"] is None or isinstance(entry["label"], str))
         and (
             entry["value"] is None
-            or (type(entry["value"]) in (int, float) and math.isfinite(entry["value"]))
+            or type(entry["value"]) is int  # any size: never turned into a float
+            or (type(entry["value"]) is float and math.isfinite(entry["value"]))
         )
         and (entry["label"] is not None or entry["value"] is not None)
     ):

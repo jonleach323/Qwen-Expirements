@@ -29,25 +29,22 @@ texts, a few calls at a time (pushlab.scoring.judge_batch). A judge must
 not be of the tested model's family (pushlab.scoring.family).
 """
 
-import hashlib
-import json
 import random
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Protocol
 
 from pushlab.scoring.cache import VerdictCache
+from pushlab.scoring.keys import judge_name, request_key, text_sha256
 from pushlab.scoring.personas import Persona
 from pushlab.scoring.rubrics import MalformedAnswer, Request, Rubric
+from pushlab.scoring.spend import Tally
 
 ATTEMPTS = 4
 DELAY = 2.0  # seconds before the second attempt, doubled for each after it
 MAX_DELAY = 60.0
 MAX_RETRY_AFTER = 300.0  # the longest wait a server's retry-after can ask for
-# Raised whenever the key's recipe changes, so no old verdict matches it:
-# 2 added the backend's settings.
-KEY_VERSION = 2
 NO_TEXT = "there is no text to judge"
 
 
@@ -155,16 +152,6 @@ class Job:
     personas: tuple[Persona, ...] = field(default=())
 
 
-def text_sha256(text: str) -> str:
-    """The SHA-256 of a text's UTF-8 bytes, as hex.
-
-    Example:
-        >>> text_sha256("")[:12]
-        'e3b0c44298fc'
-    """
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 class Judge:
     """A backend, a cache, and the rule for trying a call again.
 
@@ -200,6 +187,7 @@ class Judge:
         self.max_delay = max_delay
         self.sleep = sleep
         self.jitter = jitter
+        self.spent = Tally()  # every call made, and its tokens (spend.py)
 
     @property
     def name(self) -> str:
@@ -299,14 +287,16 @@ class Judge:
         try:
             reply = self.backend.complete(request)
         except CallError as failure:
+            self.spent.add()
             if failure.fatal:
-                raise JudgeUnavailable(f"{self.name}: {failure}") from None
-            error = str(failure) or type(failure).__name__
+                raise JudgeUnavailable(_utf8(f"{self.name}: {failure}")) from None
+            error = _utf8(str(failure) or type(failure).__name__)
             stop = not failure.retryable
             return replace(verdict, error=error), failure.retry_after, stop
+        self.spent.add(reply.input_tokens, reply.output_tokens)
         verdict = replace(
             verdict,
-            raw=reply.text,
+            raw=_utf8(reply.text),
             input_tokens=verdict.input_tokens + reply.input_tokens,
             output_tokens=verdict.output_tokens + reply.output_tokens,
         )
@@ -318,7 +308,8 @@ class Judge:
         try:
             answer = rubric.parse(reply.text, personas)
         except MalformedAnswer as malformed:
-            return replace(verdict, error=f"malformed answer: {malformed}"), None, False
+            error = _utf8(f"malformed answer: {malformed}")
+            return replace(verdict, error=error), None, False
         found = replace(
             verdict,
             status="ok",
@@ -350,14 +341,26 @@ class Judge:
         jobs: Sequence[Job],
         workers: int = 1,
         done: Callable[[int], None] | None = None,
+        stopping: Callable[[], None] | None = None,
     ) -> list[Verdict]:
         """Each job's verdict, in order, with up to workers calls at a time;
         a job that repeats another's question and text makes no call
-        (pushlab.scoring.judge_batch.judge_jobs, which says how a job stops).
-        done(n) is called as verdicts are found, with the count so far."""
+        (pushlab.scoring.judge_batch.judge_jobs, which says how a job stops,
+        calling stopping() then). done(n) is called as verdicts are found."""
         from pushlab.scoring.judge_batch import judge_jobs  # it imports this
 
-        return judge_jobs(self, jobs, workers, done)
+        return judge_jobs(self, jobs, workers, done, stopping)
+
+
+def _utf8(text: str) -> str:
+    """text with any character UTF-8 cannot hold, such as a lone surrogate an
+    answer's JSON escaped, written as its escape, so that it can be saved.
+
+    Example:
+        >>> print(_utf8("bad " + chr(0xD83D) + " end"))
+        bad \\ud83d end
+    """
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def _unanswered(question: str, error: str, key: str = "", text: str = "") -> Verdict:
@@ -365,33 +368,3 @@ def _unanswered(question: str, error: str, key: str = "", text: str = "") -> Ver
     return Verdict(
         "failed", None, None, "", error, 0, False, key, question, text_sha256(text)
     )
-
-
-def judge_name(backend: str, model: str) -> str:
-    """The judge as the scores table and the cache name it.
-
-    Example:
-        >>> judge_name("api", "claude-haiku-5-5")
-        'api:claude-haiku-5-5'
-    """
-    return f"{backend}:{model}"
-
-
-def request_key(backend: str, model: str, request: Request, settings: str = "") -> str:
-    """The cache key of a request to a backend's model: a SHA-256 of both, of
-    the backend's settings, and of everything the request holds, the text
-    included."""
-    recipe: list[Any] = [
-        KEY_VERSION,
-        backend,
-        model,
-        settings,
-        request.rubric,
-        request.version,
-        request.system,
-        request.user,
-        request.schema,
-        request.max_tokens,
-    ]
-    canonical = json.dumps(recipe, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
