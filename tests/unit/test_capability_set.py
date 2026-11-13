@@ -17,12 +17,13 @@ from fractions import Fraction
 import pytest
 
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
-from pushlab.scoring.capability import answers_path, grade, read_answers
+from pushlab.scoring.answers import answers_path, read_answers
+from pushlab.scoring.capability import grade
 
 SET = PROMPTS_DIR / "capability100.jsonl"
 ANSWERS = answers_path(SET)
-SET_SHA256 = "5c0b11f80b35b7968f6bb4f6291733f5a9ac890c76fb6df3b10d96c2736d0158"
-ANSWERS_SHA256 = "1c7a5dc26d84c9f9f919bffbe4481af8cf46faea4fae0ab35d76bc713e2c52d0"
+SET_SHA256 = "6b7285f550e6d593bb94121ceb127a8dd4ef5b2e907b26db397d4bd93323702d"
+ANSWERS_SHA256 = "a83e818d977993caa40ac57b0a206ef9f0745ac93e57f9b743646f1eea4726fa"
 # Each prompt's last sentence, and the type of answer it asks for.
 FORMS = {
     "Answer with the number only.": "number",
@@ -209,6 +210,23 @@ def test_a_reply_that_only_repeats_its_question_is_never_correct() -> None:
     # its own answer's words: a model that echoes the question scores none.
     for prompt_id, prompt in zip(PROMPTS.prompt_ids, PROMPTS.prompts, strict=True):
         assert grade(prompt, KEY[prompt_id]).label != "correct", prompt_id
+
+
+def test_no_number_answer_is_a_number_its_question_gives() -> None:
+    # The grader passes over the question's numbers when a reply has others,
+    # so an answer that is one of them could be passed over too.
+    for answer in KEY.values():
+        if answer.type == "number":
+            assert answer.answer not in answer.given, answer.prompt_id
+
+
+def test_a_reply_that_repeats_its_question_then_answers_is_correct() -> None:
+    # A rambling reply that echoes the question's numbers, or its words,
+    # before the answer is marked on the answer, not on the echo.
+    for prompt_id, prompt in zip(PROMPTS.prompt_ids, PROMPTS.prompts, strict=True):
+        answer = KEY[prompt_id]
+        graded = grade(f"{prompt} {answer.answer}", answer)
+        assert (graded.label, graded.strict) == ("correct", False), prompt_id
 
 
 def test_no_prompt_is_asked_twice_or_in_another_prompt_set() -> None:

@@ -23,14 +23,15 @@ the model download the replies were made with. --dry-run counts what each
 measure has left and has measured already; it loads no model, takes no
 lock and writes nothing. A real run holds the folder's lock, which keeps a
 runner and the scorers out, and writes each measure's rows in one file,
-the measures that need no model first. It ends with each condition's
-measures (measure_rows.summary_lines).
+the measures that need no model first; perplexity's go in a file per chunk
+of CHUNK replies, so a stop keeps every chunk scored before it. It ends
+with each condition's measures (measure_rows.summary_lines).
 """
 
 import argparse
 import hashlib
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,7 +39,8 @@ from pushlab.analysis.panel import Panel, read_panel
 from pushlab.prompts import PromptSet, read_prompt_set
 from pushlab.runs import folder
 from pushlab.runs.folder import SCORES
-from pushlab.scoring.capability import Answer, answers_path, read_answers
+from pushlab.scoring.answers import answers_path, read_answers
+from pushlab.scoring.capability import Answer
 from pushlab.scoring.items import Experiment, judged_runs
 from pushlab.scoring.measure_rows import (
     TEXT_SCORERS,
@@ -59,7 +61,7 @@ from pushlab.store.records import RunRecord
 from pushlab.store.scores import ScoreRow, read_rows, write_rows
 
 EXIT_INTERRUPTED = 130
-CHUNK = 256  # replies whose perplexity is worked out between progress lines
+CHUNK = 256  # replies whose perplexity is worked out, and saved, at a time
 NO_PERPLEXITY = (
     "--batch-size sets how many replies the model reads at a time: give it "
     "with --perplexity"
@@ -218,23 +220,26 @@ def header_lines(
 
 def _perplexity_rows(
     experiment: Experiment, plan: MeasurePlan, setup: Setup, batch_size: int
-) -> list[ScoreRow]:
+) -> Iterator[list[ScoreRow]]:
     """perplexity's rows on the plan's runs, from the model loaded as pushlab
-    run loads it, nothing pushed, with a progress line after each CHUNK."""
+    run loads it, nothing pushed: first the replies with no token's, then a
+    CHUNK of replies' at a time, each after a progress line, so that every
+    chunk is saved before the next is scored."""
     import torch
 
     from pushlab.engine.score_text import reply_logprobs
     from pushlab.models import load
 
-    spec = experiment.spec
+    spec, version, measure = experiment.spec, experiment.version, plan.measure
     device, dtype = load.default_device(), spec.decoding["dtype"]
     where = "GPU" if device == "cuda" else "CPU"
     print(f"Loading {spec.model} in {dtype} on the {where}...", flush=True)
     loaded = load.load_model(spec.model, getattr(torch, dtype), device=device)
     if f"{spec.model}@{loaded.revision}" != setup.model:
         raise ValueError(f"{spec.model}'s download changed while it loaded; run again")
-    scored = [run for run in plan.todo if run.output_tokens]  # else NO_TOKENS
-    found: dict[str, list[float]] = {}
+    if empty := [run for run in plan.todo if not run.output_tokens]:
+        yield [perplexity_row(run, version, measure, []) for run in empty]  # NO_TOKENS
+    scored = [run for run in plan.todo if run.output_tokens]
     for start in range(0, len(scored), CHUNK):
         chunk = scored[start : start + CHUNK]
         prompts = [setup.texts[run.prompt_id] for run in chunk]  # the version's
@@ -256,27 +261,29 @@ def _perplexity_rows(
                 f"the model ran out of memory scoring perplexity: give it {lower}. "
                 "The measures saved before it are kept"
             ) from None
-        found |= {run.run_id: each for run, each in zip(chunk, logprobs, strict=True)}
-        print(f"  {len(found):,} of {len(scored):,} replies scored", flush=True)
-    return [
-        perplexity_row(run, experiment.version, plan.measure, found.get(run.run_id, []))
-        for run in plan.todo
-    ]
+        done = start + len(chunk)
+        print(f"  {done:,} of {len(scored):,} replies scored", flush=True)
+        yield [
+            perplexity_row(run, version, measure, each)
+            for run, each in zip(chunk, logprobs, strict=True)
+        ]
 
 
 def _rows(
     experiment: Experiment, plan: MeasurePlan, setup: Setup, batch_size: int
-) -> list[ScoreRow]:
-    """The rows of a measure on the plan's runs."""
+) -> Iterator[list[ScoreRow]]:
+    """The rows of a measure on the plan's runs, in the lots to save them in:
+    one lot, or with perplexity, one per chunk of replies."""
     version, measure = experiment.version, plan.measure
     if measure.scorer in TEXT_SCORERS:
-        return [text_row(run, version, measure, setup.panel) for run in plan.todo]
-    if measure is setup.capability:
-        return [
+        yield [text_row(run, version, measure, setup.panel) for run in plan.todo]
+    elif measure is setup.capability:
+        yield [
             capability_row(run, version, measure, setup.answers.get(run.prompt_id))
             for run in plan.todo
         ]
-    return _perplexity_rows(experiment, plan, setup, batch_size)
+    else:
+        yield from _perplexity_rows(experiment, plan, setup, batch_size)
 
 
 def _plans(
@@ -295,7 +302,8 @@ def _measure(
     spec_path: Path, runs_dir: Path | None, perplexity: bool, batch_size: int
 ) -> int:
     """Measure what is left of the experiment, holding its folder's lock, a
-    measure after another, each saved in one file; the exit status."""
+    measure after another, each saved in one file, or perplexity in one
+    per chunk of replies; the exit status."""
     experiment = judged_runs(spec_path, runs_dir)  # as saved now, under the lock
     setup = read_setup(experiment, perplexity)
     plans, newest = _plans(experiment, setup)
@@ -310,14 +318,14 @@ def _measure(
     for plan in plans:
         if not plan.todo:
             continue
-        made = _rows(experiment, plan, setup, batch_size)
-        path = write_rows(experiment.folder, made, runs)
-        newest |= {row.key: row for row in made}
-        line = f"{plan.measure.scorer}: {counted(len(made), 'reply', 'replies')}"
-        if errors := sorted({row.error for row in made if row.status != "ok"}):
-            failed = sum(row.status != "ok" for row in made)
-            line += f", {failed:,} failed: {'; '.join(errors)}"
-        print(f"{line}; saved {path.parent.name}/{path.name}")
+        for made in _rows(experiment, plan, setup, batch_size):
+            path = write_rows(experiment.folder, made, runs)
+            newest |= {row.key: row for row in made}
+            line = f"{plan.measure.scorer}: {counted(len(made), 'reply', 'replies')}"
+            if errors := sorted({row.error for row in made if row.status != "ok"}):
+                failed = sum(row.status != "ok" for row in made)
+                line += f", {failed:,} failed: {'; '.join(errors)}"
+            print(f"{line}; saved {path.parent.name}/{path.name}")
     lines = summary_lines(experiment, setup.measures, newest, setup.panel)
     print("\n" + "\n".join(lines))
     return 0

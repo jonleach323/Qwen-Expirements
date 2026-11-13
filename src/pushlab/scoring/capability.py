@@ -3,18 +3,9 @@
 The capability set, prompts/capability100.jsonl, asks 100 short questions
 with exact answers: 40 arithmetic, 30 facts and 30 simple reasoning, each
 ending with the form its answer takes: "Answer with the number only.",
-"Answer with one word only." or "Answer with the name only." A prompt
-set's lines hold exactly prompt_id, version and prompt, so the answers live
-beside it, in <set>-answers.jsonl, a line per prompt:
-
-    {"prompt_id": "capability100-001", "version": 1, "kind": "arithmetic",
-     "type": "number", "answer": "123", "also": [], "units": [],
-     "check": "48 + 75"}
-
-kind is arithmetic, fact or reasoning, and type number or text. also lists
-other accepted spellings; units, the spellings of a number's unit; check,
-how the answer was checked: the expression that gives it, or one line on
-why it is right.
+"Answer with one word only." or "Answer with the name only." Their answers
+live beside it, in prompts/capability100-answers.jsonl, which
+pushlab.scoring.answers reads as an Answer per prompt.
 
 grade marks a reply as a person marking a test would. Version 1 of the
 rules (CAPABILITY_VERSION), which a change that moves any grade must raise:
@@ -24,8 +15,12 @@ rules (CAPABILITY_VERSION), which a change that moves any grade must raise:
   "answer:" or "answer is" with anything after it (a colon after "answer
   is" aside); with none, the reply's first line that holds anything. Lines
   break as everywhere in pushlab (pushlab.analysis.markers.LINE_BREAK). A
-  number answer then takes that part's last number or, if it has none, the
-  reply's only number (one value, however often it is written).
+  number answer then takes the last of that part's numbers that its
+  question does not give (all of them, if it gives every one), the last
+  written with one of the answer's units if any is; with no number there,
+  the reply's only number, taken the same way (one value, however often it
+  is written). So "He will be 16 in 3 years." gives 16, not the question's
+  3, and "150 minutes (2.5 hours)" gives 150 when the unit is minutes.
 - a number is written in the digits 0 to 9, with thousands commas or none,
   with a decimal part or none, after "-" or "−" for minus. Digits straight
   after a letter, a digit or "." belong to a word or another number, so
@@ -43,14 +38,11 @@ rules (CAPABILITY_VERSION), which a change that moves any grade must raise:
 A test pins version 1 (tests/unit/test_capability.py).
 """
 
-import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
 
 from pushlab.analysis.markers import LINE_BREAK
-from pushlab.prompts import PromptSet
 
 # Raised whenever a change to the rules would move a grade.
 CAPABILITY_VERSION = 1
@@ -58,17 +50,6 @@ KINDS = ("arithmetic", "fact", "reasoning")
 TYPES = ("number", "text")
 # A grade's labels.
 LABELS = ("correct", "wrong", "no_answer")
-# An answers file's keys, in the order its lines give them.
-ANSWER_KEYS = (
-    "prompt_id",
-    "version",
-    "kind",
-    "type",
-    "answer",
-    "also",
-    "units",
-    "check",
-)
 ARTICLES = ("the", "a", "an")
 
 # Straight, curly, low, angle and corner quotes, and the backtick.
@@ -84,7 +65,8 @@ _NUMBER = (
 @dataclass(frozen=True)
 class Answer:
     """A prompt's answer: its kind and type, the answer and other accepted
-    spellings, a number's unit's spellings, and how it was checked.
+    spellings, a number's unit's spellings, how it was checked, and the
+    numbers its question gives, written plainly (given_numbers).
 
     ValueError when made with a kind or type it does not know, an empty
     answer or check, also or units that are not tuples of spellings, units
@@ -103,6 +85,7 @@ class Answer:
     also: tuple[str, ...]
     units: tuple[str, ...]
     check: str
+    given: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Refuse an answer the grader could not use."""
@@ -128,6 +111,13 @@ class Answer:
                 )
         if not normalize(self.answer):
             raise ValueError(f"answer {self.answer!r} is empty once normalized")
+        if not isinstance(self.given, tuple) or not all(
+            isinstance(number, str) and _value(number) == number
+            for number in self.given
+        ):
+            raise ValueError(
+                f"given must hold numbers written plainly, not {self.given!r}"
+            )
         if self.type == "text":
             if self.units:
                 raise ValueError(f"a text answer has no units, not {self.units!r}")
@@ -160,92 +150,6 @@ class Grade:
     extracted: str | None
 
 
-def answers_path(prompt_set_path: Path) -> Path:
-    """The answers file of a prompt set: <set>-answers.jsonl beside it.
-
-    Example:
-        >>> answers_path(Path("prompts/capability100.jsonl")).name
-        'capability100-answers.jsonl'
-    """
-    path = Path(prompt_set_path)
-    return path.with_name(f"{path.stem}-answers.jsonl")
-
-
-def read_answers(path: Path, prompt_set: PromptSet) -> dict[str, Answer]:
-    """Each prompt's answer, from an answers file, in the prompt set's order.
-
-    Every line needs exactly the keys of ANSWER_KEYS, the prompt set's
-    version, a prompt of the set that no line before it answered, and an
-    answer Answer accepts; every prompt of the set needs its line.
-    ValueError names the line of each problem, or the prompts unanswered.
-
-    Example:
-        >>> from pushlab.prompts import PROMPTS_DIR, read_prompt_set
-        >>> path = PROMPTS_DIR / "capability100.jsonl"
-        >>> answers = read_answers(answers_path(path), read_prompt_set(path))
-        >>> len(answers), answers["capability100-001"].kind
-        (100, 'arithmetic')
-    """
-    path = Path(path)
-    try:
-        text = path.read_bytes().decode("utf-8")
-    except OSError as error:
-        raise ValueError(f"cannot read the answers file {path}: {error}") from None
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{path} is not UTF-8 text: {error}") from None
-    # Only a line feed ends a line, as in a prompt set (pushlab.prompts).
-    lines = [line.removesuffix("\r") for line in text.split("\n")]
-    if lines[-1] == "":
-        lines.pop()  # the file's final line feed
-    answers: dict[str, Answer] = {}
-    lines_of: dict[str, int] = {}
-    for number, line in enumerate(lines, start=1):
-        where = f"{path}, line {number}"
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{where} is not JSON: {error}") from None
-        if not isinstance(record, dict) or set(record) != set(ANSWER_KEYS):
-            raise ValueError(f"{where} needs exactly {', '.join(ANSWER_KEYS)}")
-        prompt_id = record["prompt_id"]
-        if not isinstance(prompt_id, str) or prompt_id not in prompt_set.prompt_ids:
-            raise ValueError(f"{where}: {prompt_id!r} is not a prompt of the set")
-        if prompt_id in lines_of:
-            raise ValueError(
-                f"{where} answers {prompt_id} again, after line {lines_of[prompt_id]}"
-            )
-        version = record["version"]
-        if type(version) is not int or version != prompt_set.version:
-            raise ValueError(
-                f"{where}: version must be the prompt set's, "
-                f"{prompt_set.version}, not {version!r}"
-            )
-        for key in ("also", "units"):
-            if not isinstance(record[key], list):
-                raise ValueError(
-                    f"{where}: {key} must be a list of spellings, not {record[key]!r}"
-                )
-        try:
-            answers[prompt_id] = Answer(
-                prompt_id,
-                record["kind"],
-                record["type"],
-                record["answer"],
-                tuple(record["also"]),
-                tuple(record["units"]),
-                record["check"],
-            )
-        except ValueError as error:
-            raise ValueError(f"{where}: {error}") from None
-        lines_of[prompt_id] = number
-    if missing := [key for key in prompt_set.prompt_ids if key not in answers]:
-        listed = ", ".join(missing[:3])
-        if len(missing) > 3:
-            listed += f" and {len(missing) - 3} more"
-        raise ValueError(f"{path} has no answer for {listed}")
-    return {prompt_id: answers[prompt_id] for prompt_id in prompt_set.prompt_ids}
-
-
 def normalize(text: str) -> str:
     """text as the grader compares it: NFKC, lower case, quotes and Markdown
     bold dropped, spaces trimmed and collapsed, one final full stop dropped.
@@ -275,13 +179,16 @@ def extract(reply: str, answer: Answer) -> str | None:
         '391'
         >>> extract("17 × 23 = 391", product)
         '391'
+        >>> age = Answer("q-2", "reasoning", "number", "16", (), (), "13 + 3", ("3",))
+        >>> extract("He will be 16 in 3 years.", age)  # not the question's 3
+        '16'
     """
     part = _part(reply)
     if answer.type == "text":
         return None if part is None else normalize(part)
     if part is not None and (numbers := _numbers(normalize(part), answer.units)):
-        return numbers[-1]
-    found = set(_numbers(normalize(reply), answer.units))
+        return _taken(numbers, answer.given)[-1]
+    found = set(_taken(_numbers(normalize(reply), answer.units), answer.given))
     return found.pop() if len(found) == 1 else None
 
 
@@ -329,15 +236,39 @@ def _first_line(text: str) -> str | None:
     return None
 
 
-def _numbers(text: str, units: tuple[str, ...]) -> list[str]:
-    """The numbers of a normalized text, written plainly, in order; a unit
-    of units straight after a number goes with it."""
+def _numbers(text: str, units: tuple[str, ...]) -> list[tuple[str, bool]]:
+    """The numbers of a normalized text, written plainly, in order, each with
+    whether a unit of units comes straight after it, which goes with it."""
     spellings = sorted({normalize(unit) for unit in units}, key=len, reverse=True)
     pattern = _NUMBER
     if spellings:
         either = "|".join(map(re.escape, spellings))
-        pattern += rf"(?:\s*(?:{either})(?![A-Za-z0-9]))?"
-    return [_plain(match) for match in re.finditer(pattern, text)]
+        pattern += rf"(\s*(?:{either})(?![A-Za-z0-9]))?"
+    return [
+        (_plain(match), bool(spellings) and match.group(4) is not None)
+        for match in re.finditer(pattern, text)
+    ]
+
+
+def _taken(numbers: list[tuple[str, bool]], given: tuple[str, ...]) -> list[str]:
+    """Of numbers, those an answer may be: those not given by the question,
+    or all if it gives every one; of those, the ones with a unit, if any."""
+    fresh = [number for number in numbers if number[0] not in given] or numbers
+    with_unit = [number for number in fresh if number[1]]
+    return [plain for plain, _ in with_unit or fresh]
+
+
+def given_numbers(question: str, units: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """The numbers a question gives, written plainly, each once, in order; a
+    unit of units straight after a number goes with it.
+
+    Example:
+        >>> given_numbers("A bus leaves at 09:00 and arrives at 11:30.")
+        ('9', '0', '11', '30')
+    """
+    return tuple(
+        dict.fromkeys(plain for plain, _ in _numbers(normalize(question), units))
+    )
 
 
 def _plain(match: re.Match[str]) -> str:

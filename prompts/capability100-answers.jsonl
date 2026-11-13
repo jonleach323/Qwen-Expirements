@@ -59,7 +59,7 @@
 {"prompt_id": "capability100-059", "version": 1, "kind": "fact", "type": "text", "answer": "watt", "also": ["watts"], "units": [], "check": "The watt (W), one joule per second, is the SI unit of power."}
 {"prompt_id": "capability100-060", "version": 1, "kind": "fact", "type": "text", "answer": "joule", "also": ["joules"], "units": [], "check": "The joule (J) is the SI unit of energy."}
 {"prompt_id": "capability100-061", "version": 1, "kind": "fact", "type": "text", "answer": "hertz", "also": [], "units": [], "check": "The hertz (Hz), one cycle per second, is the SI unit of frequency."}
-{"prompt_id": "capability100-062", "version": 1, "kind": "fact", "type": "text", "answer": "ampere", "also": ["amperes", "amp", "amps"], "units": [], "check": "The ampere (A), amp for short, is the SI base unit of electric current."}
+{"prompt_id": "capability100-062", "version": 1, "kind": "fact", "type": "text", "answer": "ampere", "also": ["amperes", "amp", "amps", "ampère", "ampères"], "units": [], "check": "The ampere (A), amp for short and ampère in French, is the SI base unit of electric current."}
 {"prompt_id": "capability100-063", "version": 1, "kind": "fact", "type": "text", "answer": "ohm", "also": ["ohms"], "units": [], "check": "The ohm (Ω) is the SI unit of electrical resistance."}
 {"prompt_id": "capability100-064", "version": 1, "kind": "fact", "type": "text", "answer": "Jane Austen", "also": ["Austen"], "units": [], "check": "Jane Austen wrote Pride and Prejudice."}
 {"prompt_id": "capability100-065", "version": 1, "kind": "fact", "type": "text", "answer": "Herman Melville", "also": ["Melville"], "units": [], "check": "Herman Melville wrote Moby-Dick."}
@@ -86,11 +86,11 @@
 {"prompt_id": "capability100-086", "version": 1, "kind": "reasoning", "type": "text", "answer": "Wednesday", "also": [], "units": [], "check": "Monday, then Tuesday yesterday, makes today Wednesday."}
 {"prompt_id": "capability100-087", "version": 1, "kind": "reasoning", "type": "number", "answer": "6", "also": [], "units": [], "check": "p, l, a, n, e, t: six letters."}
 {"prompt_id": "capability100-088", "version": 1, "kind": "reasoning", "type": "number", "answer": "3", "also": [], "units": [], "check": "Apple, banana and pear are fruits; chair and lamp are not."}
-{"prompt_id": "capability100-089", "version": 1, "kind": "reasoning", "type": "number", "answer": "3", "also": [], "units": [], "check": "8, 14 and 20 are even; 3 and 11 are odd."}
+{"prompt_id": "capability100-089", "version": 1, "kind": "reasoning", "type": "number", "answer": "3", "also": [], "units": [], "check": "8, 14 and 20 are even; 5 and 11 are odd."}
 {"prompt_id": "capability100-090", "version": 1, "kind": "reasoning", "type": "number", "answer": "7", "also": [], "units": [], "check": "A triangle has 3 sides and a square 4: 3 + 4 = 7."}
 {"prompt_id": "capability100-091", "version": 1, "kind": "reasoning", "type": "number", "answer": "6", "also": [], "units": [], "check": "Birds, sing, in, the, early, morning: six words."}
 {"prompt_id": "capability100-092", "version": 1, "kind": "reasoning", "type": "number", "answer": "21", "also": [], "units": ["days"], "check": "A week has 7 days: 3 × 7 = 21."}
-{"prompt_id": "capability100-093", "version": 1, "kind": "reasoning", "type": "number", "answer": "4", "also": [], "units": [], "check": "Cat, horse, owl and tiger are animals; spoon and cup are not."}
+{"prompt_id": "capability100-093", "version": 1, "kind": "reasoning", "type": "number", "answer": "4", "also": [], "units": [], "check": "Cat, horse, goat and tiger are animals; spoon and cup are not."}
 {"prompt_id": "capability100-094", "version": 1, "kind": "reasoning", "type": "number", "answer": "7", "also": [], "units": [], "check": "Mia keeps 12 - 5 = 7 apples."}
 {"prompt_id": "capability100-095", "version": 1, "kind": "reasoning", "type": "number", "answer": "24", "also": [], "units": [], "check": "Four boxes of 6 eggs hold 4 × 6 = 24 eggs."}
 {"prompt_id": "capability100-096", "version": 1, "kind": "reasoning", "type": "number", "answer": "150", "also": [], "units": ["minutes", "minute", "mins", "min"], "check": "Two and a half hours: 2 × 60 + 30 = 150 minutes."}

@@ -49,16 +49,24 @@ until checked against the judge and the owner's labels.
 arithmetic questions with whole-number answers, 30 facts and 30 simple
 reasoning questions, each ending with its form ("Answer with the number
 only.", "one word only" or "the name only"), written new for this set.
-Their answers are in `prompts/capability100-answers.jsonl` beside it, as a
-prompt set holds only its prompts: each answer's kind and type, other
-accepted spellings, a number's units, and a check (an arithmetic
-expression, which a test evaluates without `eval`, or why a fact is
-right). A second agent answered every question from the question alone
-and compared with the key. The grader (`pushlab.scoring.capability`,
+Their answers are in `prompts/capability100-answers.jsonl` beside it
+(`pushlab.scoring.answers`), as a prompt set holds only its prompts: each
+answer's kind and type, other accepted spellings, a number's units, and a
+check (an arithmetic expression, which a test evaluates without `eval`, or
+why a fact is right). A second agent answered every question from the
+question alone and compared with the key: every answer was right; it
+found a missing spelling ("ampère"), a question whose answer hung on
+whether an owl counts as an animal (now a goat), and sentence replies that
+repeat the question's numbers, such as "He will be 16 in 3 years.", which
+the grader then marked wrong. The grader (`pushlab.scoring.capability`,
 version 1) reads the part after the last "answer:" or "answer is", else
-the first line; compares numbers by value, without thousands commas or
-units, and texts without case, spaces, quotes, bold or a final full stop;
-and marks a reply strict when it is the answer alone.
+the first line. A number answer takes the last of that part's numbers that
+the question does not give (all, if it gives every one), the last written
+in the answer's unit if any is, so that reply gives 16 and "150 minutes
+(2.5 hours)" gives 150; no answer is a number its own question gives, as a
+test checks. Numbers compare by value, without thousands commas or units,
+and texts without case, spaces, quotes, bold or a final full stop; a
+reply is strict when it is the answer alone.
 
 **Coherence without a judge** (`pushlab.scoring.text_measures`, version
 1): a reply is read as its words, lowercase, or, when most of its letters
@@ -77,8 +85,14 @@ log-probabilities, which the tests check on both tiny models.
 0021): scorers `repetition`, `word_variety` and, when the prompt set has
 an answers file, `capability` (judges `pushlab:text` and
 `pushlab:exact-match`); with `--perplexity`, a GPU job the owner runs,
-`perplexity` (judge `model:<model>@<revision>`). A rerun measures only
-what is new.
+`perplexity` (judge `model:<model>@<revision>`, version 1), saved a chunk
+of 256 replies at a time, so a stop keeps what was scored. A rerun
+measures only what is new; a reply a measure failed on, such as one with
+no word, counts as measured, as it would fail the same way again.
+Capability and perplexity need the prompt set the replies were made from,
+and perplexity the model download they were made with; either changed is
+refused. It ends with each condition's measures, random controls on lines
+of their own.
 
 **`pushlab ladder`** (`pushlab.runs.ladder`) writes an experiment file:
 one condition per unit of the units file (`pushlab.units.ladder_units`: a

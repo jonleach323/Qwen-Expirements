@@ -86,11 +86,11 @@
 {"prompt_id": "capability100-086", "version": 1, "prompt": "If the day before yesterday was Monday, what day of the week is today? Answer with one word only."}
 {"prompt_id": "capability100-087", "version": 1, "prompt": "How many letters are in the word \"planet\"? Answer with the number only."}
 {"prompt_id": "capability100-088", "version": 1, "prompt": "How many of these words name fruits: apple, chair, banana, pear, lamp? Answer with the number only."}
-{"prompt_id": "capability100-089", "version": 1, "prompt": "How many even numbers are in this list: 3, 8, 11, 14, 20? Answer with the number only."}
+{"prompt_id": "capability100-089", "version": 1, "prompt": "How many even numbers are in this list: 5, 8, 11, 14, 20? Answer with the number only."}
 {"prompt_id": "capability100-090", "version": 1, "prompt": "How many sides do a triangle and a square have altogether? Answer with the number only."}
 {"prompt_id": "capability100-091", "version": 1, "prompt": "How many words are in the sentence \"Birds sing in the early morning\"? Answer with the number only."}
 {"prompt_id": "capability100-092", "version": 1, "prompt": "How many days are there in three weeks? Answer with the number only."}
-{"prompt_id": "capability100-093", "version": 1, "prompt": "How many of these words name animals: cat, spoon, horse, cup, owl, tiger? Answer with the number only."}
+{"prompt_id": "capability100-093", "version": 1, "prompt": "How many of these words name animals: cat, spoon, horse, cup, goat, tiger? Answer with the number only."}
 {"prompt_id": "capability100-094", "version": 1, "prompt": "Mia has 12 apples and gives 5 of them to a friend. How many apples does Mia have left? Answer with the number only."}
 {"prompt_id": "capability100-095", "version": 1, "prompt": "A box holds 6 eggs. How many eggs are there in 4 full boxes? Answer with the number only."}
 {"prompt_id": "capability100-096", "version": 1, "prompt": "A bus leaves at 09:00 and arrives at 11:30 the same morning. How many minutes does the trip take? Answer with the number only."}

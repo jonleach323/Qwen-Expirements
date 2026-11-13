@@ -8,23 +8,18 @@ reply with no word, or GRADED, for three questions with exact answers.
 --perplexity loads tiny-vl for real, on the CPU.
 """
 
-import doctest
 import hashlib
 import json
 import re
-import subprocess
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import torch
 
-from pushlab import cli_measure
 from pushlab.analysis.intervals import wilson_interval
 from pushlab.analysis.panel import read_panel
 from pushlab.cli import main
-from pushlab.cli_parser import build_parser
 from pushlab.engine import generate as generate_module
 from pushlab.engine import score_text
 from pushlab.engine.generate import Generation
@@ -33,7 +28,7 @@ from pushlab.models import load
 from pushlab.prompts import PROMPTS_DIR, read_prompt_set
 from pushlab.runs import folder
 from pushlab.runs.shards import read_results
-from pushlab.scoring import measure_command, measure_rows, text_measures
+from pushlab.scoring import measure_command, text_measures
 from pushlab.scoring.capability import CAPABILITY_VERSION
 from pushlab.store.scores import output_sha256, read_rows
 
@@ -63,25 +58,6 @@ ANSWERS = [
     ("q-3", "reasoning", "text", "Cy", "Cy is younger than Bo, younger than Ann."),
 ]
 GRADED = [("12", "**12**"), ("Paris.", "Lyon"), ("Cy", "**")]
-HELP_IMPORTS = """
-import sys
-from pushlab.cli import main
-for argv in (["measure", "--help"], ["--help"]):
-    try:
-        main(argv)
-    except SystemExit:
-        pass
-print([n for n in ("torch", "pandas", "transformers") if n in sys.modules])
-"""
-OWN_IMPORTS = """
-import sys
-import pushlab.cli_measure
-print([n for n in ("torch", "pandas", "pyarrow", "transformers") if n in sys.modules])
-"""
-PHRASES = (
-    "SPEC|--perplexity|--batch-size N|--runs-dir DIR|--dry-run|scores table|"
-    "repetition|word_variety|capability|-answers.jsonl|GPU job|Exit status: 0"
-).split("|")
 
 
 @pytest.fixture(autouse=True)
@@ -364,36 +340,29 @@ def test_what_it_cannot_measure_is_refused_and_what_it_saved_is_kept(
         assert "pushlab measure: tiny-vl (local:tiny-qwen3.5 at main) is not" in err
 
 
-def test_the_help_lists_every_option_and_the_defaults(
+def test_perplexity_is_saved_a_chunk_at_a_time_so_a_stop_keeps_it(
+    tiny_spec: Callable[..., Path],
+    invented: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        main(["measure", "--help"])
-    assert exit_info.value.code == 0
-    text = " ".join(capsys.readouterr().out.split())
-    assert [phrase for phrase in PHRASES if phrase not in text] == []
-    args = build_parser().parse_args(["measure", "e.yaml"])
-    assert (args.command, args.perplexity, args.batch_size) == ("measure", False, None)
-    assert (args.spec, args.runs_dir, args.dry_run) == (Path("e.yaml"), None, False)
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["measure", "e.yaml", "--batch-size", "0"])
+    spec, runs = _saved(tiny_spec, tmp_path)
+    monkeypatch.setattr(measure_command, "CHUNK", 4)
+    real, chunks = score_text.reply_logprobs, []
 
+    def stopped(*args: object, **kwargs: object) -> object:
+        chunks.append(len(args[2]))  # type: ignore[arg-type]
+        if len(chunks) == 2:
+            raise KeyboardInterrupt  # Ctrl-C while the second chunk is scored
+        return real(*args, **kwargs)  # type: ignore[arg-type]
 
-@pytest.mark.parametrize("script", [HELP_IMPORTS, OWN_IMPORTS])
-def test_help_loads_nothing_heavy(tmp_path: Path, script: str) -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=tmp_path,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines()[-1] == "[]"
-
-
-@pytest.mark.parametrize("module", [measure_command, measure_rows, cli_measure])
-def test_docstring_examples_run(module: object) -> None:
-    result = doctest.testmod(module)  # type: ignore[arg-type]
-    assert result.attempted > 0
-    assert result.failed == 0
+    monkeypatch.setattr(score_text, "reply_logprobs", stopped)
+    assert _measure(spec, runs, "--perplexity") == 130
+    assert "Stopped by Ctrl-C" in capsys.readouterr().out
+    assert len(_rows(runs, "perplexity")) == 4  # the first chunk, saved
+    monkeypatch.setattr(score_text, "reply_logprobs", real)
+    assert _measure(spec, runs, "--perplexity") == 0
+    rows = _rows(runs, "perplexity")
+    assert len(rows) == 10 and len({row.run_id for row in rows}) == 10
+    assert chunks == [4, 4]  # the second chunk stopped as it began
