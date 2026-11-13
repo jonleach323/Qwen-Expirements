@@ -1,12 +1,12 @@
 """Exact-match grading of short answers (pushlab.scoring.capability): the
-grader on fixed replies.
+grader's labels on fixed replies, and the answers it takes.
 
-test_answers.py checks the answers file read beside a prompt set, and
+test_capability_reading.py checks which part of a reply is read,
+test_answers.py the answers file read beside a prompt set, and
 test_capability_set.py the capability set itself and its answers.
 """
 
 import doctest
-from dataclasses import replace
 
 import pytest
 
@@ -16,7 +16,6 @@ from pushlab.scoring.capability import (
     Answer,
     Grade,
     extract,
-    given_numbers,
     grade,
     normalize,
 )
@@ -116,80 +115,6 @@ def test_a_numbers_unit_is_dropped_with_it() -> None:
     assert _graded("6 litres per 100 km.", _number("6")).label == "wrong"
 
 
-# Sara is 9 and her brother 4 years older: how old will he be in 3 years?
-AGES = Answer(
-    "q-4",
-    "reasoning",
-    "number",
-    "16",
-    (),
-    ("years old", "years"),
-    "9 + 4 + 3",
-    ("9", "4", "3"),
-)
-# A trip from 09:00 to 11:30, in minutes.
-TRIP = Answer(
-    "q-5",
-    "reasoning",
-    "number",
-    "150",
-    (),
-    ("minutes", "min"),
-    "2 * 60 + 30",
-    ("9", "0", "11", "30"),
-)
-
-
-@pytest.mark.parametrize(
-    ("reply", "answer", "label"),
-    [
-        ("Her brother will be 16 in 3 years.", AGES, "correct"),
-        ("In 3 years he will be 16 years old.", AGES, "correct"),
-        ("He is 13 now, so 16 in 3 years.", AGES, "correct"),
-        ("He will be 13 in 3 years.", AGES, "wrong"),
-        ("In 3 years.", AGES, "wrong"),  # only the question's: its last
-        ("150 minutes, from 09:00 to 11:30.", TRIP, "correct"),
-        # A number in the answer's unit wins over one in another unit.
-        ("150 minutes (2.5 hours).", TRIP, "correct"),
-        ("2.5 hours, or 150 minutes.", TRIP, "correct"),
-        ("2.5 hours.", TRIP, "wrong"),
-        ("391 (17 × 23)", replace(PRODUCT, given=("17", "23")), "correct"),
-        ("391 (17 × 23)", PRODUCT, "wrong"),  # with no question, its last
-    ],
-)
-def test_the_questions_own_numbers_are_passed_over(
-    reply: str, answer: Answer, label: str
-) -> None:
-    assert _graded(reply, answer).label == label
-
-
-def test_an_answer_the_question_gives_is_read_when_nothing_else_is() -> None:
-    # When every number of the answer's line is the question's, its last is
-    # taken, so an answer may still be one of them.
-    five = Answer("q-6", "arithmetic", "number", "5", (), (), "5 * 1", ("5", "1"))
-    assert _graded("5", five) == Grade("correct", True, "5")
-    assert _graded("5 × 1 = 5", five) == Grade("correct", False, "5")
-    assert _graded("5 × 1 = 6", five).label == "wrong"
-
-
-def test_the_fallback_passes_over_the_questions_numbers_too() -> None:
-    reply = "Let me see.\nShe is 9 and he is 4 years older, so 16 in 3 years."
-    assert extract(reply, AGES) == "16"
-    assert extract(reply, replace(AGES, given=())) is None  # 9, 4, 16 and 3
-
-
-def test_given_numbers_are_a_questions_numbers_each_once() -> None:
-    question = "Sara is 9 years old, and her brother is 4 years older than her."
-    assert given_numbers(f"{question} How old will he be in 3 years?") == (
-        "9",
-        "4",
-        "3",
-    )
-    assert given_numbers("What is 12 + 12?") == ("12",)
-    assert given_numbers("6 litres per 100 km", ("litres per 100 km",)) == ("6",)
-    assert given_numbers("No number here.") == ()
-
-
 @pytest.mark.parametrize(
     ("reply", "label", "strict"),
     [
@@ -260,35 +185,10 @@ def test_a_leading_article_is_dropped_from_a_text_answer() -> None:
         ("**  **", CANBERRA),
         ("I do not know.", PRODUCT),
         ("Seventeen times twenty-three.", PRODUCT),
-        # No number on the answer's line, and more than one in the reply.
-        ("Let me see.\n17 × 23 is 391.", PRODUCT),
     ],
 )
 def test_nothing_to_compare_is_no_answer(reply: str, answer: Answer) -> None:
     assert _graded(reply, answer) == Grade("no_answer", False, None)
-
-
-def test_a_line_without_a_number_falls_back_on_the_replys_only_number() -> None:
-    assert extract("Let me see.\nIt is 391.", PRODUCT) == "391"
-    # One value, however often it is written, is still one number.
-    assert extract("Here it is.\n391, yes, 391.0.", PRODUCT) == "391"
-
-
-def test_the_last_answer_marker_wins() -> None:
-    reply = "The answer is 390. Wait, no: the answer is 391."
-    assert _graded(reply, PRODUCT) == Grade("correct", False, "391")
-    assert extract("The answer is:\n\n391", PRODUCT) == "391"
-    assert extract("**Answer**: Canberra", CANBERRA) == "canberra"
-    assert extract("My answer is: Canberra", CANBERRA) == "canberra"
-    # A marker with nothing after it gives way to the one before it.
-    assert extract("The answer is 391, my final answer:", PRODUCT) == "391"
-    # "answers:" is no marker: "answer" must come before ":" or " is".
-    assert extract("Paris answers: Canberra", CANBERRA) == "paris answers: canberra"
-
-
-def test_the_first_line_that_holds_anything_is_the_answers() -> None:
-    assert extract("\n\n```\nCanberra\n```", CANBERRA) == "canberra"
-    assert extract("Canberra\r\nSydney", CANBERRA) == "canberra"
 
 
 @pytest.mark.parametrize(

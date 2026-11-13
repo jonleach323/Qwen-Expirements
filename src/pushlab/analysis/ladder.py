@@ -10,17 +10,18 @@ answered, and its two verdicts, and finds:
   with no verdict is skipped);
 - the collapse dose: the lowest dose at which the replies' mean coherence
   falls below the panel's coherence_below (a dose with no score skipped).
-A dose's share of speaks_as has a Wilson interval
-(pushlab.analysis.intervals). Each dose found has a percentile interval
-from a bootstrap: the analysis worked out again on panel.resamples
-resamples of the prompts, drawn with replacement with
-random.Random(panel.seed). A resample keeps each prompt's replies at every
-dose together, as a ladder asks every dose the same prompts, so it is
-paired. A resample that reaches no dose counts beyond the ladder's top, so
-an interval's high end can be open (dose_interval). The same resamples
-give each dose's mean coherence its interval. dose_table, estimate_text
-and window_text put the findings in words, as pushlab doses prints them.
-Nothing here reads or writes a file: pushlab.analysis.doses_command does.
+Each dose found has a percentile interval from a bootstrap: the analysis
+worked out again on panel.resamples resamples of the prompts, drawn with
+replacement with random.Random(panel.seed). A resample keeps each prompt's
+replies at every dose, and under every seed, together, as a ladder asks
+every dose the same prompts, so it is paired. A resample that reaches no
+dose counts beyond the ladder's top, so an interval's high end can be open
+(dose_interval). The same resamples give each dose's mean coherence its
+interval. A dose's share of speaks_as has Wilson's interval
+(pushlab.analysis.intervals) when each prompt has one verdict there; with
+several, as with several seeds, a prompt's replies are not independent, so
+its interval comes from the same resamples too. pushlab.analysis.dose_text
+puts the findings in words; nothing here reads or writes a file.
 """
 
 import math
@@ -60,7 +61,8 @@ class LadderPoint:
 class DoseStats:
     """What a unit's replies at one dose show: how many there are; n with a
     speaks_as verdict and k of them speaking as the persona, their rate and
-    its Wilson interval, None without a verdict; coherence_n with a score,
+    its interval (Wilson's, or the bootstrap's when a prompt has several
+    verdicts), None without a verdict; coherence_n with a score,
     their mean and its bootstrap interval, and the share of them below the
     panel's coherence_below, None without a score."""
 
@@ -243,6 +245,7 @@ def analyze_unit(points: Sequence[LadderPoint], panel: Panel) -> UnitDoses:
     working: list[float | None] = []
     collapse: list[float | None] = []
     means: list[list[float]] = [[] for _ in doses]
+    rates: list[list[float]] = [[] for _ in doses]
     for _ in range(panel.resamples):
         weights = [0] * size
         for chosen in draw.choices(range(size), k=size):
@@ -250,21 +253,27 @@ def analyze_unit(points: Sequence[LadderPoint], panel: Panel) -> UnitDoses:
         totals = _totals(weights, columns)
         working.append(_working(doses, totals, panel))
         collapse.append(_collapse(doses, totals, panel))
-        for place, (_, _, count, total) in enumerate(totals):
-            if count:  # a resample may hold no score at a dose
+        for place, (n, k, count, total) in enumerate(totals):
+            if n:  # a resample may hold no verdict or score at a dose
+                rates[place].append(k / n)
+            if count:
                 means[place].append(total / count)
     stats = {}
     for place, (dose, (n, k, count, total)) in enumerate(zip(doses, full, strict=True)):
-        mean_interval = None
+        mean_interval = rate_interval = None
         if means[place]:
             mean_interval = percentile_interval(means[place], panel.confidence)
+        if n and max(columns[place][0]) > 1:  # a prompt with several verdicts
+            rate_interval = percentile_interval(rates[place], panel.confidence)
+        elif n:
+            rate_interval = wilson_interval(k, n, panel.confidence)
         stats[dose] = DoseStats(
             dose,
             replies[place],
             n,
             k,
             k / n if n else None,
-            wilson_interval(k, n, panel.confidence) if n else None,
+            rate_interval,
             count,
             total / count if count else None,
             mean_interval,
@@ -283,117 +292,3 @@ def _estimate(
     """A dose found on all the prompts, with the interval of the resamples'."""
     low, high = dose_interval(found, panel.confidence)
     return DoseEstimate(dose, low, high, found.count(None))
-
-
-def dose_text(dose: float | None) -> str:
-    """A dose as a ladder's labels write it, 0 for no push; None, past the
-    ladder's top dose.
-
-    Example:
-        >>> dose_text(1.0), dose_text(0.0), dose_text(None)
-        ('1.0', '0', 'beyond the ladder')
-    """
-    if dose is None:
-        return "beyond the ladder"
-    return "0" if dose == 0 else repr(float(dose))
-
-
-def estimate_text(found: DoseEstimate, confidence: float) -> str:
-    """A dose found and its interval, in words.
-
-    Example:
-        >>> estimate_text(DoseEstimate(1.0, 0.75, None, 120), 0.95)
-        '1.0 (95% interval 0.75 to beyond the ladder)'
-        >>> estimate_text(DoseEstimate(None, None, None, 2000), 0.95)
-        'not within the ladder (95% interval beyond the ladder)'
-    """
-    head = "not within the ladder" if found.dose is None else dose_text(found.dose)
-    span = dose_text(found.low)
-    if found.low != found.high:
-        span += f" to {dose_text(found.high)}"
-    return f"{head} ({round(confidence * 100, 6):g}% interval {span})"
-
-
-def short_text(found: DoseEstimate) -> str:
-    """A dose found and its interval, briefly.
-
-    Example:
-        >>> short_text(DoseEstimate(0.5, 0.25, None, 70))
-        '0.5 [0.25, beyond]'
-    """
-    low, high = (
-        dose_text(d).replace(" the ladder", "") for d in (found.low, found.high)
-    )
-    return f"{'none' if found.dose is None else dose_text(found.dose)} [{low}, {high}]"
-
-
-def window_text(found: UnitDoses) -> str:
-    """The doses from the working dose to below the collapse dose, in words.
-
-    Example:
-        >>> doses = DoseEstimate(0.5, 0.5, 0.75, 0), DoseEstimate(1.0, 1.0, 1.0, 0)
-        >>> window_text(UnitDoses({}, *doses))
-        'from 0.5 to below 1.0'
-    """
-    working, collapse = found.working.dose, found.collapse.dose
-    if working is None:
-        return "none: it does not work within the ladder"
-    if collapse is None:
-        return f"from {dose_text(working)} to the ladder's top, and maybe beyond"
-    if working < collapse:
-        return f"from {dose_text(working)} to below {dose_text(collapse)}"
-    return f"none: it collapses at {dose_text(collapse)}, by the dose it works at"
-
-
-def _number(value: float | None, places: int) -> str:
-    return "-" if value is None else f"{value:.{places}f}"
-
-
-def _pair(pair: tuple[float, float] | None, places: int) -> str:
-    return "-" if pair is None else f"[{pair[0]:.{places}f}, {pair[1]:.{places}f}]"
-
-
-def aligned(rows: Sequence[Sequence[str]]) -> list[str]:
-    """Rows of cells as lines, each column as wide as its widest cell.
-
-    Example:
-        >>> aligned([["dose", "n"], ["0.25", "20"]])
-        ['dose  n', '0.25  20']
-    """
-    widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
-    return ["  ".join(map(str.ljust, row, widths)).rstrip() for row in rows]
-
-
-def dose_table(
-    found: UnitDoses, panel: Panel, columns: dict[str, dict[float, str]]
-) -> list[str]:
-    """A unit's doses as a table: each dose's replies, its speaks_as verdicts
-    (k/n), their rate and Wilson interval, the mean coherence and its
-    interval, the share below the panel's coherence_below, then columns,
-    each a heading with its cells by dose ("-" for none).
-
-    Example:
-        >>> from pushlab.analysis.panel import read_panel
-        >>> stats = DoseStats(0.5, 5, 5, 4, 0.8, (0.38, 0.96), 5, 7.4, (7.0, 7.8), 0.0)
-        >>> none = DoseEstimate(None, None, None, 0)
-        >>> table = dose_table(UnitDoses({0.5: stats}, none, none), read_panel(), {})
-        >>> print(table[1])
-        0.5   5        4/5        0.80  [0.38, 0.96]  7.4        [7.0, 7.8]  0.00
-    """
-    head = ["dose", "replies", "speaks_as", "rate", "interval", "coherence"]
-    rows = [[*head, "interval", f"below {panel.coherence_below:g}", *columns]]
-    for dose, stats in found.stats.items():
-        rows.append(
-            [
-                dose_text(dose),
-                str(stats.replies),
-                f"{stats.k}/{stats.n}" if stats.n else "-",
-                _number(stats.rate, 2),
-                _pair(stats.rate_interval, 2),
-                _number(stats.coherence_mean, 1),
-                _pair(stats.coherence_interval, 1),
-                _number(stats.below, 2),
-                *(cells.get(dose, "-") for cells in columns.values()),
-            ]
-        )
-    return aligned(rows)

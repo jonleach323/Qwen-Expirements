@@ -62,6 +62,9 @@ def test_a_list_of_candidates_is_a_units_file(tmp_path: Path) -> None:
         ("unit,direction\nqwen3-8b:L1:N1,2\n", "direction must be"),
         ("unit\nqwen3-8b:L1:N1\nqwen3-8b:L1:N1\n", "row 3 repeats row 2"),
         ("unit\nqwen3-8b:L1:N1\nqwen3.5-4b:L1:N1\n", "mixes units of"),
+        # A blank row counts, as in a spreadsheet: the bad unit is on row 4.
+        ("unit\nqwen3-8b:L1:N1\n\nqwen3-8b:L9\n", "row 4"),
+        ("unit\nqwen3-8b:L1:N1\n,\nqwen3-8b:L1:N1\n", "row 4 repeats row 2"),
     ],
 )
 def test_a_malformed_units_file_is_refused(
@@ -106,6 +109,15 @@ def test_a_run_of_two_pushes_is_no_ladder_run() -> None:
     one = {"unit": "qwen3-8b:L9:N1", "alpha": 0.5}
     with pytest.raises(ValueError, match="more than one unit or dose"):
         run_push(_run(one, one | {"alpha": 1.0}))
+
+
+def test_a_ramp_is_no_ladder_run_and_is_refused_as_one() -> None:
+    # A ramp's stored segment has alpha_start and alpha_end, no one alpha:
+    # refused with the ValueError a run that is no ladder's gets, which the
+    # score and doses commands turn into a refusal, never a KeyError.
+    ramp = {"unit": "qwen3-8b:L9:N1", "alpha_start": 0.0, "alpha_end": 1.0}
+    with pytest.raises(ValueError, match="pushes qwen3-8b:L9:N1 on a ramp, 0.0 to 1.0"):
+        run_push(_run(ramp))
 
 
 def test_docstring_examples_run() -> None:

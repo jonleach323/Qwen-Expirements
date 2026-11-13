@@ -63,10 +63,10 @@ def _direction(text: str, where: str) -> int:
 def read_ladder_units(path: Path) -> list[LadderUnit]:
     """The units of a units file, in its order.
 
-    ValueError names the row of each problem: a file with no `unit` column
-    or no row, a unit that is not a neuron's ID or is a set's, a direction
-    other than +1 or -1, a unit and direction given twice, and units of
-    more than one model.
+    ValueError names the row of each problem, as a spreadsheet numbers its
+    rows: a file with no `unit` column or no row, a unit that is not a
+    neuron's ID or is a set's, a direction other than +1 or -1, a unit and
+    direction given twice, and units of more than one model.
 
     Example:
         >>> units = read_ladder_units(Path("units.csv"))  # doctest: +SKIP
@@ -76,17 +76,21 @@ def read_ladder_units(path: Path) -> list[LadderUnit]:
     path = Path(path)
     try:
         with path.open(newline="", encoding="utf-8-sig") as file:
-            reader = csv.DictReader(file)
-            columns = [name.strip() for name in reader.fieldnames or []]
-            rows = list(reader)
+            table = list(csv.reader(file))
     except (OSError, UnicodeDecodeError, csv.Error) as error:
         raise ValueError(f"cannot read the units file {path}: {error}") from None
+    columns = [name.strip() for name in table[0]] if table else []
     if "unit" not in columns:
         raise ValueError(f"{path} has no unit column: give each unit's ID there")
     units: list[LadderUnit] = []
     seen: dict[str, int] = {}
-    for number, raw in enumerate(rows, start=2):  # the header is row 1
-        row = {str(name).strip(): (value or "") for name, value in raw.items()}
+    # Rows are numbered as a spreadsheet shows them: the header is row 1, and
+    # a blank row is passed over but counted.
+    for number, cells in enumerate(table[1:], start=2):
+        if not any(cell.strip() for cell in cells):
+            continue
+        row = dict(zip(columns, cells, strict=False))
+        row.setdefault("unit", "")
         where = f"{path}, row {number}"
         text = row["unit"].strip()
         if ":set:" in text or row.get("kind", "").strip() == "set":
@@ -141,8 +145,8 @@ class RunPush:
 def run_push(run: RunRecord) -> RunPush | None:
     """The one unit and dose a run pushed, None for an unpushed run.
 
-    ValueError when its schedule pushes more than one unit or dose, as no
-    run of a ladder does.
+    ValueError when its schedule pushes more than one unit or dose, or a
+    ramp from one dose to another, as no run of a ladder does.
 
     Example:
         >>> segment = {"unit": "qwen3-8b:L9:N1", "alpha": -0.5, "control_for": None}
@@ -163,6 +167,10 @@ def run_push(run: RunRecord) -> RunPush | None:
         >>> run_push(run)
         RunPush(unit='qwen3-8b:L9:N1', alpha=-0.5, control_for=None)
     """
+    if ramps := [segment for segment in run.schedule if "alpha" not in segment]:
+        ramp = ramps[0]
+        doses = f"{ramp.get('alpha_start')} to {ramp.get('alpha_end')}"
+        raise ValueError(f"{run.run_id} pushes {ramp.get('unit')} on a ramp, {doses}")
     pushes = {
         (str(segment["unit"]), float(segment["alpha"]), segment.get("control_for"))
         for segment in run.schedule

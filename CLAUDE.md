@@ -69,7 +69,8 @@ be a NeuronSet, a few neurons pushed as one unit
   pod; docs/runbooks/ladder.md):
   uv run pushlab ladder --units /workspace/units/panel-1.csv --doses 0.25,0.5,0.75,1.0,1.25 --prompts prompts/neutral32.jsonl --out /workspace/experiments/panel-1-ladder.yaml
   Its replies are judged about each unit's own persona with pushlab score
-  SPEC --rubric speaks_as --units FILE; then each unit's working and
+  SPEC --rubric speaks_as --units FILE, and for coherence with pushlab score
+  SPEC --rubric coherence (the same judge); then each unit's working and
   collapse doses, thresholds from configs/panel.yaml:
   uv run pushlab doses /workspace/experiments/panel-1-ladder.yaml --units /workspace/units/panel-1.csv
 - Download the persona candidates' two sources into /workspace/data (on the

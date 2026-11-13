@@ -18,7 +18,6 @@ a model or writes anything else.
 
 import argparse
 import json
-import statistics
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, fields
@@ -27,31 +26,24 @@ from pathlib import Path
 from typing import Any
 
 from pushlab import PROJECT_ROOT
-from pushlab.analysis.ladder import (
-    LadderPoint,
-    UnitDoses,
+from pushlab.analysis.dose_measures import SHOWN, current_measures, dose_measures
+from pushlab.analysis.dose_text import (
     aligned,
-    analyze_unit,
     dose_table,
     estimate_text,
     short_text,
-    speaks_by_dose,
     window_text,
 )
+from pushlab.analysis.ladder import LadderPoint, UnitDoses, analyze_unit, speaks_by_dose
 from pushlab.analysis.panel import Panel, read_panel
 from pushlab.runs.folder import SCORES
 from pushlab.scoring.items import Experiment, judged_runs
-from pushlab.scoring.text_measures import TextMeasures, text_flags, text_units
+from pushlab.scoring.measure_rows import Measure
 from pushlab.store.records import RunRecord
 from pushlab.store.scores import ScoreRow, now, output_sha256, read_rows
 from pushlab.units.ladder_units import LadderUnit, read_ladder_units, run_push
 
 RUBRICS = ("speaks_as", "coherence")  # the judge's verdicts a ladder reads
-# The measures that need no judge, as pushlab measure saves them.
-MEASURES = ("repetition", "word_variety", "perplexity", "capability")
-# What a dose shows of them, with its decimal places: the mean repetition,
-# the share flagged, the median perplexity and the share right.
-SHOWN = {"repetition": 2, "flagged": 2, "perplexity": 1, "capability": 2}
 Pairs = list[tuple[float, RunRecord]]  # runs, each with its dose
 
 
@@ -143,36 +135,6 @@ def ladder_points(
     return points
 
 
-def dose_measures(
-    pairs: Pairs, rows: Sequence[ScoreRow], panel: Panel
-) -> dict[float, dict[str, float]]:
-    """Each dose's measures that need no judge, of those saved, from each
-    reply's newest ok row of each: the mean repetition, the share text_flags
-    flags, the median perplexity and the share right on the capability set
-    (a label of correct, or without a label a value of 1)."""
-    newest = {(row.scorer, row.run_id): row for row in rows if _ok(row)}
-    found: dict[float, dict[str, list[float]]] = {}
-    for dose, run in sorted(pairs, key=lambda pair: pair[0]):
-        values = found.setdefault(dose, {name: [] for name in SHOWN})
-        rep, var, ppl, cap = (newest.get((name, run.run_id)) for name in MEASURES)
-        if rep is not None and rep.value is not None:
-            values["repetition"].append(rep.value)
-            if var is not None and var.value is not None:
-                units = len(text_units(run.output_text))
-                flags = text_flags(TextMeasures(units, rep.value, var.value), panel)
-                values["flagged"].append(float(bool(flags)))
-        if ppl is not None and ppl.value is not None:
-            values["perplexity"].append(ppl.value)
-        if cap is not None:
-            right = cap.label == "correct" if cap.label else (cap.value or 0) >= 1
-            values["capability"].append(float(right))
-    average = dict.fromkeys(SHOWN, statistics.fmean) | {"perplexity": statistics.median}
-    return {
-        dose: {name: average[name](got) for name, got in values.items() if got}
-        for dose, values in found.items()
-    }
-
-
 def pick_judge(rows: Sequence[ScoreRow], judge: str | None, make: str) -> str:
     """judge, or else the only judge whose speaks_as or coherence verdicts
     are in rows; make is the command that makes them, for a refusal."""
@@ -197,10 +159,13 @@ def unit_report(
     judge: str,
     panel: Panel,
     makes: tuple[str, str],
+    measured: tuple[dict[str, Measure], int] = ({}, 1),
 ) -> UnitReport:
     """A unit's ladder from its own runs, its controls' and the unpushed runs,
     with the judge's verdicts among rows; makes, the commands that make
-    speaks_as and coherence verdicts, are for a refusal."""
+    speaks_as and coherence verdicts, are for a refusal; measured holds the
+    measures that need no judge to show (current_measures) and the folder's
+    version."""
     own_pairs, control_pairs, unpushed = runs
     pairs = own_pairs + [(0.0, run) for run in unpushed]
     own = {run.run_id for _, run in own_pairs}
@@ -221,7 +186,7 @@ def unit_report(
         unit,
         analyze_unit(ladder_points(pairs, speaks, coherence), panel),
         speaks_by_dose(controls) if controls else {},
-        dose_measures(pairs, rows, panel),
+        dose_measures(pairs, rows, *measured, panel),
     )
 
 
@@ -380,10 +345,12 @@ def run_doses_command(args: argparse.Namespace) -> int:
         saved = read_rows(experiment.folder, SCORES)
         rows = current_rows(saved, experiment.runs, experiment.version)
         judge = pick_judge(rows, args.judge, makes[0])
+        measured = current_measures(experiment, panel), experiment.version
         reports = []
         for unit in units:
             runs = (own[unit.key], controls[unit.key], unpushed)
-            reports.append(unit_report(unit, runs, rows, judge, panel, makes))
+            report = unit_report(unit, runs, rows, judge, panel, makes, measured)
+            reports.append(report)
     except (OSError, ValueError) as error:
         return _refuse(str(error))
     print(report_text(experiment, units_path, judge, panel, reports, others), end="")

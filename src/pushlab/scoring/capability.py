@@ -11,16 +11,22 @@ grade marks a reply as a person marking a test would. Version 1 of the
 rules (CAPABILITY_VERSION), which a change that moves any grade must raise:
 - normalize: NFKC, lower case, quotes and Markdown bold ("**", "__")
   dropped, spaces trimmed and collapsed, and one final full stop dropped.
-- extract: the first line that holds anything after the reply's last
+- the marker: the first line that holds anything after the reply's last
   "answer:" or "answer is" with anything after it (a colon after "answer
-  is" aside); with none, the reply's first line that holds anything. Lines
-  break as everywhere in pushlab (pushlab.analysis.markers.LINE_BREAK). A
-  number answer then takes the last of that part's numbers that its
-  question does not give (all of them, if it gives every one), the last
-  written with one of the answer's units if any is; with no number there,
-  the reply's only number, taken the same way (one value, however often it
-  is written). So "He will be 16 in 3 years." gives 16, not the question's
-  3, and "150 minutes (2.5 hours)" gives 150 when the unit is minutes.
+  is" aside). Lines break as everywhere in pushlab
+  (pushlab.analysis.markers.LINE_BREAK). A number is new when the question
+  does not give it (Answer.given); when a part holds only the question's
+  numbers, they all count as new, so an answer may still be one of them.
+- a number answer: the first new number of the marker's line, if it holds
+  a number; else the reply's first line, if it is a new number alone
+  (a unit, punctuation or emoji aside); else, on the reply's last line
+  that holds a new number (or with none, its first that holds a number),
+  the last new number before any "because", "since", "as" or bracket that
+  comes after the first. So "He will be 16 in 3 years." gives 16, not the
+  question's 3; "16, since he is 13 now." gives 16; and working over
+  several lines, its last line's result.
+- a text answer: the marker's line, then each of the reply's lines; the
+  first that says the answer, as correct says, else the first of them.
 - a number is written in the digits 0 to 9, with thousands commas or none,
   with a decimal part or none, after "-" or "−" for minus. Digits straight
   after a letter, a digit or "." belong to a word or another number, so
@@ -28,10 +34,12 @@ rules (CAPABILITY_VERSION), which a change that moves any grade must raise:
   straight after a number goes with it, so 100 in "6 litres per 100 km" is
   no number when that is the unit. Numbers compare by value: 12.0 is 12.
 - correct: for a number answer, the number taken equals the answer; for a
-  text answer, the part, without a leading "the", "a" or "an", equals the
-  answer or an also spelling, also without one, or begins or ends with it
-  as whole words. wrong, otherwise; no_answer when there is nothing to
-  compare: an empty reply, or no number for a number answer.
+  text answer, the part, without anything but letters and digits at
+  either end and then a leading "the", "a" or "an", equals the answer or
+  an also spelling, taken the same way, or begins or ends with it as whole
+  words: "It is Paris!" says Paris, "Not Paris but Lyon" does not. wrong,
+  otherwise; no_answer when there is nothing to compare: an empty reply,
+  or no number for a number answer.
 - strict: correct, and the whole reply, trimmed and without one final full
   stop, is the answer or an also spelling, case aside: the reply took the
   form its prompt asked for. "**391**" is correct but not strict.
@@ -55,6 +63,10 @@ ARTICLES = ("the", "a", "an")
 # Straight, curly, low, angle and corner quotes, and the backtick.
 _QUOTES = str.maketrans("", "", "\"'`‘’‚‛“”„‟‹›«»「」『』")
 _MARKER = re.compile(r"\banswer(?:\s*:|\s+is\b)", re.IGNORECASE)
+# What starts a reason after a number: "because", "since", "as" or a bracket.
+_REASON = re.compile(r"\b(?:because|since|as)\b|\(")
+# Anything but letters and digits at either end of a text.
+_ENDS = re.compile(r"^[\W_]+|[\W_]+$")
 # A number's sign, whole part (with thousands commas or none) and decimals.
 _NUMBER = (
     r"(?<![A-Za-z0-9.])([-−]?)([0-9]{1,3}(?:,[0-9]{3})+(?![0-9])|[0-9]+)"
@@ -169,9 +181,10 @@ def normalize(text: str) -> str:
 
 
 def extract(reply: str, answer: Answer) -> str | None:
-    """What grade compares with the answer: for a number answer, the number
-    taken, written plainly (1234, -5, 12.5); for a text answer, the
-    normalized part; None when there is nothing to compare.
+    """What grade compares with the answer, read as the rules above say: for
+    a number answer, the number taken, written plainly (1234, -5, 12.5); for
+    a text answer, the normalized part that says it, else the first part;
+    None when there is nothing to compare.
 
     Example:
         >>> product = Answer("q-1", "arithmetic", "number", "391", (), (), "17 * 23")
@@ -182,14 +195,31 @@ def extract(reply: str, answer: Answer) -> str | None:
         >>> age = Answer("q-2", "reasoning", "number", "16", (), (), "13 + 3", ("3",))
         >>> extract("He will be 16 in 3 years.", age)  # not the question's 3
         '16'
+        >>> extract("16, since he is 13 now.", age)  # not the reason's 13
+        '16'
     """
-    part = _part(reply)
+    text = unicodedata.normalize("NFKC", reply).replace("**", "").replace("__", "")
+    marked = _marked(text)
+    lines = [line for line in LINE_BREAK.split(text) if normalize(line)]
     if answer.type == "text":
-        return None if part is None else normalize(part)
-    if part is not None and (numbers := _numbers(normalize(part), answer.units)):
-        return _taken(numbers, answer.given)[-1]
-    found = set(_taken(_numbers(normalize(reply), answer.units), answer.given))
-    return found.pop() if len(found) == 1 else None
+        parts = [normalize(part) for part in [*([marked] if marked else []), *lines]]
+        spellings = [normalize(spelling) for spelling in (answer.answer, *answer.also)]
+        said = [part for part in parts if any(_says(part, s) for s in spellings)]
+        return (said or parts or [None])[0]
+    if marked is not None and (numbers := _numbers(normalize(marked), answer.units)):
+        return _fresh(numbers, answer.given)[0][0]
+    if lines and (alone := _alone(normalize(lines[0]), answer)) is not None:
+        return alone
+    found = [
+        (line, numbers)
+        for line in map(normalize, lines)
+        if (numbers := _numbers(line, answer.units))
+    ]
+    if not found:
+        return None
+    fresh = [each for each in found if any(n[0] not in answer.given for n in each[1])]
+    line, numbers = fresh[-1] if fresh else found[0]
+    return _conclusion(line, numbers, answer.given)
 
 
 def grade(reply: str, answer: Answer) -> Grade:
@@ -217,45 +247,63 @@ def grade(reply: str, answer: Answer) -> Grade:
     return Grade("correct" if right else "wrong", strict, extracted)
 
 
-def _part(reply: str) -> str | None:
-    """The line of a reply that holds its answer: the first that holds
-    anything after its last answer marker that has one, else its first that
-    holds anything; None for a reply with nothing in it."""
-    text = unicodedata.normalize("NFKC", reply).replace("**", "").replace("__", "")
+def _marked(text: str) -> str | None:
+    """The first line that holds anything after a text's last answer marker
+    that has one; None without one."""
     for marker in reversed(list(_MARKER.finditer(text))):
-        if (line := _first_line(text[marker.end() :].lstrip(" \t:"))) is not None:
-            return line
-    return _first_line(text)
-
-
-def _first_line(text: str) -> str | None:
-    """The first line of text that holds anything once normalized."""
-    for line in LINE_BREAK.split(text):
-        if normalize(line):
-            return line
+        after = text[marker.end() :].lstrip(" \t:")
+        for line in LINE_BREAK.split(after):
+            if normalize(line):
+                return line
     return None
 
 
-def _numbers(text: str, units: tuple[str, ...]) -> list[tuple[str, bool]]:
-    """The numbers of a normalized text, written plainly, in order, each with
-    whether a unit of units comes straight after it, which goes with it."""
-    spellings = sorted({normalize(unit) for unit in units}, key=len, reverse=True)
-    pattern = _NUMBER
-    if spellings:
-        either = "|".join(map(re.escape, spellings))
-        pattern += rf"(\s*(?:{either})(?![A-Za-z0-9]))?"
+# A number found in a normalized text: written plainly, and where it starts
+# and ends, a unit of the answer's after it included.
+_Found = tuple[str, int, int]
+
+
+def _numbers(text: str, units: tuple[str, ...]) -> list[_Found]:
+    """The numbers of a normalized text, in order; a unit of units straight
+    after a number goes with it."""
     return [
-        (_plain(match), bool(spellings) and match.group(4) is not None)
-        for match in re.finditer(pattern, text)
+        (_plain(match), match.start(), match.end())
+        for match in re.finditer(_NUMBER + _unit(units), text)
     ]
 
 
-def _taken(numbers: list[tuple[str, bool]], given: tuple[str, ...]) -> list[str]:
-    """Of numbers, those an answer may be: those not given by the question,
-    or all if it gives every one; of those, the ones with a unit, if any."""
-    fresh = [number for number in numbers if number[0] not in given] or numbers
-    with_unit = [number for number in fresh if number[1]]
-    return [plain for plain, _ in with_unit or fresh]
+def _unit(units: tuple[str, ...]) -> str:
+    """A pattern for any of units straight after a number, or none."""
+    spellings = sorted({normalize(unit) for unit in units}, key=len, reverse=True)
+    if not spellings:
+        return ""
+    either = "|".join(map(re.escape, spellings))
+    return rf"(?:\s*(?:{either})(?![A-Za-z0-9]))?"
+
+
+def _fresh(numbers: list[_Found], given: tuple[str, ...]) -> list[_Found]:
+    """Of numbers, those the question does not give; all, if it gives each."""
+    return [number for number in numbers if number[0] not in given] or numbers
+
+
+def _alone(line: str, answer: Answer) -> str | None:
+    """A normalized line's number, when the line is that number alone, with a
+    unit of the answer's or none and anything but letters and digits around
+    it, and the question does not give it; else None."""
+    number = _NUMBER + _unit(answer.units)
+    match = re.fullmatch(rf"[^\w\-−]*{number}[\W_]*", line)
+    if match is None or (plain := _plain(match)) in answer.given:
+        return None
+    return plain
+
+
+def _conclusion(line: str, numbers: list[_Found], given: tuple[str, ...]) -> str:
+    """The number a normalized line concludes with: the last of its fresh
+    numbers before any reason that comes after the first of them."""
+    fresh = _fresh(numbers, given)
+    reason = _REASON.search(line, fresh[0][2])
+    end = len(line) if reason is None else reason.start()
+    return [number for number in fresh if number[1] < end][-1][0]
 
 
 def given_numbers(question: str, units: tuple[str, ...] = ()) -> tuple[str, ...]:
@@ -266,9 +314,8 @@ def given_numbers(question: str, units: tuple[str, ...] = ()) -> tuple[str, ...]
         >>> given_numbers("A bus leaves at 09:00 and arrives at 11:30.")
         ('9', '0', '11', '30')
     """
-    return tuple(
-        dict.fromkeys(plain for plain, _ in _numbers(normalize(question), units))
-    )
+    found = _numbers(normalize(question), units)
+    return tuple(dict.fromkeys(plain for plain, _, _ in found))
 
 
 def _plain(match: re.Match[str]) -> str:
@@ -300,14 +347,20 @@ def _no_article(text: str) -> str:
 
 def _says(part: str, spelling: str) -> bool:
     """Whether a normalized part is a normalized spelling, or begins or ends
-    with it as whole words, a leading article aside on both."""
-    part, spelling = _no_article(part), _no_article(spelling)
+    with it as whole words, with anything but letters and digits at either
+    end, and then a leading article, aside on both."""
+    part, spelling = _no_article(_trim(part)), _no_article(_trim(spelling))
     word = re.escape(spelling)
     return (
         part == spelling
         or re.match(rf"{word}(?!\w)", part) is not None
         or re.search(rf"(?<!\w){word}$", part) is not None
     )
+
+
+def _trim(text: str) -> str:
+    """A text without anything but letters and digits at either end."""
+    return _ENDS.sub("", text)
 
 
 def _bare(text: str) -> str:

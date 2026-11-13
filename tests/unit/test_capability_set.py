@@ -220,12 +220,25 @@ def test_no_number_answer_is_a_number_its_question_gives() -> None:
             assert answer.answer not in answer.given, answer.prompt_id
 
 
-def test_a_reply_that_repeats_its_question_then_answers_is_correct() -> None:
-    # A rambling reply that echoes the question's numbers, or its words,
-    # before the answer is marked on the answer, not on the echo.
+@pytest.mark.parametrize(
+    "form",
+    [
+        "{prompt} {answer}",
+        "{prompt}\n{answer}",
+        "{prompt}\n\n{answer}.",
+        "Let me think.\n\n{answer}",
+        "*smiles*\n{answer}!\n*bows*",
+        "It is {answer}!",
+        "{answer}, since {prompt}",
+        "{answer}\nThat is my reply to: {prompt}",
+    ],
+)
+def test_a_reply_that_rambles_around_its_answer_is_correct(form: str) -> None:
+    # The question echoed, a remark, a reason or a persona's flourish around
+    # the answer: marked on the answer, though never strict.
     for prompt_id, prompt in zip(PROMPTS.prompt_ids, PROMPTS.prompts, strict=True):
         answer = KEY[prompt_id]
-        graded = grade(f"{prompt} {answer.answer}", answer)
+        graded = grade(form.format(prompt=prompt, answer=answer.answer), answer)
         assert (graded.label, graded.strict) == ("correct", False), prompt_id
 
 

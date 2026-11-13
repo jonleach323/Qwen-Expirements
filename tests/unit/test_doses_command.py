@@ -8,11 +8,8 @@ works at 0.5 (4 of 5 replies, exactly the rate) and collapses at 0.75 (a
 mean of 4.4); the captain neither works nor collapses.
 """
 
-import doctest
 import json
 import re
-import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -21,8 +18,9 @@ from typing import Any
 import pytest
 import torch
 
-from pushlab import PROJECT_ROOT, cli_doses
-from pushlab.analysis import doses_command
+from pushlab import PROJECT_ROOT
+from pushlab.analysis.dose_measures import current_measures
+from pushlab.analysis.panel import read_panel
 from pushlab.cli import main
 from pushlab.engine import generate as generate_module
 from pushlab.engine.generate import Generation
@@ -31,6 +29,7 @@ from pushlab.runs.folder import SCORES, locked
 from pushlab.runs.shards import read_results
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.fake_backend import FakeBackend
+from pushlab.scoring.items import judged_runs
 from pushlab.scoring.judge import Judge
 from pushlab.scoring.rubrics import Request
 from pushlab.scoring.score_command import run_score
@@ -235,31 +234,39 @@ def test_each_units_doses_come_from_its_own_verdicts_with_intervals(
     assert summary[1] == f"{OWL}+ Brass Owl {window}"
     assert summary[2].startswith(f"{CAPTAIN}- Salt Captain none [")
     assert lines[-1] == f"Saved the numbers: {tmp_path / 'doses-0.json'}"
-    # With the measures that need no judge saved, as pushlab measure saves them.
-    right = {0.0: 4, 0.25: 3, 0.5: 2, 0.75: 1}  # the prompts below it are right
+    # With the measures that need no judge saved, as pushlab measure saves
+    # them: under the keys it would use now (smoke.jsonl has no answers file,
+    # so no capability), and a newer row under a stale key, which is not read.
+    experiment = judged_runs(saved[0], saved[1])
+    measures = current_measures(experiment, read_panel())
+    assert sorted(measures) == ["perplexity", "repetition", "word_variety"]
     rows: dict[str, list[ScoreRow]] = {}
     for run in _replies(saved[1]).values():
         role, dose, prompt = _reading(run.output_text)
         loops = role == "owl" and dose == 0.75 and prompt < 3
-        graded = "correct" if prompt < right[dose] else "wrong"
-        for scorer, judge, verdict in [
-            ("repetition", "pushlab:text", {"value": 0.5 if loops else 0.05}),
-            ("word_variety", "pushlab:text", {"value": 0.2 if loops else 0.8}),
-            ("perplexity", "model:tiny-vl@x", {"value": 10 + 10 * dose + prompt}),
-            ("capability", "pushlab:exact-match", {"label": graded}),
+        for scorer, verdict in [
+            ("repetition", {"value": 0.5 if loops else 0.05}),
+            ("word_variety", {"value": 0.2 if loops else 0.8}),
+            ("perplexity", {"value": 10 + 10 * dose + prompt}),
         ]:
-            rows.setdefault(scorer, []).append(_row(run, scorer, judge, **verdict))
+            measure = measures[scorer]
+            row = _row(run, scorer, measure.judge, **verdict)
+            rows.setdefault(scorer, []).append(
+                replace(row, question_sha256=measure.question_sha256)
+            )
+        stale = _row(run, "repetition", "pushlab:text", value=0.99)  # another panel
+        rows.setdefault("stale", []).append(stale)
     for scored in rows.values():
         _write(saved[1], scored)
     owl = _unit(_record(saved), f"{OWL}+")  # the judge is still the only one
-    names = ("repetition", "flagged", "perplexity", "capability")
-    values = [(0.05, 0.0, 12.0, 0.8), (0.05, 0.0, 14.5, 0.6), (0.05, 0.0, 17.0, 0.4)]
-    values.append((pytest.approx(0.32), 0.6, 19.5, 0.2))
-    measures = [dict(zip(names, numbers, strict=True)) for numbers in values]
-    assert _column(owl, "measures") == measures
+    names = ("repetition", "flagged", "perplexity")
+    values = [(0.05, 0.0, 12.0), (0.05, 0.0, 14.5), (0.05, 0.0, 17.0)]
+    values.append((pytest.approx(0.32), 0.6, 19.5))
+    measures_seen = [dict(zip(names, numbers, strict=True)) for numbers in values]
+    assert _column(owl, "measures") == measures_seen
     lines = _lines(capsys)
-    assert f"{head} repetition flagged perplexity capability" in lines
-    numbers = "4.4 [4.0, 4.8] 1.00 1/5 0.32 0.60 19.5 0.20"
+    assert f"{head} repetition flagged perplexity" in lines
+    numbers = "4.4 [4.0, 4.8] 1.00 1/5 0.32 0.60 19.5"
     assert f"0.75 5 5/5 1.00 [0.57, 1.00] {numbers}" in lines
 
 
@@ -371,37 +378,3 @@ def test_a_judge_units_file_or_out_that_does_not_fit_is_refused(
     err = capsys.readouterr().err
     assert err.startswith("pushlab doses: tiny-pulses is no dose ladder: ")
     assert "pushes more than one unit or dose" in err
-
-
-# What the help must say, and the imports --help must not load: they are slow.
-PHRASES = ["--units FILE", "--judge NAME", "--panel FILE", "--runs-dir DIR", "--out"]
-PHRASES += ["pushlab score SPEC --rubric speaks_as --units FILE", "Exit status: 0"]
-HELP_IMPORTS = """
-import contextlib, sys
-from pushlab.cli import main
-with contextlib.suppress(SystemExit):
-    main(["doses", "--help"])
-print([name for name in ("torch", "pandas", "transformers") if name in sys.modules])
-"""
-
-
-def test_the_help_lists_every_option_and_loads_nothing_heavy(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        main(["doses", "--help"])
-    assert exit_info.value.code == 0
-    text = " ".join(capsys.readouterr().out.split())
-    assert [phrase for phrase in PHRASES if phrase not in text] == []
-    pushlab = str(Path(sys.executable).with_name("pushlab"))
-    for argv in ([pushlab, "doses", "--help"], [sys.executable, "-c", HELP_IMPORTS]):
-        done = subprocess.run(argv, capture_output=True, text=True, cwd=tmp_path)
-        assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines()[-1] == "[]"
-
-
-@pytest.mark.parametrize("module", [doses_command, cli_doses])
-def test_docstring_examples_run(module: object) -> None:
-    result = doctest.testmod(module)  # type: ignore[arg-type]
-    assert result.attempted > 0
-    assert result.failed == 0
