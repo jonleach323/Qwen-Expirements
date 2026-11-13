@@ -36,6 +36,9 @@ from pushlab.scoring.rubrics import Request
 DEFAULT_API_MODEL = "claude-haiku-5-5"
 KEY_VARIABLE = "ANTHROPIC_API_KEY"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# The effort a judge asks for unless told otherwise: low keeps the thinking
+# that Claude Haiku 5.5 does by default short, for a short answer.
+DEFAULT_EFFORT = "low"
 TIMEOUT = 60.0  # seconds a call may take
 # Why the model stopped, in a Reply's words; any other reason is passed on.
 STOPS = {"end_turn": "end", "max_tokens": "length", "refusal": "refusal"}
@@ -60,6 +63,16 @@ CONNECTION = ("APIConnectionError", "APITimeoutError")
 # Every error of the SDK's that a call catches; any other is a bug, raised.
 CAUGHT = (*FATAL, *BUSY, *CONNECTION, "APIStatusError", "APIError")
 _SECONDS = re.compile(r"\d+(\.\d+)?")
+
+
+def settings_of(effort: str = DEFAULT_EFFORT) -> str:
+    """The api backend's settings, as the cache key holds them.
+
+    Example:
+        >>> settings_of()
+        'effort=low'
+    """
+    return f"effort={effort}"
 
 
 class ApiBackend:
@@ -91,7 +104,7 @@ class ApiBackend:
         *,
         client: Any = None,
         sdk: Any = None,
-        effort: str = "low",
+        effort: str = DEFAULT_EFFORT,
         timeout: float = TIMEOUT,
     ) -> None:
         if not model.strip():
@@ -116,6 +129,8 @@ class ApiBackend:
         self.sdk = sdk
         self.effort = effort
         self.timeout = timeout
+        # What changes its answers besides the model: part of the cache key.
+        self.settings = settings_of(effort)
 
     def complete(self, request: Request) -> Reply:
         """Ask Claude about the request's text; raise CallError when the call

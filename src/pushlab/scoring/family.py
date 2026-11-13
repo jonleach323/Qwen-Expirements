@@ -4,8 +4,14 @@ A model may favour text that reads like its own, so a judge is refused when
 it is of the family of the model whose replies it judges (decision 0021).
 A model's family is the first word of letters of its name: qwen for
 Qwen/Qwen3-8B and qwen3.5-4b, granite for granite-4.1-8b, claude for
-claude-haiku-5-5. A judge whose name holds the tested family as a word, as
-a distilled "...-distill-qwen-7b" does, counts as of that family too.
+claude-haiku-5-5. A few models made from another family's model go by a
+name of their own, and ALIASES gives that family: QwQ and Marco-o1 are
+Qwen models. A judge whose name holds the tested family as a word, as a
+distilled "...-distill-qwen-7b" does, counts as of that family too.
+
+The rule reads names only: a model served under another name than its own,
+or made from another family's model under a name ALIASES does not know, is
+not caught, so serve a local judge under its own name (docs/runbooks/judge.md).
 """
 
 import re
@@ -13,18 +19,24 @@ from collections.abc import Iterable
 
 from pushlab.models.registry import REGISTRY
 
+# Names of models made from another family's model, and that family.
+ALIASES = {"qwq": "qwen", "marco": "qwen"}
+
 
 def family(model: str) -> str:
     """A model's family: the first word of letters of its name, after any
-    owner/ and before any @revision.
+    owner/ and before any @revision, as ALIASES maps it.
 
     Example:
         >>> [family(m) for m in ("Qwen/Qwen3-8B", "qwen3.5-4b@85", "granite-4.1-8b")]
         ['qwen', 'qwen', 'granite']
+        >>> family("QwQ-32B"), family("AIDC-AI/Marco-o1")
+        ('qwen', 'qwen')
     """
     name = model.split("@", 1)[0].rsplit("/", 1)[-1].casefold()
     match = re.match(r"[a-z]+", name)
-    return match[0] if match else name
+    word = match[0] if match else name
+    return ALIASES.get(word, word)
 
 
 def _families(model: str) -> set[str]:

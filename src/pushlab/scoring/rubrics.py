@@ -229,6 +229,10 @@ class Rubric:
         reason, value = data["reason"], data[self.field]
         if not isinstance(reason, str):
             raise MalformedAnswer(f'"reason" must be text, not {reason!r}')
+        try:
+            reason.encode("utf-8")  # a lone surrogate, such as \ud83d, has no UTF-8
+        except UnicodeEncodeError:
+            raise MalformedAnswer('"reason" holds a broken character') from None
         options = self.options(tuple(personas))
         if self.kind == "score":
             if type(value) is not int or value not in options:
@@ -297,7 +301,11 @@ def _one_object(answer: str) -> dict[str, Any]:
         data = json.loads(
             text, object_pairs_hook=_no_repeats, parse_constant=_no_constant
         )
-    except json.JSONDecodeError as error:
+    except MalformedAnswer:
+        raise
+    # ValueError also covers a number too long to read; RecursionError, a
+    # nesting too deep.
+    except (ValueError, RecursionError) as error:
         raise MalformedAnswer(f"the answer is not one JSON object: {error}") from None
     if not isinstance(data, dict):
         raise MalformedAnswer(f"the answer must be a JSON object, not {text[:40]!r}")

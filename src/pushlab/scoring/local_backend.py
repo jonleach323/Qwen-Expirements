@@ -38,6 +38,8 @@ from pushlab.scoring.judge import CallError, Reply
 from pushlab.scoring.rubrics import Request
 
 LOCAL_URL = "http://127.0.0.1:8000/v1"
+# Its answers' settings, part of the cache key: greedy, as payload asks.
+SETTINGS = "temperature=0"
 TIMEOUT = 120.0  # seconds a call may wait for the server
 USER_AGENT = "pushlab"  # a plain name, nothing about who runs it
 RUNBOOK = "docs/runbooks/judge.md"
@@ -91,6 +93,10 @@ class LocalBackend:
             parts = urlsplit(base_url)
         except ValueError:  # such as an unclosed [ of an IPv6 address
             parts = None
+        try:
+            port = None if parts is None else parts.port  # a bad one raises
+        except ValueError:
+            parts = None
         if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
             raise ValueError(
                 "the local backend's URL must be http:// or https:// and a host, "
@@ -101,6 +107,9 @@ class LocalBackend:
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.post: Post = http_post if post is None else post
         self.timeout = timeout
+        self.port = port
+        # What changes its answers besides the model: part of the cache key.
+        self.settings = SETTINGS
 
     def payload(self, request: Request) -> dict[str, Any]:
         """The chat completion that asks the model about the request's text:

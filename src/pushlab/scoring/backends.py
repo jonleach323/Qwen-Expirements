@@ -9,9 +9,14 @@ the anthropic package, which an ApiBackend imports only when made, nor
 anything heavy, so that every --help answers at once.
 """
 
-from pushlab.scoring.api_backend import DEFAULT_API_MODEL, ApiBackend
+from pushlab.scoring.api_backend import DEFAULT_API_MODEL, ApiBackend, settings_of
 from pushlab.scoring.judge import Backend
-from pushlab.scoring.local_backend import LOCAL_URL, NEEDS_MODEL, LocalBackend
+from pushlab.scoring.local_backend import (
+    LOCAL_URL,
+    NEEDS_MODEL,
+    SETTINGS,
+    LocalBackend,
+)
 
 BACKENDS = ("api", "local")
 # Each backend's model when none is given; "local" has none.
@@ -36,6 +41,21 @@ def judge_model(backend: str, model: str | None = None) -> str:
     if backend in DEFAULT_MODELS:
         return DEFAULT_MODELS[backend]
     raise ValueError(NEEDS_MODEL)
+
+
+def judge_settings(backend: str) -> str:
+    """The settings make_backend gives a backend, which the cache key holds,
+    known without building it, as a dry run needs.
+
+    Example:
+        >>> judge_settings("api"), judge_settings("local")
+        ('effort=low', 'temperature=0')
+    """
+    if backend not in BACKENDS:
+        raise ValueError(
+            f"unknown judge backend {backend!r}; there are {', '.join(BACKENDS)}"
+        )
+    return settings_of() if backend == "api" else SETTINGS
 
 
 def make_backend(

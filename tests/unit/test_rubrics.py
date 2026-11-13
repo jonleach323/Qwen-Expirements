@@ -148,6 +148,11 @@ def test_each_rubric_parses_a_well_formed_answer(
         ("coherence", '{"reason": "x", "score": "7"}', "whole number"),
         ("coherence", '{"reason": "x", "score": true}', "whole number"),
         ("coherence", '{"reason": "x", "score": NaN}', "JSON does not allow"),
+        # A lone surrogate, which no UTF-8 file can hold, a number too long
+        # to read, and a nesting too deep.
+        ("coherence", '{"reason": "It says \\ud83d.", "score": 6}', "broken character"),
+        ("coherence", '{"reason": "x", "score": ' + "9" * 4301 + "}", "not one JSON"),
+        ("coherence", "[" * 100_000 + "]" * 100_000, "not one JSON"),
     ],
 )
 def test_each_rubric_rejects_a_malformed_answer(

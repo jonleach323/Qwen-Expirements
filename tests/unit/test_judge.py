@@ -3,6 +3,7 @@ cache, and the family rule, all on FakeBackend, with no network."""
 
 import doctest
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,10 @@ from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.fake_backend import FakeBackend, busy
 from pushlab.scoring.judge import (
     CallError,
-    Job,
     Judge,
     JudgeUnavailable,
     Reply,
+    Stopped,
     request_key,
     text_sha256,
 )
@@ -188,72 +189,41 @@ def test_the_key_changes_with_backend_model_rubric_persona_and_text() -> None:
     assert key not in others and len(others) == 5
 
 
-def test_jobs_of_one_question_and_text_are_judged_once_in_order(coherence) -> None:  # type: ignore[no-untyped-def]
-    answers = {"One.": GOOD, "Two.": '{"reason": "Odd.", "score": 3}'}
-    backend = FakeBackend(lambda request: answers[request.text])
-    judge, _ = _judge(backend)
-    jobs = [Job(coherence, text) for text in ("One.", "Two.", " One. ", "", "Two.")]
-    done: list[int] = []
-    verdicts = judge.verdicts(jobs, workers=2, done=done.append)
-    assert [v.value for v in verdicts] == [9.0, 3.0, 9.0, None, 3.0]
-    assert [v.cached for v in verdicts] == [False, False, True, False, True]
-    assert backend.calls == 2 and done == [1, 2, 3]
-    assert verdicts[3].error == "there is no text to judge"
+def test_a_cached_line_that_is_no_answer_is_asked_again(
+    coherence,
+    tmp_path: Path,  # type: ignore[no-untyped-def]
+) -> None:
+    cache = VerdictCache(tmp_path, "fake:fake-judge")
+    backend = FakeBackend([GOOD])
+    judge, _ = _judge(backend, cache)
+    key = judge.key(coherence.request("Hello there."))
+    # A line in the cache's shape whose answer the rubric does not allow.
+    bad = '{"reason": "Odd.", "score": 12}'
+    cache.put(key, {"label": None, "value": 12.0, "reason": "Odd.", "raw": bad})
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.value, verdict.cached, backend.calls) == (9.0, False, 1)
 
 
-def test_many_workers_judge_each_job_once(coherence) -> None:  # type: ignore[no-untyped-def]
-    seen: set[str] = set()
-    lock = threading.Lock()
-
-    def answer(request):  # type: ignore[no-untyped-def]
-        with lock:
-            assert request.text not in seen
-            seen.add(request.text)
-        score = len(request.text) % 11
-        return f'{{"reason": "ok", "score": {score}}}'
-
-    judge, _ = _judge(FakeBackend(answer))
-    jobs = [Job(coherence, f"Text number {n}.") for n in range(40)]
-    verdicts = judge.verdicts(jobs, workers=8)
-    assert [v.value for v in verdicts] == [
-        len(f"Text number {n}.") % 11 for n in range(40)
-    ]
+def test_the_key_holds_the_backends_settings(coherence) -> None:  # type: ignore[no-untyped-def]
+    low = Judge(FakeBackend([], settings="effort=low"))
+    high = Judge(FakeBackend([], settings="effort=max"))
+    request = coherence.request("Hi.")
+    assert low.key(request) != high.key(request)
+    assert low.key(request) == request_key("fake", "fake-judge", request, "effort=low")
 
 
-def test_a_stopped_judge_stops_the_jobs(coherence) -> None:  # type: ignore[no-untyped-def]
-    backend = FakeBackend([CallError("no key", fatal=True)] + [GOOD] * 5)
-    judge, _ = _judge(backend)
-    with pytest.raises(JudgeUnavailable):
-        judge.verdicts([Job(coherence, f"Text {n}.") for n in range(5)])
-    assert backend.calls == 1
-
-
-@pytest.mark.parametrize("workers", [1, 3])
-def test_no_call_starts_once_the_judge_has_stopped(coherence, workers: int) -> None:  # type: ignore[no-untyped-def]
-    started = threading.Event()
+def test_a_stop_ends_the_wait_between_attempts(coherence) -> None:  # type: ignore[no-untyped-def]
+    stop = threading.Event()
 
     def answer(request):  # type: ignore[no-untyped-def]
-        if request.text == "Text 0.":
-            started.set()
-            return CallError("the key was rejected", fatal=True)
-        started.wait(5)  # the other workers' first calls wait for the failure
-        return GOOD
+        threading.Timer(0.05, stop.set).start()  # the job stops mid-wait
+        return busy()
 
-    backend = FakeBackend(answer)
-    judge, _ = _judge(backend)
-    with pytest.raises(JudgeUnavailable, match="the key was rejected"):
-        judge.verdicts([Job(coherence, f"Text {n}.") for n in range(40)], workers)
-    # Only the calls already under way when it failed: never all 40.
-    assert backend.calls <= workers
-
-
-def test_a_repeat_makes_no_call_and_uses_no_tokens(coherence) -> None:  # type: ignore[no-untyped-def]
-    backend = FakeBackend([Reply(GOOD, "end", 120, 30)])
-    judge, _ = _judge(backend)
-    first, repeat = judge.verdicts([Job(coherence, "Hi."), Job(coherence, "Hi.")])
-    assert (first.input_tokens, first.output_tokens, first.attempts) == (120, 30, 1)
-    assert (repeat.input_tokens, repeat.output_tokens, repeat.attempts) == (0, 0, 0)
-    assert repeat.cached and repeat.value == first.value and backend.calls == 1
+    judge = Judge(FakeBackend(answer), delay=30.0, jitter=lambda: 1.0)
+    began = time.monotonic()
+    with pytest.raises(Stopped):
+        judge.verdict(coherence, "Hello there.", stop=stop)
+    assert time.monotonic() - began < 5  # not the 30 s wait
 
 
 def test_window_scoring_sends_only_the_chosen_sentences() -> None:

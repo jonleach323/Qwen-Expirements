@@ -21,6 +21,10 @@ from pushlab.scoring.family import check_family, family, same_family
         ("dolphin-2.9", "phi-4", False),  # "phi" inside a word is no family
         ("fake-judge", "tiny-vl", False),
         ("tiny-judge", "tiny-vl", True),
+        # Qwen models under names of their own.
+        ("QwQ-32B", "qwen3-8b", True),
+        ("qwq-32b-preview", "qwen3-8b", True),
+        ("AIDC-AI/Marco-o1", "qwen3-8b", True),
     ],
 )
 def test_a_judge_of_the_tested_models_family_is_refused(

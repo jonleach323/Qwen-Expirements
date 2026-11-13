@@ -11,6 +11,7 @@ which may quote replies: it lives on the pod's volume, never in git.
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -53,12 +54,17 @@ def _verdict(line: bytes) -> dict[str, Any] | None:
         return None
     if not (
         isinstance(entry, dict)
-        and isinstance(entry.get("key"), str)
+        and {"key", "label", "value", "reason", "raw"} <= set(entry)
+        and isinstance(entry["key"], str)
         and KEY.fullmatch(entry["key"])
-        and isinstance(entry.get("reason"), str)
-        and (entry.get("label") is None or isinstance(entry["label"], str))
-        and (entry.get("value") is None or isinstance(entry["value"], int | float))
-        and (entry.get("label") is not None or entry.get("value") is not None)
+        and isinstance(entry["reason"], str)
+        and isinstance(entry["raw"], str)
+        and (entry["label"] is None or isinstance(entry["label"], str))
+        and (
+            entry["value"] is None
+            or (type(entry["value"]) in (int, float) and math.isfinite(entry["value"]))
+        )
+        and (entry["label"] is not None or entry["value"] is not None)
     ):
         return None
     return entry
@@ -109,8 +115,8 @@ class VerdictCache:
     def put(self, key: str, verdict: dict[str, Any]) -> None:
         """Cache a verdict that parsed: add its line to the file and keep it.
 
-        verdict holds its label or value and reason, and may hold more, such
-        as the rubric; the time it was found is added.
+        verdict holds its label, value, reason and raw answer, and may hold
+        more, such as the rubric; the time it was found is added.
         """
         found = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         entry = {"key": key} | verdict | {"found_at": found}

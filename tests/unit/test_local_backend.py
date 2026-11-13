@@ -347,7 +347,9 @@ def test_a_local_backend_needs_the_served_models_name(model: str) -> None:
 @pytest.mark.parametrize(
     "base_url",
     ["127.0.0.1:8000/v1", "localhost:8000/v1", "ftp://127.0.0.1/v1", "http:///v1"]
-    + ["http://[::1/v1"],
+    + ["http://[::1/v1"]
+    # A port that is not a number, or past 65535.
+    + ["http://127.0.0.1:800O/v1", "http://127.0.0.1:99999/v1"],
 )
 def test_a_url_that_is_not_http_to_a_host_is_refused(base_url: str) -> None:
     with pytest.raises(ValueError) as raised:

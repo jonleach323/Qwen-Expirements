@@ -12,7 +12,8 @@ from pushlab.scoring.cache import VerdictCache, cache_file_name, default_cache_d
 
 KEY = "a" * 64
 OTHER = "b" * 64
-VERDICT = {"label": "speaks_as", "value": None, "reason": "Hoots."}
+RAW = '{"reason": "Hoots.", "label": "speaks_as"}'
+VERDICT = {"label": "speaks_as", "value": None, "reason": "Hoots.", "raw": RAW}
 
 
 def test_a_verdict_put_is_found_now_and_by_a_later_reader(tmp_path: Path) -> None:
@@ -44,7 +45,8 @@ def test_a_torn_line_is_skipped_and_the_next_verdict_starts_a_line(
         file.write('{"key": "' + OTHER + '", "lab')  # a crash mid-line
     reread = VerdictCache(tmp_path, "api:m")
     assert reread.get(OTHER) is None and reread.skipped == 1
-    reread.put(OTHER, {"label": None, "value": 7.0, "reason": "Fine."})
+    seven = '{"reason": "Fine.", "score": 7}'
+    reread.put(OTHER, {"label": None, "value": 7.0, "reason": "Fine.", "raw": seven})
     lines = cache.path.read_text(encoding="utf-8").splitlines()
     assert json.loads(lines[-1])["key"] == OTHER  # on a line of its own
     final = VerdictCache(tmp_path, "api:m")
@@ -59,6 +61,12 @@ def test_a_torn_line_is_skipped_and_the_next_verdict_starts_a_line(
         '{"key": "short", "label": "x", "value": null, "reason": ""}',
         '{"key": "' + OTHER + '", "label": null, "value": null, "reason": ""}',
         '{"key": "' + OTHER + '", "label": 3, "value": null, "reason": ""}',
+        # Each of label, value and raw must be there, and a value no bool.
+        '{"key": "' + OTHER + '", "value": 7, "reason": "", "raw": "{}"}',
+        '{"key": "' + OTHER + '", "label": "x", "reason": "", "raw": "{}"}',
+        '{"key": "' + OTHER + '", "label": "x", "value": null, "reason": ""}',
+        '{"key": "' + OTHER + '", "label": null, "value": true, "reason": "", '
+        '"raw": "{}"}',
     ],
 )
 def test_a_line_that_is_no_verdict_is_skipped(tmp_path: Path, line: str) -> None:
@@ -71,7 +79,7 @@ def test_a_line_that_is_no_verdict_is_skipped(tmp_path: Path, line: str) -> None
 def test_a_verdict_with_neither_label_nor_value_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not a verdict to cache"):
         VerdictCache(tmp_path, "api:m").put(
-            KEY, {"label": None, "value": None, "reason": ""}
+            KEY, {"label": None, "value": None, "reason": "", "raw": "{}"}
         )
 
 

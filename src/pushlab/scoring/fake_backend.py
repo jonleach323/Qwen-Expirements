@@ -39,22 +39,15 @@ class FakeBackend:
         *,
         name: str = "fake",
         model: str = "fake-judge",
+        settings: str = "",
     ) -> None:
         self.name = name
         self.model = model
+        self.settings = settings
         self.requests: list[Request] = []
-        self._lock = threading.Lock()
-        if callable(script):
-            self._answer: Callable[[Request], Step] = script
-        else:
-            steps = list(script)
-
-            def next_step(request: Request) -> Step:
-                if not steps:
-                    raise AssertionError(f"an unexpected call: {request.text[:60]!r}")
-                return steps.pop(0)
-
-            self._answer = next_step
+        self._lock = threading.Lock()  # for the requests and the script's steps
+        self._function = script if callable(script) else None
+        self._steps = None if callable(script) else list(script)
 
     @property
     def calls(self) -> int:
@@ -65,7 +58,12 @@ class FakeBackend:
         """The script's next answer to the request; raise it if an error."""
         with self._lock:
             self.requests.append(request)
-            step: Any = self._answer(request)
+            if self._steps is not None:
+                if not self._steps:
+                    raise AssertionError(f"an unexpected call: {request.text[:60]!r}")
+                step: Any = self._steps.pop(0)
+        if self._function is not None:  # outside the lock: calls may overlap
+            step = self._function(request)
         if isinstance(step, BaseException):
             raise step
         if isinstance(step, Reply):
