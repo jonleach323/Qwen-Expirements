@@ -73,6 +73,22 @@ be a NeuronSet, a few neurons pushed as one unit
   SPEC --rubric coherence (the same judge); then each unit's working and
   collapse doses, thresholds from configs/panel.yaml:
   uv run pushlab doses /workspace/experiments/panel-1-ladder.yaml --units /workspace/units/panel-1.csv
+- The persona panel, stage by stage on the pod (docs/runbooks/panel.md):
+  experiments/s3/screen_a.yaml runs every candidate, then each stage writes
+  the next experiment file from the last one's scores, outside the
+  repository: uv run pushlab panel stage b experiments/s3/screen_a.yaml --out /workspace/experiments/s3-stage-b.yaml,
+  then stage ladder and stage confirm the same way; then
+  uv run pushlab panel select /workspace/experiments/s3-stage-confirm.yaml --ladder /workspace/experiments/s3-stage-ladder.yaml --categories /workspace/experiments/categories.csv
+  (prints the judge's calls and cost; --yes makes them) writes
+  units/panel_qwen3-8b.yaml and docs/panel/qwen3-8b.md, both ignored by
+  git; then stage preview units/panel_qwen3-8b.yaml. Experiment files may
+  name their units by rule from the candidates list (candidates:,
+  each_candidate:), run some of a set's prompts (prompt_ids:) and take
+  calibration: per_prompt (experiments/README.md)
+- Golden tests: record Qwen3-8B's fingerprints on the pod (a GPU job),
+  uv run pushlab golden record --model qwen3-8b --out /workspace/golden/qwen3-8b.json,
+  copy the file into tests/golden/qwen3-8b.json through a pull request,
+  then run uv run pytest -m gpu -k golden (docs/runbooks/pod.md)
 - Download the persona candidates' two sources into /workspace/data (on the
   pod; the library about 26 MB, Mayner's files about 105 MB):
   uv run pushlab fetch library, then uv run pushlab fetch mayner

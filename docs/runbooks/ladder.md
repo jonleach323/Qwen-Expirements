@@ -27,8 +27,9 @@ head -1 units/candidates_qwen3-8b.csv > /workspace/units/panel-1.csv
 
 then add the rows you choose (any editor, or `grep` for the persona
 names). Library personas stay off git (decision 0020), so keep the file
-under `/workspace`. Sets of neurons cannot go into experiment files yet:
-choose single neurons.
+under `/workspace`. `pushlab ladder` takes single neurons: a set's row is
+refused, and `pushlab panel stage ladder` ladders sets (decision 0023,
+docs/runbooks/panel.md).
 
 ## 2. Write the ladder
 

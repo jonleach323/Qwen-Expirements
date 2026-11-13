@@ -18,8 +18,8 @@ of the personas file's persona of that name when one is given, else its
 own description column's. Units of one persona and description ask one
 question, so they are asked it together, and an unpushed reply gets one
 row per question, which names its persona. A run is a unit's when run_push
-gives the unit's key, its neuron and direction; a pushed run of no unit of
-the file, or of several units, is asked nothing.
+gives the unit's key, its neuron or set and direction; a pushed run of no
+unit of the file, or of several units, is asked nothing.
 
 plan_jobs plans a judging job as Jobs, one per question: one for a job
 asking every reply one question, one per unit question with --units, each
