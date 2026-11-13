@@ -256,7 +256,7 @@ def test_a_library_unit_is_refused_inside_the_repository(
         (["--controls", "200", "--max-gpu-hours", "1"], "its 200 controls need"),
         (["--prompts", "prompts/missing.jsonl"], "cannot read the prompt set"),
         (["--units", "MISSING"], "cannot read the units file"),
-        (["--units", "SET"], "sets cannot go into experiment files"),
+        (["--units", "SET"], "ladder sets with pushlab panel stage ladder"),
         (["--max-gpu-hours", "1", "--units", "DEEP"], "layer 9 is out of range"),
     ],
 )
@@ -273,7 +273,9 @@ def test_bad_options_are_refused_and_nothing_is_written(
         "SET": tmp_path / "set.csv",
         "DEEP": tmp_path / "deep.csv",
     }
-    files["SET"].write_text("unit\ntiny-vl:set:pair\n", encoding="utf-8")
+    # A set with its definition, which a ladder's shapes cannot hold.
+    pair = 'tiny-vl:set:pair,"[[1, 3, 1.0]]",,made up\n'
+    files["SET"].write_text(f"unit,entries,size,source_ref\n{pair}", encoding="utf-8")
     files["DEEP"].write_text("unit\ntiny-vl:L9:N3\n", encoding="utf-8")
     options = [str(files.get(option, option)) for option in options]
     assert ladder(*options) == 1

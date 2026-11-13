@@ -15,10 +15,12 @@ more; the first that fails stops expansion with a message naming it.
 A condition's random controls are copies of its schedules with each unit
 swapped for a neuron of the same layer, at the same doses on the same
 passes. They are drawn from the condition's control_seed and never land on
-a unit in units/known.csv, a unit any condition of the experiment pushes,
-or an earlier control of the condition. Control k pushes the same neurons
-for every prompt, seed and grid value, so the controls match the condition
-point for point, and its runs' control_of names the run they mirror.
+a unit in units/known.csv, a neuron any condition of the experiment pushes,
+alone or in a set, or an earlier control of the condition. Control k pushes
+the same neurons for every prompt, seed and grid value, so the controls
+match the condition point for point, and its runs' control_of names the run
+they mirror. A condition that pushes a set of neurons has no controls yet
+(decision 0019), and a set's ID names one set in the whole experiment.
 
 Runs are batched in order. A batch holds runs of one prompt, so no row is
 padded, and one seed, since generate draws a batch's samples from one
@@ -32,10 +34,11 @@ it mirrors.
 
 Each run is a RunRecord with no reply yet: status "planned", which
 write_runs refuses, empty output, the model's revision, the run's
-sampling seed, and its schedule's segments, each with control_for (the
-unit a control replaces) and control_seed, both None for a condition's own
-run. The label of its condition's schedule, which no RunRecord field
-holds, comes with it.
+sampling seed, and its schedule's segments as a schedule file writes them
+(a set's with its definition, so the record alone makes the set again),
+each with control_for (the unit a control replaces) and control_seed, both
+None for a condition's own run. The label of its condition's schedule,
+which no RunRecord field holds, comes with it.
 """
 
 import hashlib
@@ -52,9 +55,11 @@ from pushlab.runs.spec import Condition, ExperimentSpec
 from pushlab.schedules.model import Schedule
 from pushlab.schedules.validation import ScheduleWarning, validate
 from pushlab.schedules.yaml_io import to_mapping
+from pushlab.schedules.yaml_sets import refuse_two_definitions
 from pushlab.store.records import RunRecord, make_run_id
 from pushlab.units import controls
 from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron_set import NeuronSet, unit_neurons
 
 # The status of a run that has not run yet; write_runs saves only results.
 PLANNED = "planned"
@@ -132,6 +137,12 @@ def _draw(
         raise ValueError(
             f"condition {condition.label!r}: it pushes no unit to draw a control "
             "for; remove its controls"
+        )
+    if sets := [unit for unit in units if isinstance(unit, NeuronSet)]:
+        raise ValueError(
+            f"condition {condition.label!r}: it pushes the set of neurons "
+            f"{sets[0]}, and random controls for sets come later (decision 0019); "
+            "remove its controls and control_seed"
         )
     taken = set(avoid) | set(units)
     n = condition.controls
@@ -254,9 +265,10 @@ def _pack(sets: Sequence[Sequence[T]], size: int) -> list[list[T]]:
 def expand(spec: ExperimentSpec) -> Expansion:
     """Every run the spec means, in order, after checking every condition.
 
-    A prompt set that cannot be read, more runs than MOST_RUNS, a condition
-    that validate() refuses, or controls that cannot be drawn raise
-    ValueError, before any run is made. Nothing loads a model.
+    A prompt set that cannot be read, more runs than MOST_RUNS, a set's ID
+    given two definitions, a condition that validate() refuses, or controls
+    that cannot be drawn, such as a set's, raise ValueError, before any run
+    is made. Nothing loads a model.
 
     Example:
         >>> from pushlab import PROJECT_ROOT
@@ -284,6 +296,12 @@ def expand(spec: ExperimentSpec) -> Expansion:
             f"it means {total:,} runs, more than the {MOST_RUNS:,} that six-digit "
             "run IDs can number; split it into smaller experiments"
         )
+    refuse_two_definitions(
+        (f"condition {label!r}", unit)
+        for condition in spec.conditions
+        for label, schedule in condition.points
+        for unit in schedule.units()
+    )
     found: list[str] = []
     for condition in spec.conditions:
         for label, schedule in condition.points:
@@ -292,11 +310,12 @@ def expand(spec: ExperimentSpec) -> Expansion:
     known_sha256 = None
     if any(condition.controls for condition in spec.conditions):
         known, known_sha256 = _known()
-        pushed = {
-            unit
+        pushed = {  # every neuron pushed, a set's each
+            neuron
             for condition in spec.conditions
             for _, schedule in condition.points
             for unit in schedule.units()
+            for neuron, _ in unit_neurons(unit)
         }
         for condition in spec.conditions:
             if condition.controls:

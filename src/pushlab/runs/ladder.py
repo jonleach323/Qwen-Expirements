@@ -8,7 +8,9 @@ neuron, on the prompt pass too unless told otherwise, with a grid of
 signed doses, the unit's direction times each dose. So the experiment runs
 units x doses x prompts x seeds runs, plus an unpushed baseline when asked,
 and matched random controls. One seed decodes greedily; several sample
-each reply at temperature 1, as greedy decoding takes one seed.
+each reply at temperature 1, as greedy decoding takes one seed. A shape's
+params cannot hold a set of neurons' definition, so a units file with a
+set is refused: pushlab panel stage ladder ladders sets (decision 0023).
 
 A dose above the ceiling of 1.4 (pushlab.schedules.validation) sets
 allow_over_ceiling, since a ladder that seeks the dose where the text
@@ -37,6 +39,7 @@ from pushlab.runs.spec import ExperimentSpec, read_spec, spec_from_yaml
 from pushlab.schedules.validation import DEFAULT_CEILING
 from pushlab.schedules.yaml_text import dump_yaml, load_yaml
 from pushlab.units.ladder_units import LadderUnit
+from pushlab.units.neuron_set import NeuronSet
 
 TEMPERATURE = 1.0  # each reply's sampling, with several seeds
 HOURS_MARGIN = 1.5  # max_gpu_hours over the estimate, by default
@@ -167,12 +170,23 @@ class Ladder:
     hours_note: str = ""
 
     def __post_init__(self) -> None:
-        """Refuse no unit, units of several models, and doses checked_doses
-        refuses; keep the units and the doses, as floats, in tuples."""
+        """Refuse no unit, units of several models, a set of neurons, and
+        doses checked_doses refuses; keep the units and the doses, as
+        floats, in tuples."""
         if not self.units:
             raise ValueError("a ladder needs at least one unit")
         if len({unit.unit.model_name for unit in self.units}) > 1:
             raise ValueError("a ladder's units must all be of one model")
+        named = {str(u.unit): 0 for u in self.units if isinstance(u.unit, NeuronSet)}
+        if sets := list(named):  # a shape's params name units by ID alone
+            more = f" and {len(sets) - 1} more" if sets[1:] else ""
+            has = f"{self.units_file} has" if self.units_file else "it has"
+            raise ValueError(
+                f"{has} the set of neurons {sets[0]}{more}, but pushlab ladder "
+                "writes each unit as a shape's params, which cannot hold a set's "
+                "definition: ladder sets with pushlab panel stage ladder (decision "
+                "0023)"
+            )
         object.__setattr__(self, "units", tuple(self.units))
         object.__setattr__(self, "doses", checked_doses(self.doses))
 

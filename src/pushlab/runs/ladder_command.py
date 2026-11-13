@@ -13,13 +13,13 @@ times the time the runs' reply tokens take at the model's speed, the one
 to a quarter hour.
 
 It refuses, writing nothing, with the reason on stderr: doses or seeds
-that --doses and --seeds do not take; a units file the reader refuses; an
---out that is a folder, that exists without --overwrite, or that is inside
-the repository while a unit comes from the Neuron Persona Library, whose
-data stays out of git (decision 0020); a name that is not an experiment's;
-a prompt set that cannot be read; a model with no known speed, without
---max-gpu-hours; and a ladder that does not expand. It loads no model and
-runs nothing.
+that --doses and --seeds do not take; a units file the reader refuses, or
+one with a set of neurons; an --out that is a folder, that exists without
+--overwrite, or that is inside the repository while a unit comes from the
+Neuron Persona Library, whose data stays out of git (decision 0020); a
+name that is not an experiment's; a prompt set that cannot be read; a
+model with no known speed, without --max-gpu-hours; and a ladder that does
+not expand. It loads no model and runs nothing.
 """
 
 import argparse

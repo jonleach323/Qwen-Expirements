@@ -23,7 +23,9 @@ condition per unit, `u01`, `u02` and so on, each a constant push of its
 unit at every dose of the ladder, so units × doses × prompts runs
 (decision 0022; `docs/runbooks/ladder.md`). A ladder of the Neuron
 Persona Library's units holds its data, so it is written and kept outside
-the repository, on the pod.
+the repository, on the pod. Its units are single neurons: a set of
+neurons needs its definition written out (below), which `pushlab panel
+stage ladder` does (decision 0023).
 
 ## An example
 
@@ -124,6 +126,35 @@ written in one of two ways, as schedule files are
   `onset`, `handoff`, `alternate` and `ramp`
   (`src/pushlab/schedules/shapes.py` lists each one's params).
 
+A segment can push a set of neurons, pushed as one unit (decision 0019),
+such as one of Mayner's persona sets. Its `unit` is the set's ID,
+`<model>:set:<name>`, and the set's definition goes beside it under `set`
+(decision 0023):
+
+```
+segments:
+  - unit: qwen3-8b:set:pirate-top50
+    set: {entries: [[17, 1234, 0.52], [18, 99, -0.31]], size: 96.04, source: mayner role pirate}
+    alpha: 1.0
+```
+
+- `entries` lists the set's neurons, each `[layer, neuron, coefficient]`,
+  layers and neurons counted from 0, each neuron once and no coefficient 0.
+- `size` is the length of the set's push at dose 1, such as Mayner's
+  strength, or `null` for the residual size of the set's one layer, as a
+  neuron's dose has; a set with neurons in more than one layer needs one.
+- `source` says where the set comes from.
+
+All three are needed, on every segment that pushes the set, so a run's
+record holds the whole set and the experiment's hash covers every
+coefficient; a YAML anchor saves writing it twice: `set: &pirate {...}`
+on the first segment, `set: *pirate` on the next. A set's ID names one
+set in the whole experiment: one ID with two definitions is refused, and
+so is a definition beside a neuron's ID. A shape's params name units by
+ID alone, so a schedule that pushes a set is written as segments, and a
+grid cannot vary one. A condition that pushes a set cannot have random
+controls yet.
+
 A condition may also have:
 
 - `grid`: some of a shape's params, each given as a list of values, such
@@ -143,16 +174,16 @@ A condition may also have:
   pushed neuron swapped for a random neuron of the same layer, at the same
   doses on the same reply tokens, so its schedule differs only in which
   neuron is pushed. It is never a unit in `units/known.csv`, never a unit
-  any condition of the experiment pushes, and a condition's n controls
-  are n different neurons. Control k uses the same neurons for every
-  prompt, seed and grid value, and runs in the same batch as the run it
-  mirrors, unless a run and its controls are more than a batch holds. A
-  condition that pushes nothing cannot have controls, and
-  asking for more than a layer has neurons left is refused. With greedy
-  decoding, a control and its run then differ only in the neuron pushed.
-  With sampling, they do not yet share random numbers: `generate` draws
-  each row's from its place in the batch, and a control sits in another
-  row (decision 0014).
+  any condition of the experiment pushes, alone or in a set, and a
+  condition's n controls are n different neurons. Control k uses the same
+  neurons for every prompt, seed and grid value, and runs in the same
+  batch as the run it mirrors, unless a run and its controls are more than
+  a batch holds. A condition that pushes nothing cannot have controls, nor
+  yet one that pushes a set, and asking for more than a layer has neurons
+  left is refused. With greedy decoding, a control and its run then
+  differ only in the neuron pushed. With sampling, they do not yet share
+  random numbers: `generate` draws each row's from its place in the batch,
+  and a control sits in another row (decision 0014).
 
 ## What expand does
 
@@ -186,8 +217,8 @@ A condition may also have:
 
 Each run is a run record (`src/pushlab/store/records.py`) with no reply
 yet and the status `planned`. Its schedule lists the segments it pushes,
-each with `control_for` (for a control, the unit it replaces) and
-`control_seed`.
+a set's with its definition, each with `control_for` (for a control, the
+unit it replaces) and `control_seed`.
 
 Three hashes say what the runs came from. The `spec sha256` changes
 whenever any setting does, but not with comments, spacing, the order of

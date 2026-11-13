@@ -57,8 +57,12 @@ def test_a_list_of_candidates_is_a_units_file(tmp_path: Path) -> None:
         ("persona\nBrass Owl\n", "no unit column"),
         ("unit\n", "lists no unit"),
         ("unit\nqwen3-8b:L9\n", "row 2"),
-        ("unit\nqwen3-8b:set:owl-top10\n", "sets cannot go into experiment files"),
-        (CANDIDATES_HEADER + "m/x,mayner,pirate,qwen3-8b:L1:N1,set,1,1\n", "a set"),
+        # A set's row needs its definition's columns, and a kind must be its unit's.
+        ("unit\nqwen3-8b:set:owl-top10\n", "needs its definition's columns"),
+        (
+            CANDIDATES_HEADER + "m/x,mayner,pirate,qwen3-8b:L1:N1,set,1,1\n",
+            "its kind is set, but 'qwen3-8b:L1:N1' is no set's ID",
+        ),
         ("unit,direction\nqwen3-8b:L1:N1,2\n", "direction must be"),
         ("unit\nqwen3-8b:L1:N1\nqwen3-8b:L1:N1\n", "row 3 repeats row 2"),
         ("unit\nqwen3-8b:L1:N1\nqwen3.5-4b:L1:N1\n", "mixes units of"),

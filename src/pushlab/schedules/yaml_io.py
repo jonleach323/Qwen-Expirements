@@ -24,10 +24,23 @@ ceiling. Unknown keys, params, shapes and units are refused with a message that
 names them. Schedules are always written out as segments, so reading one back
 gives an equal schedule, every dose bit for bit.
 
-Units in files are neurons. Sets of neurons (decision 0019) come to files in a
-later step: until then a set's ID, such as qwen3-8b:set:pirate-top50, is
-refused, and so is writing a schedule that pushes a set, which could not be
-read back.
+A segment may push a set of neurons (decision 0019): its unit is the set's ID
+and the set's definition goes beside it (pushlab.schedules.yaml_sets):
+
+    name: pirate
+    segments:
+      - unit: qwen3-8b:set:pirate-top50
+        set: {entries: [[17, 1234, 0.52], [18, 99, -0.31]], size: 96.04,
+              source: mayner role pirate}
+        alpha: 1.0
+
+A set's ID without its definition, a definition beside a neuron, and one ID
+given two definitions are refused. to_mapping writes every segment of a set
+with its definition, so a schedule with sets reads back equal too, every
+coefficient and size bit for bit, and so does a run's record of it. A shape's
+params name units by ID alone and cannot hold a definition, so a shape whose
+params name a set is refused: a schedule that pushes a set is written as
+segments.
 
 The text is read with pushlab.schedules.yaml_text.load_yaml, which refuses a
 key given twice and reads numbers and true/false as YAML 1.2 does, and written
@@ -38,20 +51,27 @@ that holds a schedule should be read with load_yaml too.
 import inspect
 import math
 import numbers
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from pushlab.schedules.model import Schedule, Segment
 from pushlab.schedules.shapes import SHAPES
+from pushlab.schedules.yaml_sets import (
+    FORM,
+    definition,
+    is_set_id,
+    refuse_two_definitions,
+    set_from_definition,
+)
 from pushlab.schedules.yaml_text import dump_yaml, load_yaml
 from pushlab.units.neuron import NeuronUnit
-from pushlab.units.neuron_set import NeuronSet
+from pushlab.units.neuron_set import NeuronSet, Unit
 
 SCHEDULE_KEYS = ("name", "allow_over_ceiling", "segments", "shape", "params")
 SEGMENT_KEYS = (
     "unit",
+    "set",
     "alpha",
     "alpha_start",
     "alpha_end",
@@ -63,8 +83,6 @@ SEGMENT_KEYS = (
 )
 # The shapes' params that name a unit, as text such as qwen3.5-4b:L14:N8949.
 UNIT_PARAMS = ("unit", "a", "b")
-# How a set's ID starts (model:set:), which no neuron's ID can.
-_SET_ID = re.compile(r"[^:\s]+:set:")
 
 
 def _keys(given: Mapping, allowed: tuple[str, ...], where: str) -> None:
@@ -98,17 +116,41 @@ def _dose(where: str, key: str, value: object) -> None:
         raise ValueError(f"{where}: {key} must be a finite number, not {value!r}")
 
 
-def _unit(where: str, text: object) -> NeuronUnit:
-    if isinstance(text, str) and _SET_ID.match(text):
-        raise ValueError(
-            f"{where}: {text!r} names a set of neurons, and sets cannot be read "
-            "from schedule files yet; give a neuron's ID, such as "
-            "qwen3.5-4b:L14:N8949, or build a schedule with a set in Python"
-        )
+def _neuron(where: str, text: object) -> NeuronUnit:
     try:
         return NeuronUnit.parse(text)  # type: ignore[arg-type]
     except ValueError as error:
         raise ValueError(f"{where}: unknown unit {text!r}: {error}") from None
+
+
+def _param_unit(where: str, text: object) -> NeuronUnit:
+    """A shape's unit param: a neuron, as params cannot hold a set's definition."""
+    if is_set_id(text):
+        raise ValueError(
+            f"{where}: {text!r} names a set of neurons, and a shape's params cannot "
+            "hold its definition; write the schedule as segments, each with the "
+            f"set's definition beside its unit ({FORM})"
+        )
+    return _neuron(where, text)
+
+
+def _segment_unit(data: Mapping, where: str) -> Unit:
+    """A segment's unit: a neuron, or a set made from the definition beside it."""
+    text = data["unit"]
+    if is_set_id(text):
+        if "set" not in data:
+            raise ValueError(
+                f"{where}: {text!r} names a set of neurons, so the segment needs the "
+                f"set's definition beside it: {FORM}"
+            )
+        return set_from_definition(text, data["set"], where)
+    if "set" in data:
+        raise ValueError(
+            f"{where}: set: gives a set's definition, but the unit {text!r} is no "
+            "set's ID; leave set out for a neuron, or give the set's ID, such as "
+            "qwen3-8b:set:pirate-top50"
+        )
+    return _neuron(where, text)
 
 
 def _segment(data: object, where: str) -> Segment:
@@ -118,7 +160,7 @@ def _segment(data: object, where: str) -> Segment:
     if "unit" not in data:
         raise ValueError(f"{where} needs a unit, such as qwen3.5-4b:L14:N8949")
     for key in SEGMENT_KEYS:
-        if key not in ("unit", "region"):
+        if key not in ("unit", "set", "region"):
             _number_as_text(where, key, data.get(key))
     if "alpha" in data:
         if "alpha_start" in data or "alpha_end" in data:
@@ -133,7 +175,7 @@ def _segment(data: object, where: str) -> Segment:
         raise ValueError(f"{where}: give alpha_start and alpha_end together")
     else:
         raise ValueError(f"{where} needs alpha, or alpha_start and alpha_end")
-    unit = _unit(where, data["unit"])
+    unit = _segment_unit(data, where)
     try:
         return Segment(
             unit,
@@ -175,7 +217,7 @@ def _from_shape(shape: object, params: object) -> list[Segment]:
     given: dict[str, Any] = {}
     for key, value in params.items():
         if key in UNIT_PARAMS:
-            given[key] = _unit(where, value)
+            given[key] = _param_unit(where, value)
             continue
         if not isinstance(parameters[key].default, bool):  # not include_prompt
             _number_as_text(where, key, value)
@@ -231,6 +273,9 @@ def from_mapping(data: Mapping) -> Schedule:
         if not isinstance(listed, list):
             raise ValueError(f"segments must be a list of segments, not {listed!r}")
         segments = [_segment(item, f"segments[{i}]") for i, item in enumerate(listed)]
+        refuse_two_definitions(
+            (f"segments[{i}]", segment.unit) for i, segment in enumerate(segments)
+        )
     elif "shape" in data:
         segments = _from_shape(data["shape"], data.get("params"))
     else:
@@ -249,8 +294,9 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
 
     A constant segment gets alpha, a ramp alpha_start and alpha_end. Every
     segment gets its start, end and region, and one that repeats its on_for
-    and off_for. A schedule that pushes a set of neurons is refused, since
-    files name neurons only so far (see the module's docstring).
+    and off_for. A segment that pushes a set of neurons also gets the set's
+    definition beside its ID (pushlab.schedules.yaml_sets), so from_mapping
+    makes the same set again.
 
     Example:
         >>> from pushlab.schedules.shapes import onset
@@ -262,20 +308,18 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
         [{'unit': 'qwen3.5-4b:L14:N8949', 'alpha': 1.0, 'start': 50, 'end': None,
           'region': 'reply'}]
         >>> pair = NeuronSet("qwen3-8b", "pair", [(14, 1, 1.0), (14, 2, -0.5)], "x")
-        >>> to_mapping(onset(pair, 1.0, 50))  # doctest: +ELLIPSIS
-        Traceback (most recent call last):
-        ...
-        ValueError: segments[0] (qwen3-8b:set:pair at +1 from ...) pushes the set ...
+        >>> (segment,) = to_mapping(onset(pair, 1.0, 50))["segments"]
+        >>> list(segment)
+        ['unit', 'set', 'alpha', 'start', 'end', 'region']
+        >>> segment["unit"], segment["set"]  # doctest: +NORMALIZE_WHITESPACE
+        ('qwen3-8b:set:pair',
+         {'entries': [[14, 1, 1.0], [14, 2, -0.5]], 'size': None, 'source': 'x'})
     """
     segments = []
-    for i, segment in enumerate(_check_schedule(schedule).segments):
+    for segment in _check_schedule(schedule).segments:
+        written: dict[str, Any] = {"unit": str(segment.unit)}
         if isinstance(segment.unit, NeuronSet):
-            raise ValueError(
-                f"segments[{i}] ({segment.describe()}) pushes the set of neurons "
-                f"{segment.unit}, and sets cannot be written to schedule files "
-                "yet, since from_yaml could not read them back; keep a schedule "
-                "with a set in Python"
-            )
+            written["set"] = definition(segment.unit)
         start, end = segment.alpha_start, segment.alpha_end
         # The same bits, so a dose of 0.0 next to -0.0 keeps both signs.
         doses = (
@@ -286,7 +330,7 @@ def to_mapping(schedule: Schedule) -> dict[str, Any]:
         window = {"start": segment.start, "end": segment.end, "region": segment.region}
         if segment.repeats:
             window |= {"on_for": segment.on_for, "off_for": segment.off_for}
-        segments.append({"unit": str(segment.unit)} | doses | window)
+        segments.append(written | doses | window)
     return {
         "name": schedule.name,
         "allow_over_ceiling": schedule.allow_over_ceiling,
