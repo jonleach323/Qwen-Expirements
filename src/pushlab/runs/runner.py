@@ -8,7 +8,9 @@ failed runs. A call is one generate() call: planned batches that share
 the model, the decoding settings and the seed, and with group_by_length
 (the default) prompts of one length in tokens, so that no row is padded,
 up to batch_size runs. It loads the model and the calibration once, then
-runs the calls in plan order.
+runs the calls in plan order. With calibration: per_prompt there is no
+calibration file: a call that pushes first measures its rows' prompts'
+own residual sizes, with no push, each prompt once a session.
 
 After each call it saves the records as a shard and marks them in the
 index (pushlab.runs.folder), then rewrites the heartbeat and progress

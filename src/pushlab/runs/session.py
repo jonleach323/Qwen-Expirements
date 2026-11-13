@@ -7,7 +7,9 @@ brings the version's GPU time to max_gpu_hours, after the calls --limit
 allows, or at Ctrl-C, which loses only the call that was running; then it
 saves the speed it measured and the manifest, with this session in it.
 Each session has an ID, which its index lines and its manifest entry
-carry, with the code and library versions it ran.
+carry, with the code and library versions it ran. Under the per_prompt
+calibration, it measures each prompt's own residual sizes once, before the
+first call that needs them (pushlab.runs.batch.PromptSizes).
 """
 
 import os
@@ -192,6 +194,11 @@ class Session:
             self.tally.load_seconds = time.perf_counter() - loading
             step = "read the calibration and the prompts"
             inputs = session_inputs(spec, self.loaded.revision, self.identity, chosen)
+            if inputs.sizes is not None:
+                print(
+                    "Doses take each prompt's own residual sizes (calibration "
+                    "per_prompt), measured with no push before its first batch."
+                )
             step = "write the manifest"
             self.environment = environment_info(device)
             self._warn_if_code_changed()

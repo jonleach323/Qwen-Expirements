@@ -6,7 +6,10 @@ pass for step 0, the pass that read reply token j - 1 for step j. Its
 units must be those the run's schedule pushes on that pass, in the order
 the schedule names them, and its amounts the doses there times one
 number per unit, the unit's dose-1 amount, on every step of every run, up
-to the 16-bit rounding they are saved with.
+to the 16-bit rounding they are saved with. Under the per_prompt
+calibration each prompt has its own residual sizes, so the dose-1 amount
+is one number per unit and prompt; a set with its own size takes no
+sizes, so it is still one number per unit.
 """
 
 import math
@@ -17,6 +20,12 @@ from pushlab.runs.batch import record_schedule
 from pushlab.schedules.model import Schedule, dose_text
 from pushlab.store.records import RunRecord
 from pushlab.store.steps import REGIONS, StepRecord
+from pushlab.units.neuron_set import NeuronSet
+
+# A unit's ID, and the prompt whose sizes its dose-1 amount takes, or None
+# when it is one number whatever the prompt: what verify gathers a dose-1
+# amount for, over every run.
+ScaleKey = tuple[str, str | None]
 
 FEW = 3  # run IDs or steps a problem names before "and N more"
 # How far an amount may be from its dose times the dose-1 amount: twice its
@@ -179,15 +188,73 @@ def _agrees(amount: float, dose: float) -> bool:
     return dose != 0 and (amount > 0) == (dose > 0)
 
 
+def scale_key(
+    unit: str, record: RunRecord, schedule: Schedule, by_prompt: bool
+) -> ScaleKey:
+    """Which dose-1 amount a unit's amounts in a run must share with other
+    runs': the unit's alone, or with by_prompt (the per_prompt calibration)
+    the unit's on the run's prompt, unless the unit is a set with its own
+    size, whose dose takes no residual sizes.
+
+    Example:
+        >>> from pushlab.schedules.model import Segment
+        >>> from pushlab.units.neuron import NeuronUnit
+        >>> pair = NeuronSet("tiny", "pair", [(1, 5, 1.0), (0, 3, 0.5)], "-", 2.0)
+        >>> neuron = NeuronUnit("tiny", 1, 5)
+        >>> both = [Segment(neuron, 1.0, 1.0), Segment(pair, 1.0, 1.0)]
+        >>> run = RunRecord(
+        ...     "x-000001", "x", "tiny@main", "p-2", [], {}, 0, "", "", "", [], "ok"
+        ... )
+        >>> scale_key("tiny:L1:N5", run, Schedule("both", both), False)
+        ('tiny:L1:N5', None)
+        >>> scale_key("tiny:L1:N5", run, Schedule("both", both), True)
+        ('tiny:L1:N5', 'p-2')
+        >>> scale_key("tiny:set:pair", run, Schedule("both", both), True)
+        ('tiny:set:pair', None)
+    """
+    if by_prompt:
+        sized = {
+            str(u)
+            for u in schedule.units()
+            if isinstance(u, NeuronSet) and u.size is not None
+        }
+        if unit not in sized:
+            return unit, record.prompt_id
+    return unit, None
+
+
+def scale_problem(key: ScaleKey, bound: Bound) -> str | None:
+    """What is wrong with a dose-1 amount gathered over every run (key and
+    its bound), in words, or None when one number fits them all.
+
+    Example:
+        >>> bound = Bound()
+        >>> bound.add_amount(1.0, 1.0, "run a")
+        >>> bound.add_amount(2.0, 1.0, "run b")
+        >>> scale_problem(("u", "p-2"), bound)
+        "u's amount per dose on p-2 is 1 in run a but 2 in run b, not one number"
+        >>> scale_problem(("u", None), Bound()) is None
+        True
+    """
+    if (where := bound.disagreement("in")) is None:
+        return None
+    unit, prompt = key
+    on = "" if prompt is None else f" on {prompt}"
+    return f"{unit}'s amount per dose{on} {where}"
+
+
 def check_steps(
     record: RunRecord,
     steps: list[StepRecord],
     say: Callable[[str], None],
-    scales: dict[str, Bound],
+    scales: dict[ScaleKey, Bound],
+    by_prompt: bool = False,
 ) -> None:
     """Checks 5 and 6 of verify on the steps of a run with a reply: say is
     told each problem, and scales gathers each unit's dose-1 amounts over
-    every run, for the check across runs (Bound.disagreement).
+    every run, for the check across runs (scale_problem): by unit, or with
+    by_prompt, as the per_prompt calibration needs, by unit and prompt
+    (scale_key).
 
     Example:
         >>> check_steps(record, steps, print, {})  # doctest: +SKIP
@@ -239,6 +306,7 @@ def check_steps(
     for unit, bound in bounds.items():
         if where := bound.disagreement("at"):
             say(f"{run_id}: {unit}'s amount per dose {where}")
-        else:  # one dose-1 amount fits the run's steps: it must fit the others'
-            scale = scales.setdefault(unit, Bound())
+        elif schedule is not None:  # one fits the run's steps: it must fit others'
+            key = scale_key(unit, record, schedule, by_prompt)
+            scale = scales.setdefault(key, Bound())
             scale.add(bound.low, bound.high, run_id, (bound.low + bound.high) / 2)

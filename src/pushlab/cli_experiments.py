@@ -126,7 +126,8 @@ def add_run(commands: argparse._SubParsersAction) -> None:
         "the saved batches have taken max_gpu_hours. It refuses a folder made "
         "from another experiment file, prompt set, known units, model download "
         "or calibration, and one that another experiment or another runner "
-        "uses. It needs the model downloaded and, to push, its calibration.",
+        "uses. It needs the model downloaded and, to push with the fixed "
+        "calibration, its calibration file; calibration: per_prompt needs none.",
         epilog="Exit status: 0 when it finished or had nothing to do; 1 when it "
         "refused or could not save; 2 when a run failed; 3 when it stopped with "
         "runs left, at max_gpu_hours or --limit; 130 after Ctrl-C.",
