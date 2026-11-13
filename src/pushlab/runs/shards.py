@@ -15,6 +15,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from pushlab.runs.folder import (
+    SCORES,
+    SENTENCES,
     SHARDS,
     STEPS,
     latest,
@@ -93,7 +95,7 @@ def remove_leftovers(folder: Path) -> int:
         >>> remove_leftovers(Path("/no/such/folder"))
         0
     """
-    places = (folder, folder / SHARDS, folder / STEPS)
+    places = [folder] + [folder / name for name in (SHARDS, STEPS, SCORES, SENTENCES)]
     leftovers = [path for place in places for path in place.glob(".*.tmp")]
     for path in leftovers:
         path.unlink()

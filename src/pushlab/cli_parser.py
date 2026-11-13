@@ -16,6 +16,8 @@ from pushlab.cli_experiments import (
     add_verify,
     positive_int,
 )
+from pushlab.cli_labels import add_label
+from pushlab.cli_scoring import add_score
 from pushlab.models.registry import REGISTRY
 
 
@@ -278,4 +280,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_verify(commands)
     add_fetch(commands)
     add_candidates(commands)
+    add_score(commands)
+    add_label(commands)
     return parser

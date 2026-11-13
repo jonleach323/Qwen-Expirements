@@ -13,6 +13,9 @@ The folder is <runs dir>/<experiment name>, and holds:
 - heartbeat.json and progress.json, rewritten after every batch, and the
   experiment's manifest.json; .lock, held while a runner works on the
   folder.
+- scores/ and sentences/, once pushlab score has judged the runs: Parquet
+  files of verdicts on whole replies and on windows of their sentences
+  (pushlab.store.scores), written whole while pushlab score holds the lock.
 
 A batch's files are written to hidden temporary files, flushed to the disk
 and renamed into place (write_whole), and only then is the batch marked in
@@ -40,6 +43,8 @@ IDENTITY_FILE = "experiment.json"
 INDEX_FILE = "index.jsonl"
 SHARDS = "shards"
 STEPS = "steps"
+SCORES = "scores"
+SENTENCES = "sentences"
 HEARTBEAT_FILE = "heartbeat.json"
 PROGRESS_FILE = "progress.json"
 LOCK_FILE = ".lock"

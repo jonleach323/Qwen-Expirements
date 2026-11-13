@@ -339,6 +339,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_fetch(
             args.source, args.data_dir, refresh=args.refresh, all_files=args.all_files
         )
+    if args.command == "score":
+        from pushlab.scoring.score_command import run_score_command
+
+        return run_score_command(args)
+    if args.command == "label":
+        from pushlab.scoring.label_command import run_label_command
+
+        return run_label_command(args)
     if args.command == "candidates":
         from pushlab.discovery.candidates_command import run_candidates
 

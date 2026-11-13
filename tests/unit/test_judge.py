@@ -1,0 +1,285 @@
+"""The judge (pushlab.scoring.judge): verdicts, retries with backoff, the
+cache, and the family rule, all on FakeBackend, with no network."""
+
+import doctest
+import threading
+from pathlib import Path
+
+import pytest
+
+from pushlab.scoring import judge as judge_module
+from pushlab.scoring.cache import VerdictCache
+from pushlab.scoring.fake_backend import FakeBackend, busy
+from pushlab.scoring.judge import (
+    CallError,
+    Job,
+    Judge,
+    JudgeUnavailable,
+    Reply,
+    check_family,
+    family,
+    request_key,
+    same_family,
+    text_sha256,
+)
+from pushlab.scoring.personas import Persona
+from pushlab.scoring.rubrics import load_rubric
+from pushlab.scoring.sentences import sentence_windows
+
+OWL = Persona("Brass Owl", "A pompous mechanical owl who lectures in riddles.")
+CAT = Persona("Velvet Cat", "A sleepy cat.")
+GOOD = '{"reason": "Fluent.", "score": 9}'
+BROKEN = '{"reason": "Fluent.", "score": "nine"}'
+
+
+@pytest.fixture
+def coherence():  # type: ignore[no-untyped-def]
+    return load_rubric("coherence")
+
+
+def _judge(backend: FakeBackend, cache: VerdictCache | None = None) -> tuple:
+    """A judge whose waits are recorded, not slept, at full jitter."""
+    waits: list[float] = []
+    judge = Judge(backend, cache, sleep=waits.append, jitter=lambda: 1.0)
+    return judge, waits
+
+
+def test_a_well_formed_answer_is_ok_at_the_first_attempt(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, waits = _judge(FakeBackend([GOOD]))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.value, verdict.label) == ("ok", 9.0, None)
+    assert (verdict.reason, verdict.error, verdict.attempts) == ("Fluent.", "", 1)
+    assert not verdict.cached and waits == []
+    assert verdict.text_sha256 == text_sha256("Hello there.")
+    assert verdict.question_sha256 == coherence.ask().question_sha256
+
+
+def test_a_malformed_answer_is_retried_after_a_wait(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend([BROKEN, GOOD])
+    judge, waits = _judge(backend)
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.attempts, verdict.value) == ("ok", 2, 9.0)
+    assert waits == [2.0]
+    assert backend.requests[0] == backend.requests[1]  # the same question again
+
+
+def test_a_judge_that_never_answers_well_fails_with_no_label(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, waits = _judge(FakeBackend([BROKEN] * 4))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.label, verdict.value) == ("failed", None, None)
+    assert verdict.attempts == 4 and verdict.raw == BROKEN
+    assert verdict.error.startswith('malformed answer: "score" must be a whole number')
+    assert waits == [2.0, 4.0, 8.0]  # doubling, with no wait after the last
+
+
+def test_waits_grow_to_the_cap_and_jitter_shortens_them(coherence) -> None:  # type: ignore[no-untyped-def]
+    waits: list[float] = []
+    judge = Judge(
+        FakeBackend([BROKEN] * 6),
+        attempts=6,
+        max_delay=10.0,
+        sleep=waits.append,
+        jitter=lambda: 0.0,
+    )
+    assert judge.verdict(coherence, "Hi.").status == "failed"
+    assert waits == [1.0, 2.0, 4.0, 5.0, 5.0]  # half of 2, 4, 8, 10, 10
+
+
+def test_a_busy_server_is_retried_after_the_time_it_asks(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, waits = _judge(FakeBackend([busy(retry_after=30.0), busy(), GOOD]))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.attempts) == ("ok", 3)
+    assert waits == [30.0, 4.0]
+
+
+def test_a_failed_call_is_recorded_as_a_failure_with_its_error(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, waits = _judge(FakeBackend([busy("HTTP 529 overloaded")] * 4))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.error, verdict.attempts) == (
+        "failed",
+        "HTTP 529 overloaded",
+        4,
+    )
+    assert verdict.label is None and verdict.value is None and len(waits) == 3
+
+
+def test_an_error_that_cannot_pass_fails_at_once(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend([CallError("HTTP 400: the prompt is too long")])
+    judge, waits = _judge(backend)
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.attempts, waits) == ("failed", 1, [])
+    assert verdict.error == "HTTP 400: the prompt is too long"
+
+
+def test_a_refusal_fails_at_once_and_is_never_a_label(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, waits = _judge(FakeBackend([Reply("", "refusal", 50, 0)]))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.value, verdict.attempts) == ("failed", None, 1)
+    assert "refusal" in verdict.error and waits == []
+    assert verdict.input_tokens == 50
+
+
+def test_an_answer_cut_off_at_the_token_limit_is_retried(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, _ = _judge(FakeBackend([Reply('{"reason": "Flu', "length"), GOOD]))
+    verdict = judge.verdict(coherence, "Hello there.")
+    assert (verdict.status, verdict.attempts) == ("ok", 2)
+
+
+def test_a_key_that_stops_every_call_stops_the_job(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend([CallError("ANTHROPIC_API_KEY was rejected", fatal=True)])
+    judge, _ = _judge(backend)
+    with pytest.raises(JudgeUnavailable, match="fake:fake-judge: ANTHROPIC_API_KEY"):
+        judge.verdict(coherence, "Hello there.")
+
+
+def test_a_blank_text_fails_with_no_call(coherence) -> None:  # type: ignore[no-untyped-def]
+    judge, _ = _judge(FakeBackend([]))
+    verdict = judge.verdict(coherence, " \n")
+    assert (verdict.status, verdict.error, verdict.attempts) == (
+        "failed",
+        "there is no text to judge",
+        0,
+    )
+
+
+def test_the_cache_prevents_a_repeat_call_for_identical_text(
+    coherence,
+    tmp_path: Path,  # type: ignore[no-untyped-def]
+) -> None:
+    backend = FakeBackend([GOOD, '{"reason": "Odd.", "score": 4}'])
+    judge, _ = _judge(backend, VerdictCache(tmp_path, "fake:fake-judge"))
+    first = judge.verdict(coherence, "Hello there.")
+    again = judge.verdict(coherence, "  Hello there.\n")  # the same text, stripped
+    assert backend.calls == 1
+    assert (again.status, again.value, again.cached, again.attempts) == (
+        "ok",
+        9.0,
+        True,
+        0,
+    )
+    assert again.key == first.key
+    assert judge.verdict(coherence, "Hello you.").value == 4.0
+    assert backend.calls == 2
+    # A new judge reads the same file: still no call.
+    later, _ = _judge(FakeBackend([]), VerdictCache(tmp_path, "fake:fake-judge"))
+    assert later.verdict(coherence, "Hello there.").cached
+
+
+def test_a_failure_is_not_cached(coherence, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    cache = VerdictCache(tmp_path, "fake:fake-judge")
+    judge, _ = _judge(FakeBackend([CallError("bad request"), GOOD]), cache)
+    assert judge.verdict(coherence, "Hello there.").status == "failed"
+    assert len(cache) == 0
+    assert judge.verdict(coherence, "Hello there.").status == "ok"
+
+
+def test_the_key_changes_with_backend_model_rubric_persona_and_text() -> None:
+    speaks_as = load_rubric("speaks_as")
+    request = speaks_as.request("Hoo.", OWL)
+    key = request_key("api", "claude-haiku-5-5", request)
+    others = {
+        request_key("local", "claude-haiku-5-5", request),
+        request_key("api", "granite-4.1-8b", request),
+        request_key("api", "claude-haiku-5-5", speaks_as.request("Hoo!", OWL)),
+        request_key("api", "claude-haiku-5-5", speaks_as.request("Hoo.", CAT)),
+        request_key(
+            "api", "claude-haiku-5-5", speaks_as.request("Hoo.", OWL).__class__(
+                **{**request.__dict__, "version": 2}
+            ),
+        ),
+    }  # fmt: skip
+    assert key not in others and len(others) == 5
+
+
+def test_jobs_of_one_question_and_text_are_judged_once_in_order(coherence) -> None:  # type: ignore[no-untyped-def]
+    answers = {"One.": GOOD, "Two.": '{"reason": "Odd.", "score": 3}'}
+    backend = FakeBackend(lambda request: answers[request.text])
+    judge, _ = _judge(backend)
+    jobs = [Job(coherence, text) for text in ("One.", "Two.", " One. ", "", "Two.")]
+    done: list[int] = []
+    verdicts = judge.verdicts(jobs, workers=2, done=done.append)
+    assert [v.value for v in verdicts] == [9.0, 3.0, 9.0, None, 3.0]
+    assert [v.cached for v in verdicts] == [False, False, True, False, True]
+    assert backend.calls == 2 and done == [1, 2, 3]
+    assert verdicts[3].error == "there is no text to judge"
+
+
+def test_many_workers_judge_each_job_once(coherence) -> None:  # type: ignore[no-untyped-def]
+    seen: set[str] = set()
+    lock = threading.Lock()
+
+    def answer(request):  # type: ignore[no-untyped-def]
+        with lock:
+            assert request.text not in seen
+            seen.add(request.text)
+        score = len(request.text) % 11
+        return f'{{"reason": "ok", "score": {score}}}'
+
+    judge, _ = _judge(FakeBackend(answer))
+    jobs = [Job(coherence, f"Text number {n}.") for n in range(40)]
+    verdicts = judge.verdicts(jobs, workers=8)
+    assert [v.value for v in verdicts] == [
+        len(f"Text number {n}.") % 11 for n in range(40)
+    ]
+
+
+def test_a_stopped_judge_stops_the_jobs(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend([CallError("no key", fatal=True)] + [GOOD] * 5)
+    judge, _ = _judge(backend)
+    with pytest.raises(JudgeUnavailable):
+        judge.verdicts([Job(coherence, f"Text {n}.") for n in range(5)])
+    assert backend.calls == 1
+
+
+def test_window_scoring_sends_only_the_chosen_sentences() -> None:
+    reply = "I am an assistant. Hoo, I am the Brass Owl! Riddle me this. Goodbye."
+    windows = sentence_windows(reply, size=2)
+    assert [w.text for w in windows] == [
+        "I am an assistant. Hoo, I am the Brass Owl!",
+        " Riddle me this. Goodbye.",
+    ]
+    backend = FakeBackend(['{"reason": "Owl.", "label": "speaks_as"}'])
+    judge, _ = _judge(backend)
+    judge.verdict(load_rubric("speaks_as"), windows[1].text, OWL)
+    (request,) = backend.requests
+    assert request.text == "Riddle me this. Goodbye."
+    sent = request.system + request.user
+    assert "I am an assistant" not in sent and "Hoo, I am" not in sent
+    assert "Riddle me this. Goodbye." in request.user
+
+
+@pytest.mark.parametrize(
+    ("judge_model", "model", "same"),
+    [
+        ("granite-4.1-8b", "qwen3-8b", False),
+        ("ibm-granite/granite-4.1-8b", "qwen3.5-4b", False),
+        ("claude-haiku-5-5", "qwen3-8b", False),
+        ("Qwen/Qwen2.5-7B-Instruct", "qwen3-8b", True),
+        ("qwen3-8b", "qwen3-8b@b968826d", True),
+        ("deepseek-r1-distill-qwen-7b", "qwen3-8b", True),
+        ("dolphin-2.9", "phi-4", False),  # "phi" inside a word is no family
+        ("fake-judge", "tiny-vl", False),
+        ("tiny-judge", "tiny-vl", True),
+    ],
+)
+def test_a_judge_of_the_tested_models_family_is_refused(
+    judge_model: str, model: str, same: bool
+) -> None:
+    assert same_family(judge_model, model) is same
+    if same:
+        with pytest.raises(ValueError, match="choose a judge of another family"):
+            check_family(judge_model, [model])
+    else:
+        check_family(judge_model, [model])
+
+
+def test_a_models_family_is_the_first_word_of_its_name() -> None:
+    assert family("meta-llama/Llama-3.1-8B") == "llama"
+    assert family("google/gemma-3-12b-it") == "gemma"
+    assert family("qwen3-8b@b968826d") == "qwen"
+
+
+def test_docstring_examples_run() -> None:
+    result = doctest.testmod(judge_module)
+    assert result.attempted > 0
+    assert result.failed == 0
