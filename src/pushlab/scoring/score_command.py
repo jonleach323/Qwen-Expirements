@@ -169,7 +169,14 @@ def _score(
     experiment = judged_runs(spec_path, runs_dir)  # as saved now, under the lock
     backend = judge.backend
     plan = make_plan(
-        experiment, question, size, judge.name, backend.name, backend.model, judge.cache
+        experiment,
+        question,
+        size,
+        judge.name,
+        backend.name,
+        backend.model,
+        judge.cache,
+        getattr(backend, "settings", ""),
     )
     print(table_text(header_lines(experiment, question, judge.name, size, plan)))
     if not plan.todo:
@@ -248,8 +255,10 @@ def run_score(
         question = question_from(load_rubric(rubric_name), personas_file, persona)
         if judge is None:
             backend_name, model_name = backend, backends.judge_model(backend, model)
+            settings = backends.judge_settings(backend)
         else:
             backend_name, model_name = judge.backend.name, judge.backend.model
+            settings = getattr(judge.backend, "settings", "")
         name = judge_name(backend_name, model_name)
         experiment = judged_runs(spec_path, runs_dir)
         check_family(model_name, [experiment.spec.model])
@@ -259,7 +268,14 @@ def run_score(
             cache = judge.cache
         if dry_run:
             plan = make_plan(
-                experiment, question, size, name, backend_name, model_name, cache
+                experiment,
+                question,
+                size,
+                name,
+                backend_name,
+                model_name,
+                cache,
+                settings,
             )
             lines = header_lines(experiment, question, name, size, plan)
             calls, costs = len(plan.requests), read_judge_costs()

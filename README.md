@@ -27,8 +27,9 @@ token, with the pushes behind each token; `pushlab verify` checks them
 against the experiment file, `pushlab report` shows an experiment's
 replies with a marker wherever a push switched on or off, and
 `pushlab.store.query` opens every experiment's runs and steps in DuckDB
-(decision 0016). A schedule built in Python, not yet one in a file, can also
-push a NeuronSet, a few neurons pushed as one unit, such as a persona's top
+(decision 0016), and once they are judged, their scores (decision 0021).
+A schedule built in Python, not yet one in a file, can also push a
+NeuronSet, a few neurons pushed as one unit, such as a persona's top
 neurons from Will Mayner's persona-neurons data, which dose 1 pushes at his
 strength; and doses can be scaled by each prompt's own residual sizes, as
 the Neuron Persona Library scales them, instead of the fixed calibration

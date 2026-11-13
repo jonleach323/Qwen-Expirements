@@ -172,11 +172,13 @@ def make_plan(
     backend: str,
     model: str,
     cache: VerdictCache | None,
+    settings: str = "",
 ) -> Plan:
     """What a job judges: the experiment's whole replies, or with size its
     windows of size sentences, asked the question by the judge named judge
-    (<backend>:<model>), whose cache is cache. A request needs no call when
-    the cache holds its verdict, and a blank text fails at once.
+    (<backend>:<model>, with the backend's settings), whose cache is cache.
+    A request needs no call when the cache holds its verdict, and a blank
+    text fails at once.
 
     OSError or ValueError when the folder's table cannot be read.
     """
@@ -195,7 +197,7 @@ def make_plan(
             blank += 1
             continue
         request = question.request(item.text)
-        key = request_key(backend, model, request)
+        key = request_key(backend, model, request, settings)
         if cache is not None and key in cache:
             cached += 1
         else:
@@ -316,20 +318,6 @@ def _span(item: Item, spans: dict[tuple[str, int], Span]) -> Span | None:
     return None if item.window is None else spans[item.run.run_id, item.window.first]
 
 
-def _without_calls(
-    judge: Judge, items: Sequence[Item], jobs: Sequence[Job]
-) -> list[tuple[Item, Verdict]]:
-    """The items whose jobs need no call, with their verdicts: those the
-    cache holds, as the ones found before the judge stopped, and blank
-    texts."""
-    return [
-        (item, judge.verdict(job.rubric, job.text, job.persona, job.personas))
-        for item, job in zip(items, jobs, strict=True)
-        if not (key := judge.key_of(job))
-        or (judge.cache is not None and key in judge.cache)
-    ]
-
-
 def judge_chunks(
     judge: Judge,
     experiment: Experiment,
@@ -340,9 +328,11 @@ def judge_chunks(
 ) -> tuple[list[Verdict], JudgeUnavailable | None]:
     """Judge the plan's items CHUNK at a time, workers calls at a time, and
     save each chunk's rows before the next, printing a line for each; the
-    verdicts, and what stopped the judge when it could not answer at all,
-    after the chunk's verdicts it found are saved. Call it holding the
-    folder's lock; spans are the windows' (window_spans)."""
+    verdicts, and what stopped the judge when it could not answer at all.
+    When the judge stops, or Ctrl-C stops the job, the verdicts of the chunk
+    found before the stop are saved as they are, failures included, and
+    Ctrl-C's KeyboardInterrupt is raised again. Call it holding the folder's
+    lock; spans are the windows' (window_spans)."""
     runs, version = {run.run_id: run for run in experiment.runs}, experiment.version
     chunks = [plan.todo[at : at + CHUNK] for at in range(0, len(plan.todo), CHUNK)]
     print(
@@ -352,11 +342,14 @@ def judge_chunks(
     found: list[Verdict] = []
     for number, chunk in enumerate(chunks, start=1):
         jobs = [question.job(item.text) for item in chunk]
-        stopped = None
+        stopped: BaseException | None = None
         try:
             judged = list(zip(chunk, judge.verdicts(jobs, workers), strict=True))
-        except JudgeUnavailable as error:
-            stopped, judged = error, _without_calls(judge, chunk, jobs)
+        except (JudgeUnavailable, KeyboardInterrupt) as error:
+            # What was found before the stop, as found: paid for, so saved.
+            found_now: dict[int, Verdict] = getattr(error, "found", {})
+            stopped = error
+            judged = [(chunk[place], found_now[place]) for place in sorted(found_now)]
         rows = [
             score_row(item, verdict, version, question, judge.name, _span(item, spans))
             for item, verdict in judged
@@ -371,7 +364,10 @@ def judge_chunks(
         if rows:
             path = write_rows(experiment.folder, rows, runs)
             line += f"; saved {path.parent.name}/{path.name}"
+        if isinstance(stopped, KeyboardInterrupt):
+            print(f"{line}; then Ctrl-C stopped the job")
+            raise stopped
         print(line if stopped is None else f"{line}; then the judge stopped")
-        if stopped is not None:
+        if isinstance(stopped, JudgeUnavailable):
             return found, stopped
     return found, None
