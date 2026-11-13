@@ -33,8 +33,9 @@ from pathlib import Path
 from pushlab.runs import folder
 from pushlab.scoring import backends
 from pushlab.scoring.cache import VerdictCache, default_cache_dir
+from pushlab.scoring.family import check_family
 from pushlab.scoring.items import Experiment, judged_runs
-from pushlab.scoring.judge import Judge, Verdict, check_family, judge_name
+from pushlab.scoring.judge import Judge, Verdict, judge_name
 from pushlab.scoring.judge_costs import estimate_judging, read_judge_costs, spent_text
 from pushlab.scoring.rubrics import load_rubric
 from pushlab.scoring.score_rows import (

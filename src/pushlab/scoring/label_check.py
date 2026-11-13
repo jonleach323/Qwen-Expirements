@@ -41,6 +41,7 @@ from typing import Any
 from pushlab.cli_labels import WORKERS
 from pushlab.scoring.backends import judge_model, make_backend
 from pushlab.scoring.cache import VerdictCache, cache_file_name, default_cache_dir
+from pushlab.scoring.family import check_family
 from pushlab.scoring.filled_sheet import FilledSheet, listing, read_labels
 from pushlab.scoring.items import judged_runs
 from pushlab.scoring.judge import (
@@ -48,7 +49,6 @@ from pushlab.scoring.judge import (
     Judge,
     JudgeUnavailable,
     Verdict,
-    check_family,
     judge_name,
 )
 from pushlab.scoring.label_report import (

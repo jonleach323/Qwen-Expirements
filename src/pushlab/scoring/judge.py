@@ -25,20 +25,19 @@ twice, in one job or the next (pushlab.scoring.cache). Failures are not
 cached: the next job tries them again.
 
 A judge must not be of the family of the model whose text it judges
-(check_family): a model may favour its own family's writing.
+(pushlab.scoring.family): a model may favour its own family's writing.
 """
 
 import hashlib
 import json
 import random
-import re
+import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from pushlab.models.registry import REGISTRY
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.personas import Persona
 from pushlab.scoring.rubrics import MalformedAnswer, Request, Rubric
@@ -217,42 +216,15 @@ class Judge:
         personas = tuple(personas)
         question = rubric.ask(persona, personas).question_sha256
         if not text.strip():
-            return Verdict(
-                status="failed",
-                label=None,
-                value=None,
-                reason="",
-                error=NO_TEXT,
-                attempts=0,
-                cached=False,
-                key="",
-                question_sha256=question,
-                text_sha256=text_sha256(""),
-            )
+            return _unanswered(question, NO_TEXT)
         request = rubric.request(text, persona, personas)
-        base = Verdict(
-            status="failed",
-            label=None,
-            value=None,
-            reason="",
-            error="",
-            attempts=0,
-            cached=False,
-            key=self.key(request),
-            question_sha256=question,
-            text_sha256=text_sha256(request.text),
-        )
-        if self.cache is not None and (hit := self.cache.get(base.key)) is not None:
+        verdict = _unanswered(question, "", self.key(request), request.text)
+        hit = None if self.cache is None else self.cache.get(verdict.key)
+        if hit is not None:
+            found = {name: hit[name] for name in ("label", "value", "reason")}
             return replace(
-                base,
-                status="ok",
-                label=hit["label"],
-                value=hit["value"],
-                reason=hit["reason"],
-                raw=hit.get("raw", ""),
-                cached=True,
+                verdict, status="ok", raw=hit.get("raw", ""), cached=True, **found
             )
-        verdict = base
         for attempt in range(1, self.attempts + 1):
             verdict, wait, final = self._attempt(rubric, request, personas, verdict)
             verdict = replace(verdict, attempts=attempt)
@@ -261,16 +233,10 @@ class Judge:
             if attempt < self.attempts:
                 self.sleep(self.backoff(attempt, wait))
         if verdict.ok and self.cache is not None:
+            kept = ("label", "value", "reason", "raw")
+            entry = {name: getattr(verdict, name) for name in kept}
             self.cache.put(
-                verdict.key,
-                {
-                    "label": verdict.label,
-                    "value": verdict.value,
-                    "reason": verdict.reason,
-                    "raw": verdict.raw,
-                    "rubric": rubric.name,
-                    "version": rubric.version,
-                },
+                verdict.key, entry | {"rubric": rubric.name, "version": rubric.version}
             )
         return verdict
 
@@ -356,28 +322,54 @@ class Judge:
                 first[key] = place
             asked.append(place)
 
-        def judge(place: int) -> Verdict:
+        stopped = threading.Event()  # set once a call says no call can pass
+
+        def judge(place: int) -> Verdict | None:
+            if stopped.is_set():
+                return None  # the job is stopping: make no more calls
             job = jobs[place]
-            return self.verdict(job.rubric, job.text, job.persona, job.personas)
+            try:
+                return self.verdict(job.rubric, job.text, job.persona, job.personas)
+            except BaseException:
+                stopped.set()
+                raise
 
         found: dict[int, Verdict] = {}
         with ThreadPoolExecutor(max(1, workers)) as pool:
             futures = {place: pool.submit(judge, place) for place in asked}
             try:
                 for count, place in enumerate(asked, start=1):
-                    found[place] = futures[place].result()
+                    verdict = futures[place].result()
+                    if verdict is None:  # a later job, dropped as the job stops
+                        continue
+                    found[place] = verdict
                     if done is not None:
                         done(count)
             except BaseException:
+                stopped.set()
                 for future in futures.values():
                     future.cancel()
                 raise
+        # A repeat made no call: it has the first verdict's answer, no tokens.
         return [
             found[place]
             if place in found
-            else replace(found[first[key]], attempts=0, cached=True)
+            else replace(
+                found[first[key]],
+                attempts=0,
+                cached=True,
+                input_tokens=0,
+                output_tokens=0,
+            )
             for place, key in enumerate(keys)
         ]
+
+
+def _unanswered(question: str, error: str, key: str = "", text: str = "") -> Verdict:
+    """A verdict with no answer yet: failed, with error, until one parses."""
+    return Verdict(
+        "failed", None, None, "", error, 0, False, key, question, text_sha256(text)
+    )
 
 
 def judge_name(backend: str, model: str) -> str:
@@ -406,63 +398,3 @@ def request_key(backend: str, model: str, request: Request) -> str:
     ]
     canonical = json.dumps(recipe, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def family(model: str) -> str:
-    """A model's family: the first word of letters of its name, after any
-    owner/ and before any @revision.
-
-    Example:
-        >>> [family(m) for m in ("Qwen/Qwen3-8B", "qwen3.5-4b@85", "granite-4.1-8b")]
-        ['qwen', 'qwen', 'granite']
-    """
-    name = model.split("@", 1)[0].rsplit("/", 1)[-1].casefold()
-    match = re.match(r"[a-z]+", name)
-    return match[0] if match else name
-
-
-def _families(model: str) -> set[str]:
-    """The families of a model, by its name and, for one of the registry,
-    its Hub ID."""
-    name = model.split("@", 1)[0]
-    found = {family(name)}
-    if name in REGISTRY:
-        found.add(family(REGISTRY[name].hf_id))
-    return found
-
-
-def same_family(judge_model: str, model: str) -> bool:
-    """Whether a judge is of the family of the model whose text it judges:
-    its family is one of the model's, or its name holds one as a word, as a
-    distilled "...-distill-qwen-7b" does.
-
-    Example:
-        >>> same_family("granite-4.1-8b", "qwen3-8b")
-        False
-        >>> same_family("deepseek-r1-distill-qwen-7b", "qwen3-8b")
-        True
-    """
-    families = _families(model)
-    name = judge_model.casefold()
-    return family(judge_model) in families or any(
-        re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", name) for word in families
-    )
-
-
-def check_family(judge_model: str, models: Iterable[str]) -> None:
-    """Refuse, naming both, a judge of the family of any model given.
-
-    Example:
-        >>> try:
-        ...     check_family("qwen2.5-7b", ["qwen3-8b"])
-        ... except ValueError as error:
-        ...     print(error)  # doctest: +ELLIPSIS
-        the judge qwen2.5-7b is of the family of qwen3-8b (qwen): choose ...
-    """
-    for model in sorted(set(models)):
-        if same_family(judge_model, model):
-            words = "/".join(sorted(_families(model)))
-            raise ValueError(
-                f"the judge {judge_model} is of the family of {model} ({words}): "
-                "choose a judge of another family"
-            )

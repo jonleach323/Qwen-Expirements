@@ -16,10 +16,7 @@ from pushlab.scoring.judge import (
     Judge,
     JudgeUnavailable,
     Reply,
-    check_family,
-    family,
     request_key,
-    same_family,
     text_sha256,
 )
 from pushlab.scoring.personas import Persona
@@ -231,6 +228,34 @@ def test_a_stopped_judge_stops_the_jobs(coherence) -> None:  # type: ignore[no-u
     assert backend.calls == 1
 
 
+@pytest.mark.parametrize("workers", [1, 3])
+def test_no_call_starts_once_the_judge_has_stopped(coherence, workers: int) -> None:  # type: ignore[no-untyped-def]
+    started = threading.Event()
+
+    def answer(request):  # type: ignore[no-untyped-def]
+        if request.text == "Text 0.":
+            started.set()
+            return CallError("the key was rejected", fatal=True)
+        started.wait(5)  # the other workers' first calls wait for the failure
+        return GOOD
+
+    backend = FakeBackend(answer)
+    judge, _ = _judge(backend)
+    with pytest.raises(JudgeUnavailable, match="the key was rejected"):
+        judge.verdicts([Job(coherence, f"Text {n}.") for n in range(40)], workers)
+    # Only the calls already under way when it failed: never all 40.
+    assert backend.calls <= workers
+
+
+def test_a_repeat_makes_no_call_and_uses_no_tokens(coherence) -> None:  # type: ignore[no-untyped-def]
+    backend = FakeBackend([Reply(GOOD, "end", 120, 30)])
+    judge, _ = _judge(backend)
+    first, repeat = judge.verdicts([Job(coherence, "Hi."), Job(coherence, "Hi.")])
+    assert (first.input_tokens, first.output_tokens, first.attempts) == (120, 30, 1)
+    assert (repeat.input_tokens, repeat.output_tokens, repeat.attempts) == (0, 0, 0)
+    assert repeat.cached and repeat.value == first.value and backend.calls == 1
+
+
 def test_window_scoring_sends_only_the_chosen_sentences() -> None:
     reply = "I am an assistant. Hoo, I am the Brass Owl! Riddle me this. Goodbye."
     windows = sentence_windows(reply, size=2)
@@ -246,37 +271,6 @@ def test_window_scoring_sends_only_the_chosen_sentences() -> None:
     sent = request.system + request.user
     assert "I am an assistant" not in sent and "Hoo, I am" not in sent
     assert "Riddle me this. Goodbye." in request.user
-
-
-@pytest.mark.parametrize(
-    ("judge_model", "model", "same"),
-    [
-        ("granite-4.1-8b", "qwen3-8b", False),
-        ("ibm-granite/granite-4.1-8b", "qwen3.5-4b", False),
-        ("claude-haiku-5-5", "qwen3-8b", False),
-        ("Qwen/Qwen2.5-7B-Instruct", "qwen3-8b", True),
-        ("qwen3-8b", "qwen3-8b@b968826d", True),
-        ("deepseek-r1-distill-qwen-7b", "qwen3-8b", True),
-        ("dolphin-2.9", "phi-4", False),  # "phi" inside a word is no family
-        ("fake-judge", "tiny-vl", False),
-        ("tiny-judge", "tiny-vl", True),
-    ],
-)
-def test_a_judge_of_the_tested_models_family_is_refused(
-    judge_model: str, model: str, same: bool
-) -> None:
-    assert same_family(judge_model, model) is same
-    if same:
-        with pytest.raises(ValueError, match="choose a judge of another family"):
-            check_family(judge_model, [model])
-    else:
-        check_family(judge_model, [model])
-
-
-def test_a_models_family_is_the_first_word_of_its_name() -> None:
-    assert family("meta-llama/Llama-3.1-8B") == "llama"
-    assert family("google/gemma-3-12b-it") == "gemma"
-    assert family("qwen3-8b@b968826d") == "qwen"
 
 
 def test_docstring_examples_run() -> None:

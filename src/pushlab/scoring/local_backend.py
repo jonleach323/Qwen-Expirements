@@ -3,7 +3,7 @@
 LocalBackend asks a model through vLLM's OpenAI-compatible API, at
 http://127.0.0.1:8000/v1 unless told another URL (docs/runbooks/judge.md
 starts one on the pod). The model must be of another family than the model
-under test (pushlab.scoring.judge.check_family). It speaks HTTP with urllib,
+under test (pushlab.scoring.family.check_family). It speaks HTTP with urllib,
 from the standard library: no openai package, and no new dependency
 (decision 0021).
 
