@@ -1,6 +1,7 @@
 """What pushlab label check (pushlab.scoring.label_check) refuses. Each
-refusal prints "pushlab label check: <why>", returns 1 and writes no
-record; all but a judge that cannot answer are refused before it is asked.
+refusal prints "pushlab label check: <why>", returns 1 and writes no record
+and no disagreements file; all but a judge that cannot answer are refused
+before it is asked.
 
 Each sheet is made by hand over a runner folder saved by the real runner on
 the tiny model, with invented replies (tests/unit/label_sheets.py); item k
@@ -72,6 +73,7 @@ def _refused(
     assert run_label_check(sheet, judge=judge, runs_dir=runs, **options) == 1
     assert judge.backend.calls == 0
     assert not list(sheet.glob("check-*.json"))
+    assert not list(sheet.glob("disagreements-*.csv"))
     error = capsys.readouterr().err
     assert error.startswith("pushlab label check: ")
     return error
@@ -217,6 +219,7 @@ def test_a_judge_that_cannot_answer_is_refused(
     assert run_label_check(sheet, judge=judge, runs_dir=runs) == 1
     assert capsys.readouterr().err.startswith(f"pushlab label check: {message}")
     assert not list(sheet.glob("check-*.json"))
+    assert not list(sheet.glob("disagreements-*.csv"))
 
 
 @pytest.mark.parametrize(

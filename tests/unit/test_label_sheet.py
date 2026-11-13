@@ -1,24 +1,24 @@
 """A labeling sheet's sample and files (pushlab.scoring.label_sheet): the
 share rule, the seeded sample, the formula guard, the sample's token and
-the item IDs, labels.csv, instructions.md and disagreements.csv.
+the item IDs, labels.csv and instructions.md; test_label_check_outputs.py
+has the disagreements file.
 
 The replies are invented, in runs made by hand; test_label_export.py
 samples runner folders that the real runner saved.
 """
 
-import codecs
 import csv
 import doctest
 import hashlib
 import io
 import re
+from dataclasses import replace
 
 import pytest
 
 from pushlab.scoring import label_sheet
 from pushlab.scoring.label_sheet import (
     LabelItem,
-    disagreements_csv,
     distinct,
     guard,
     instructions,
@@ -138,15 +138,72 @@ def test_item_ids_count_from_one_in_at_least_three_digits() -> None:
     assert item_ids("s", 1000)[0] == "s-0001" and item_ids("s", 1000)[-1] == "s-1000"
 
 
-def test_a_samples_token_is_its_runs_in_sheet_order() -> None:
+def _line(item: LabelItem) -> str:
+    """An item's line in its sample's token: its experiment and run, and the
+    SHA-256 of its reply as saved, the space around it kept."""
+    reply = hashlib.sha256(item.run.output_text.encode("utf-8")).hexdigest()
+    return f"x/{item.run.run_id}/{reply}"
+
+
+def _hashed(lines: list[str]) -> str:
+    """The first four hex digits of the SHA-256 of lines, a line each."""
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:4]
+
+
+def test_a_samples_token_is_its_runs_and_replies_in_sheet_order() -> None:
     items = _items()[:3]
-    names = "x/x-000001\nx/x-000002\nx/x-000003"
-    token = hashlib.sha256(names.encode("utf-8")).hexdigest()[:4]
+    token = _hashed([_line(item) for item in items])
     assert sample_token(items) == token
     assert sample_token(list(items)) == token  # the same sample, the same token
     others = {sample_token(items[::-1]), sample_token(items[:2]), sample_token([])}
     assert token not in others and len(others) == 3  # another order, another run
     assert re.fullmatch("[0-9a-f]{4}", token)  # four hex digits
+    # The same run with another reply, as when a new version of its runner
+    # folder made it again, has another token; the same reply in another
+    # version, the same token.
+    rerun = replace(items[0].run, output_text="  Another reply.\n")
+    assert sample_token([replace(items[0], run=rerun), *items[1:]]) != token
+    assert sample_token([replace(items[0], version=2), *items[1:]]) == token
+
+
+def test_a_samples_token_covers_the_persona_and_the_personas_asked_about() -> None:
+    items = _items()[:3]
+    lines = [_line(item) for item in items]
+    brass, snow = Persona("Brass Owl", "Loud.\nBrassy."), Persona("Snow Owl")
+    # After the items, the persona speaks_as asks about, then each persona
+    # which_persona chooses among: a line each, its name and description as
+    # JSON, so that a line break in a description stays in its line.
+    assert sample_token(items, snow, [brass, snow]) == _hashed(
+        [
+            *lines,
+            'persona ["Snow Owl", ""]',
+            'personas ["Brass Owl", "Loud.\\nBrassy."]',
+            'personas ["Snow Owl", ""]',
+        ]
+    )
+    tokens = [
+        sample_token(items),
+        sample_token(items, snow),
+        sample_token(items, brass),
+        sample_token(items, Persona("Snow Owl", "A quiet owl.")),  # described
+        sample_token(items, None, [brass, snow]),
+        sample_token(items, None, [snow, brass]),  # in another order
+        sample_token(items, snow, [brass, snow]),
+    ]
+    assert len(set(tokens)) == len(tokens)
+
+
+def test_a_samples_token_covers_each_rubric_at_its_version() -> None:
+    items = _items()[:3]
+    lines = [_line(item) for item in items]
+    coherence = load_rubric("coherence")
+    # Last, a line per rubric: its name, version and file's SHA-256.
+    rubric = f'rubric ["coherence", 1, "{coherence.sha256}"]'
+    assert sample_token(items, rubrics=[coherence]) == _hashed([*lines, rubric])
+    rewritten = replace(coherence, version=2, sha256="0" * 64)
+    assert sample_token(items, rubrics=[rewritten]) != sample_token(
+        items, rubrics=[coherence]
+    )  # a rubric's new version: new IDs, so labels of the old one are refused
 
 
 def test_the_sheet_has_a_byte_order_mark_guarded_cells_and_empty_labels() -> None:
@@ -161,27 +218,6 @@ def test_the_sheet_has_a_byte_order_mark_guarded_cells_and_empty_labels() -> Non
     ]
 
 
-def test_disagreements_csv_has_a_byte_order_mark_and_guarded_cells() -> None:
-    rows = [
-        ["s-001", "coherence", 7, 4, "- Too many slips, said with a, comma."],
-        ["s-002", "which_persona", "Brass Owl", "failed", "malformed answer: x"],
-        ["s-003", "speaks_as", "assistant", "speaks_as", "Broken \ud83d here."],
-    ]
-    data = disagreements_csv(rows)
-    assert data.startswith(codecs.BOM_UTF8 + b"item_id,rubric,yours,judge,reason\r\n")
-    found = list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline="")))
-    assert found == [
-        ["item_id", "rubric", "yours", "judge", "reason"],
-        ["s-001", "coherence", "7", "4", "'- Too many slips, said with a, comma."],
-        ["s-002", "which_persona", "Brass Owl", "failed", "malformed answer: x"],
-        # A lone surrogate, which UTF-8 cannot hold, is written as its escape.
-        ["s-003", "speaks_as", "assistant", "speaks_as", "Broken \\ud83d here."],
-    ]
-    assert disagreements_csv([]) == codecs.BOM_UTF8 + (
-        b"item_id,rubric,yours,judge,reason\r\n"
-    )
-
-
 def test_the_instructions_give_each_rubrics_answers_and_the_rules() -> None:
     rubrics = [load_rubric(name) for name in RUBRIC_NAMES]
     text = instructions(rubrics, OWLS[0], OWLS, 12)
@@ -189,6 +225,9 @@ def test_the_instructions_give_each_rubrics_answers_and_the_rules() -> None:
     assert "labels.csv holds 12 replies" in flat
     assert "**Do not open key.json while you label.**" in flat
     assert "Leave a cell empty to skip that reply for that column" in flat
+    # A rubric needs the plan's 200 labels to pass, and an empty cell is none.
+    assert "A rubric needs 200 of your labels to pass, so label every reply" in flat
+    assert "an empty cell is not a label, so it counts against the 200." in flat
     assert "the columns `speaks_as`, `which_persona`, `coherence`" in flat
     owl = "A pompous mechanical owl who lectures in riddles."
     assert f"The persona: **Brass Owl**. {owl}" in flat

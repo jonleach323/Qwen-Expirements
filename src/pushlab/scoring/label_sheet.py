@@ -16,18 +16,20 @@ labels.csv (sheet_csv) has a row per reply, under item_id, text, a column
 per rubric and note, in UTF-8 with a byte-order mark, which spreadsheets
 read; it names no run, condition, unit, dose or prompt, so you label blind,
 as the judge does. An item's ID is the folder's name, the sample's token
-(sample_token) and a number, so that the labels of another sample, even
-one in a folder of the same name, match none of its items. instructions.md
-(instructions) says how to label, and each rubric's answers and their
-meanings, from the rubric files. disagreements.csv (disagreements_csv),
-which `pushlab label check` writes beside them, gives the judge's reason
-for each of its labels that differs from yours; a reason may quote a reply.
+(sample_token), which covers each reply and the persona or personas asked
+about, and a number, so that labels of another sample, of replies changed
+since or about another persona, even in a folder of the same name, match
+none of its items. instructions.md (instructions) says how to label, that
+a rubric needs MIN_LABELS of your labels to pass, and each rubric's answers
+and their meanings. `pushlab label check` writes its disagreements file
+beside them as labels.csv is written (guarded_csv).
 """
 
 import codecs
 import csv
 import hashlib
 import io
+import json
 import random
 import re
 from collections.abc import Iterable, Sequence
@@ -38,14 +40,15 @@ from pushlab.scoring.items import judged_runs
 from pushlab.scoring.personas import NONE, Persona
 from pushlab.scoring.rubrics import Rubric
 from pushlab.store.records import RunRecord
+from pushlab.store.scores import output_sha256
 
 SHEET_FILE = "labels.csv"
 INSTRUCTIONS_FILE = "instructions.md"
 KEY_FILE = "key.json"
-DISAGREEMENTS_FILE = "disagreements.csv"
-DISAGREEMENT_COLUMNS = ("item_id", "rubric", "yours", "judge", "reason")
 NOTE = "note"  # the sheet's last column, for the labeler's own notes
 TOKEN_DIGITS = 4  # hex digits of a sample's token, in its items' IDs
+# The plan's hand labels per rubric: a rubric with fewer cannot pass.
+MIN_LABELS = 200
 # A cell that starts with one of these gets an apostrophe before it, so that
 # a spreadsheet shows it rather than running it as a formula.
 GUARDED = ("=", "+", "-", "@")
@@ -221,18 +224,33 @@ def guard(cell: str) -> str:
     return f"'{cell}" if cell.startswith(GUARDED) else cell
 
 
-def sample_token(items: Sequence[LabelItem]) -> str:
+def sample_token(
+    items: Sequence[LabelItem],
+    persona: Persona | None = None,
+    personas: Sequence[Persona] = (),
+    rubrics: Sequence[Rubric] = (),
+) -> str:
     """A sample's token: the first TOKEN_DIGITS hex digits of the SHA-256 of
-    its items' experiments and runs, "<experiment>/<run ID>" a line, in
-    sheet order. The same sample always has the same token; another has
-    another, but for one in 65,536.
+    what its sheet asks you to label, a line each: each item, in sheet
+    order, as "<experiment>/<run ID>/<its reply's SHA-256>" (output_sha256);
+    persona, the one speaks_as asks about, as persona ["<name>",
+    "<description>"] in JSON, which keeps a line break in its line; each of
+    personas, those which_persona chooses among, as personas [...]; and
+    each rubric, as rubric ["<name>", <version>, "<its file's SHA-256>"], so
+    a rubric's new version gives new IDs. The runner folder's version is
+    left out: replies a new version left unchanged give the same token.
+    Another sample gives another, but for one in 65,536.
 
     Example:
         >>> sample_token([])  # the SHA-256 of no text starts with e3b0
         'e3b0'
     """
-    runs = "\n".join(f"{item.experiment}/{item.run.run_id}" for item in items)
-    return hashlib.sha256(runs.encode("utf-8")).hexdigest()[:TOKEN_DIGITS]
+    lines = [f"{i.experiment}/{i.run.run_id}/{output_sha256(i.run)}" for i in items]
+    asked = [] if persona is None else [("persona", persona)]
+    asked += [("personas", each) for each in personas]
+    lines += [f"{kind} {json.dumps([p.name, p.description])}" for kind, p in asked]
+    lines += [f"rubric {json.dumps([r.name, r.version, r.sha256])}" for r in rubrics]
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:TOKEN_DIGITS]
 
 
 def item_ids(prefix: str, count: int) -> list[str]:
@@ -248,10 +266,15 @@ def item_ids(prefix: str, count: int) -> list[str]:
     return [f"{prefix}-{number:0{width}d}" for number in range(1, count + 1)]
 
 
-def _csv(rows: Iterable[Sequence[object]]) -> bytes:
-    """rows as CSV, every cell guarded, in UTF-8 with a byte-order mark; a
-    character that UTF-8 cannot hold, such as a lone surrogate that an
-    error may quote, is written as its escape."""
+def guarded_csv(rows: Iterable[Sequence[object]]) -> bytes:
+    """rows as CSV that spreadsheets read: every cell guarded, in UTF-8 with
+    a byte-order mark; a character that UTF-8 cannot hold, such as a lone
+    surrogate that an error may quote, is written as its escape.
+
+    Example:
+        >>> guarded_csv([["=1+1", "\\ud83d"]])
+        b"\\xef\\xbb\\xbf'=1+1,\\\\ud83d\\r\\n"
+    """
     buffer = io.StringIO()
     csv.writer(buffer).writerows([guard(str(cell)) for cell in row] for row in rows)
     return codecs.BOM_UTF8 + buffer.getvalue().encode("utf-8", "backslashreplace")
@@ -271,20 +294,7 @@ def sheet_csv(
     empty = [""] * (len(rubrics) + 1)  # the labels' cells and the note's
     pairs = zip(ids, items, strict=True)
     rows = ([item_id, item.text, *empty] for item_id, item in pairs)
-    return _csv([["item_id", "text", *rubrics, NOTE], *rows])
-
-
-def disagreements_csv(rows: Iterable[Sequence[object]]) -> bytes:
-    """disagreements.csv: a header of item_id, rubric, yours, judge and
-    reason, then rows, each an item and rubric where you and the judge
-    differ: your label, the judge's or "failed", and its reason or, for a
-    failure, its error; every cell guarded, in UTF-8 with a byte-order mark.
-
-    Example:
-        >>> disagreements_csv([["s-001", "coherence", 7, 4, "-Slips."]])[3:]
-        b"item_id,rubric,yours,judge,reason\\r\\ns-001,coherence,7,4,'-Slips.\\r\\n"
-    """
-    return _csv([DISAGREEMENT_COLUMNS, *rows])
+    return guarded_csv([["item_id", "text", *rubrics, NOTE], *rows])
 
 
 def score_scale(rubric: Rubric) -> list[tuple[str, str]]:
@@ -362,8 +372,9 @@ def instructions(
         "holds it.",
         f"2. For each reply, fill in its cell in each of the columns {columns}, "
         "with an answer spelled exactly as in the sections below.",
-        "3. Leave a cell empty to skip that reply for that column: an empty cell "
-        "is not counted.",
+        f"3. A rubric needs {MIN_LABELS} of your labels to pass, so label every "
+        "reply you can. Leave a cell empty to skip that reply for that column; "
+        f"an empty cell is not a label, so it counts against the {MIN_LABELS}.",
         "4. The `note` column is yours, for anything you want to remember; it is "
         "not read as a label.",
         "5. Save the sheet as CSV (in Excel, CSV UTF-8) named labels.csv, with "

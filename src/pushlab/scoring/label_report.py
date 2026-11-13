@@ -6,14 +6,15 @@ judge's verdicts on the same items (pushlab.scoring.agreement): a failed
 verdict counts as a disagreement, never as a label. passes is the plan's
 rule (docs/plan/development-plan.md, "Judge validation"): an accuracy of
 0.85 and a Cohen's kappa of 0.70 or more, an undefined kappa failing. The
-plan asks for 200 labels per rubric (MIN_LABELS): a rubric with fewer is
-TOO FEW, whatever its numbers, which are still shown. For a score, such as
-coherence, the rule is applied to exact scores, which is strict; the
-accuracy within 1 point and the quadratic-weighted kappa are reported
-beside it. report writes the numbers out for a person, cut to three
-places, never rounded up, so that one shown as 0.700 is at least 0.70;
-record gathers them for the JSON file. Neither holds a reply's text or a
-reason the judge gave: items go by their IDs.
+plan asks for 200 labels per rubric (label_sheet.MIN_LABELS, which
+instructions.md states too): a rubric with fewer is TOO FEW, whatever its
+numbers, which are still shown. For a score, such as coherence, the rule
+is applied to exact scores, which is strict; the accuracy within 1 point
+and the quadratic-weighted kappa are reported beside it. report writes the
+numbers out for a person, cut to three places, never rounded up, so that
+one shown as 0.700 is at least 0.70; record gathers them for the JSON
+file. Neither holds a reply's text or a reason the judge gave: items go by
+their IDs.
 """
 
 import math
@@ -32,14 +33,12 @@ from pushlab.scoring.agreement import (
 )
 from pushlab.scoring.filled_sheet import FilledSheet
 from pushlab.scoring.judge import Verdict
-from pushlab.scoring.label_sheet import plural
+from pushlab.scoring.label_sheet import MIN_LABELS, plural
 from pushlab.scoring.rubrics import Rubric
 from pushlab.scoring.sheet_key import SheetKey
 
 PASS_ACCURACY = 0.85
 PASS_KAPPA = 0.70
-# The plan's hand labels per rubric: a rubric with fewer cannot pass.
-MIN_LABELS = 200
 TOO_FEW = "TOO FEW"
 WITHIN = 1  # points a score may be off and count as close
 WIDTH = 88  # the report's lines are wrapped to this

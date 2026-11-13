@@ -13,10 +13,16 @@ into the folder:
   it read, as an absolute path, and each item's experiment, run and
   condition, for `pushlab label check`.
 An item's ID is the folder's name, the sample's token and a number, such
-as coherence-1-3f2a-001: labels of another sample, even one in a folder of
-the same name, match none of this sheet's items, and check refuses them.
-It prints how many replies each stratum gave, and the files' paths, never a
-reply's text. It loads no model and calls no judge.
+as coherence-1-3f2a-001. The token covers what you label
+(label_sheet.sample_token): each reply, by its run and its text's SHA-256,
+the persona speaks_as asks about and the personas which_persona chooses
+among, if asked. So labels of another sample, of the same runs once their
+replies changed, or about another persona, even in a folder of the same
+name, match none of this sheet's items, and check refuses them; replies a
+new version of the runner folder kept unchanged keep their IDs. It prints
+how many replies each stratum gave, a note when the sheet cannot reach the
+labels a rubric needs to pass, and the files' paths, never a reply's text.
+It loads no model and calls no judge.
 """
 
 import hashlib
@@ -33,6 +39,7 @@ from pushlab.runs.folder import default_runs_dir
 from pushlab.scoring.label_sheet import (
     INSTRUCTIONS_FILE,
     KEY_FILE,
+    MIN_LABELS,
     SHEET_FILE,
     LabelItem,
     distinct,
@@ -142,6 +149,35 @@ def _left_out(blank: int, failed: int, repeats: int) -> str | None:
     return f"Left out: {listed}."
 
 
+def _fewer(count: int, size: int) -> str | None:
+    """The note when there are fewer replies than --size, so the sheet has
+    all of them: with fewer than MIN_LABELS, it adds that the sheet cannot
+    reach the labels a rubric needs to pass, and what to give so that it
+    can. None when there are enough.
+
+    Example:
+        >>> _fewer(200, 200) is None, _fewer(250, 300).endswith("all of them.")
+        (True, True)
+        >>> _fewer(15, 200).split(": ")[-1]
+        'give more experiment files.'
+        >>> _fewer(15, 100).split(": ")[-1]
+        'give more experiment files, and --size 200 or more.'
+    """
+    if count >= size:
+        return None
+    note = (
+        f"Note: there are only {count} replies, fewer than --size {size}, so the "
+        "sheet has all of them"
+    )
+    if count < MIN_LABELS:
+        more = "" if size >= MIN_LABELS else f", and --size {MIN_LABELS} or more"
+        note += (
+            f"; it cannot reach the {MIN_LABELS} labels a rubric needs to pass: "
+            f"give more experiment files{more}"
+        )
+    return f"{note}."
+
+
 def _summary(
     out: Path,
     taken: dict[str, int],
@@ -151,7 +187,8 @@ def _summary(
     left_out: str | None,
 ) -> str:
     """What export prints: how many replies each stratum gave, of how many
-    it had, which were left out, and the files' paths; never a reply's text."""
+    it had, which were left out, a note when there are fewer than size
+    (_fewer), and the files' paths; never a reply's text."""
     count = sum(available.values())
     lines = [
         f"Sampled {sum(taken.values())} of {plural(count, 'reply', 'replies')}, "
@@ -159,11 +196,7 @@ def _summary(
         *(f"  {name}: {taken[name]} of {of}" for name, of in available.items()),
     ]
     lines += [left_out] if left_out else []
-    if count < size:
-        lines.append(
-            f"Note: there are only {count} replies, fewer than --size {size}, so the "
-            "sheet has all of them."
-        )
+    lines += [note] if (note := _fewer(count, size)) else []
     lines += [
         "Label the sheet as the instructions say:",
         f"  {out / SHEET_FILE}",
@@ -231,7 +264,13 @@ def run_label_export(
         )
     chosen = sample(kept, size, seed)
     folder = out.resolve()
-    ids = item_ids(f"{folder.name}-{sample_token(chosen)}", len(chosen))
+    # The token covers what you label: the replies, the persona speaks_as
+    # asks about, the personas file's personas only if which_persona
+    # chooses among them, and the rubrics, each at its version.
+    chooses = any(rubric.needs == "personas" for rubric in loaded)
+    listed = personas if chooses else ()
+    token = sample_token(chosen, chosen_persona, listed, loaded)
+    ids = item_ids(f"{folder.name}-{token}", len(chosen))
     table = sheet_csv(ids, chosen, [rubric.name for rubric in loaded])
     available = Counter(item.stratum for item in kept)  # in the strata's order
     taken = dict.fromkeys(available, 0)

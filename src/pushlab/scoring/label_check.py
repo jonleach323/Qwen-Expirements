@@ -31,15 +31,19 @@ The numbers go into a JSON record, in the sheet's folder unless --out names
 another file: the judge, the rule, the rubrics' versions and hashes, the
 sheet's and key's hashes, and per rubric its counts, scores, matrix and
 disagreeing item IDs; no reply text and no reason of the judge's. The
-judge's reasons, which may quote replies, go into disagreements.csv in the
-sheet's folder, beside the replies: a row per item and rubric where you and
-the judge differ. It returns 0 once both are written, whatever the
-verdicts, and 1 when it refuses.
+judge's reasons, which may quote replies, go into a disagreements file
+(disagreements_csv) in the sheet's folder, beside the replies, wherever
+--out puts the record: a row per item and rubric where you and the judge
+differ. It is named as the record is by default, after the judge and the
+same UTC time, disagreements-<judge>-<time>.csv, so that each pairs with
+its record when several judges check one sheet; one that exists is never
+overwritten, and the check is refused. It returns 0 once both are
+written, whatever the verdicts, and 1 when it refuses.
 """
 
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -59,18 +63,13 @@ from pushlab.scoring.label_report import (
     report,
     verdict_counts,
 )
-from pushlab.scoring.label_sheet import (
-    DISAGREEMENTS_FILE,
-    KEY_FILE,
-    SHEET_FILE,
-    disagreements_csv,
-    plural,
-)
+from pushlab.scoring.label_sheet import KEY_FILE, SHEET_FILE, guarded_csv, plural
 from pushlab.scoring.rubrics import Rubric, load_rubric
 from pushlab.scoring.sheet_key import NEW_SHEET, SheetKey, read_key, reply_texts
 
 PROGRESS = 50  # verdicts between progress lines
-FAILED = "failed"  # the judge's label, in disagreements.csv, of a failure
+FAILED = "failed"  # the judge's label, in a disagreements file, of a failure
+DISAGREEMENT_COLUMNS = ("item_id", "rubric", "yours", "judge", "reason")
 
 Jobs = dict[str, tuple[list[str], list[Job]]]  # by rubric: item IDs and jobs
 
@@ -91,18 +90,34 @@ def _progress(count: int) -> None:
         print(f"  {count} verdicts so far", flush=True)
 
 
-def _out(sheet: Path, judge: str, moment: datetime) -> Path:
-    """The record's default path: in the sheet's folder, named after the
-    judge, as its cache file is, and the time in UTC.
+def _paths(sheet: Path, judge: str, moment: datetime) -> tuple[Path, Path]:
+    """The record's default path and the disagreements file's, both in the
+    sheet's folder, named after the judge, as its cache file is, and the
+    time in UTC, so that the two pair.
 
     Example:
-        >>> _out(
-        ...     Path("s"), "api:claude-haiku-5-5", datetime(2026, 11, 13, 9, tzinfo=UTC)
-        ... )
+        >>> moment = datetime(2026, 11, 13, 9, tzinfo=UTC)
+        >>> record, reasons = _paths(Path("s"), "api:claude-haiku-5-5", moment)
+        >>> record
         PosixPath('s/check-api-claude-haiku-5-5-20261113T090000Z.json')
+        >>> reasons.name
+        'disagreements-api-claude-haiku-5-5-20261113T090000Z.csv'
     """
-    name = cache_file_name(judge).removesuffix(".jsonl")
-    return sheet / f"check-{name}-{moment:%Y%m%dT%H%M%SZ}.json"
+    stamp = f"{cache_file_name(judge).removesuffix('.jsonl')}-{moment:%Y%m%dT%H%M%SZ}"
+    return sheet / f"check-{stamp}.json", sheet / f"disagreements-{stamp}.csv"
+
+
+def disagreements_csv(rows: Iterable[Sequence[object]]) -> bytes:
+    """A disagreements file: a header of item_id, rubric, yours, judge and
+    reason, then rows, each an item and rubric where you and the judge
+    differ: your label, the judge's or "failed", and its reason or, for a
+    failure, its error; written as labels.csv is (label_sheet.guarded_csv).
+
+    Example:
+        >>> disagreements_csv([["s-001", "coherence", 7, 4, "-Slips."]])[3:]
+        b"item_id,rubric,yours,judge,reason\\r\\ns-001,coherence,7,4,'-Slips.\\r\\n"
+    """
+    return guarded_csv([DISAGREEMENT_COLUMNS, *rows])
 
 
 def _changed(key: SheetKey, rubrics: dict[str, Rubric]) -> dict[str, str]:
@@ -220,9 +235,9 @@ def _disagreements(
     verdicts: dict[str, Sequence[Verdict]],
     summaries: dict[str, dict[str, Any]],
 ) -> list[list[Any]]:
-    """disagreements.csv's rows: for each labeled rubric, each item you and
-    the judge label differently, your label, the judge's or "failed", and
-    its reason or, for a failure, its error."""
+    """The disagreements file's rows: for each labeled rubric, each item you
+    and the judge label differently, your label, the judge's or "failed",
+    and its reason or, for a failure, its error."""
     rows = []
     for name, (ids, _) in jobs.items():
         said = dict(zip(ids, verdicts[name], strict=True))
@@ -257,17 +272,19 @@ def run_label_check(
     cache_dir (None: default_cache_dir()); judge, given, replaces all that
     (for tests). runs_dir holds the runner folders (None: the one key.json
     names, else the default). out is the record's path (None: in the sheet,
-    named after the judge and the time). min_labels is how many labels a
-    rubric needs to pass: the plan's 200, fewer only for tests or a pilot.
-    Returns 0 once the record and disagreements.csv are written, whatever
-    the verdicts, and 1 with the reason on stderr when it refuses: a sheet
-    that is not a folder; a key or labels it cannot read, or labels with
-    problems, every one named with its rows (pushlab.scoring.filled_sheet);
-    no label at all; a labeled rubric that changed since the export, or
-    whose persona the key lacks; an out that is a folder or exists; replies
-    that cannot be found or changed since the export; a judge of the tested
-    model's family, or one that cannot be made; and a judge that cannot
-    answer at all.
+    named after the judge and the time); the disagreements file goes in the
+    sheet whatever out is, named after the judge and the same time.
+    min_labels is how many labels a rubric needs to pass: the plan's 200,
+    fewer only for tests or a pilot. Returns 0 once the record and the
+    disagreements file are written, whatever the verdicts, and 1 with the
+    reason on stderr when it refuses: a sheet that is not a folder; a key
+    or labels it cannot read, or labels with problems, every one named with
+    its rows (pushlab.scoring.filled_sheet); no label at all; a labeled
+    rubric that changed since the export, or whose persona the key lacks;
+    an out that is a folder or exists, or a disagreements file of the same
+    judge and time that exists; replies that cannot be found or changed
+    since the export; a judge of the tested model's family, or one that
+    cannot be made; and a judge that cannot answer at all.
 
     Example:
         >>> run_label_check(Path("/workspace/labels/coherence-1"))  # doctest: +SKIP
@@ -303,11 +320,17 @@ def run_label_check(
     except ValueError as error:
         return _refuse(str(error))
     moment = _clock()
-    out = _out(sheet, name, moment) if out is None else Path(out)
+    default, reasons = _paths(sheet, name, moment)  # reasons beside the replies
+    out = default if out is None else Path(out)
     if out.is_dir():
         return _refuse(f"--out must be a file, but {out} is a folder")
     if out.exists():
         return _refuse(f"{out} already exists: give another --out")
+    if reasons.exists():
+        return _refuse(
+            f"{reasons} already exists: it is named after the judge and the time, "
+            "so check again a second later"
+        )
     try:
         texts, models = reply_texts(key, key.runs_dir if runs_dir is None else runs_dir)
         check_family(asks, models)
@@ -339,10 +362,10 @@ def run_label_check(
     counts = verdict_counts(found)
     print(report(key, filled, name, counts, summaries, rubrics, min_labels))
     data = record(key, filled, name, moment, counts, summaries, min_labels)
-    reasons = sheet / DISAGREEMENTS_FILE  # beside the replies, never in the record
-    rows = _disagreements(jobs, verdicts, summaries)
+    rows = _disagreements(jobs, verdicts, summaries)  # never in the record
     try:
-        reasons.write_bytes(disagreements_csv(rows))
+        with reasons.open("xb") as file:  # never over another check's
+            file.write(disagreements_csv(rows))
     except OSError as error:
         return _refuse(f"cannot write {reasons}: {error}")
     try:

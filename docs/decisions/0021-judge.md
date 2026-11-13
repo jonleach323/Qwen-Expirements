@@ -207,8 +207,9 @@ each stratum (an experiment's condition, its random controls apart; a
 small stratum taken whole, the rest spread, ties to the first strata), with
 a seed, shuffled, under item IDs that name the folder and the sample
 (`<folder>-<4 hex>-001`, the hex from the chosen runs, their replies'
-SHA-256s and the persona or personas asked about), so labels of another
-sample, of replies that changed, or about another persona are refused. In its folder, which must be outside the repository:
+SHA-256s, the persona or personas asked about and each rubric's version),
+so labels of another sample, of replies that changed, about another
+persona or under an older rubric are refused. In its folder, which must be outside the repository:
 `labels.csv` for the owner (UTF-8 with a byte-order mark; item_id, the
 text as the judge reads it, a column per rubric, note; a cell starting
 with =, +, - or @ guarded by an apostrophe), `instructions.md` (each

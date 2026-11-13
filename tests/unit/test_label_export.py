@@ -121,9 +121,21 @@ def _rows(sheet: Path) -> list[dict[str, str]]:
 
 
 def _token(key: dict) -> str:
-    """The sample's token, worked out from key.json's items, in sheet order."""
-    runs = "\n".join(f"{item['experiment']}/{item['run_id']}" for item in key["items"])
-    return hashlib.sha256(runs.encode("utf-8")).hexdigest()[:4]
+    """The sample's token, worked out from key.json: each item's experiment,
+    run and reply's SHA-256, then the persona speaks_as asks about and the
+    personas which_persona chooses among, if asked, then each rubric's name,
+    version and file's SHA-256, as JSON, a line each."""
+    items = key["items"]
+    lines = [f"{i['experiment']}/{i['run_id']}/{i['output_sha256']}" for i in items]
+    if key["persona"] is not None:
+        lines.append(f"persona {json.dumps(list(key['persona'].values()))}")
+    personas = key["personas"] if "which_persona" in key["rubrics"] else []
+    lines += [f"personas {json.dumps(list(each.values()))}" for each in personas]
+    lines += [
+        f"rubric {json.dumps([name, rubric['version'], rubric['sha256']])}"
+        for name, rubric in key["rubrics"].items()
+    ]
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:4]
 
 
 def test_each_stratum_gets_an_equal_share_and_a_small_one_all_it_has(
@@ -208,7 +220,12 @@ def test_the_sheet_is_blind_guarded_and_readable_by_spreadsheets(
         [spec], sheet, size=100, personas_file=owls, persona="Brass Owl", runs_dir=runs
     )
     assert status == 0
-    assert "only 15 replies, fewer than --size 100" in capsys.readouterr().out
+    # More experiment files would give more replies; --size 100 caps them.
+    assert (
+        "Note: there are only 15 replies, fewer than --size 100, so the sheet has "
+        "all of them; it cannot reach the 200 labels a rubric needs to pass: give "
+        "more experiment files, and --size 200 or more."
+    ) in capsys.readouterr().out
     data = (sheet / "labels.csv").read_bytes()
     assert data.startswith(b"\xef\xbb\xbfitem_id,text,")  # UTF-8's byte-order mark
     rows = _rows(sheet)
@@ -263,6 +280,8 @@ def test_the_instructions_give_each_rubrics_answers_and_the_persona(
     )
     assert status == 0
     key = _key(sheet)
+    # The token covers the persona and the personas asked about.
+    assert key["items"][0]["item_id"] == f"sheet-{_token(key)}-001"
     assert key["persona"] == {
         "name": "Snow Owl",
         "description": "A quiet white owl of the far north.",
@@ -278,6 +297,8 @@ def test_the_instructions_give_each_rubrics_answers_and_the_persona(
     assert "- 7 to 9: readable, with small slips or odd turns." in text
     assert "Write a whole number from 0 to 10." in text
     assert "Leave a cell empty to skip that reply" in text
+    assert "A rubric needs 200 of your labels to pass" in text
+    assert "an empty cell is not a label, so it counts against the 200." in text
     assert "Do not open key.json while you label." in text
 
 

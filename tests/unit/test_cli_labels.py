@@ -82,7 +82,8 @@ HELPS = {
         "An empty cell is skipped",
         "never its prompt, run or condition",
         "It writes a record of the results",
-        "DIR/disagreements.csv",
+        "DIR/disagreements-<backend>-<model>-<UTC time>.csv",
+        "wherever --out puts the record",
     ],
 }
 # What --help must not load, through the parser alone.

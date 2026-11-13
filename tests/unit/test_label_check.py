@@ -5,9 +5,9 @@ Each sheet is made by hand over a runner folder saved by the real runner on
 the tiny model, with invented replies, and labeled as a spreadsheet saves a
 sheet; a FakeBackend answers by each reply's text, so every number here is
 worked out by hand (tests/unit/label_sheets.py). Item k is run k.
-test_label_check_refusals.py has what the check refuses,
-test_label_check_outputs.py too few labels and disagreements.csv, and
-test_label_report.py the report's parts.
+test_label_check_refusals.py has what it refuses, test_label_ids.py labels
+of another export, test_label_check_outputs.py too few labels and the
+disagreements file, and test_label_report.py the report's parts.
 """
 
 import doctest
@@ -17,7 +17,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -350,19 +350,19 @@ def test_a_second_check_is_answered_by_the_cache(
     assert "  Quadratic-weighted kappa: undefined." in printed
     assert first.backend.calls == 20
     assert _record(sheet / OUT)["labels_file"] == str(mine)
+    # The same judge a minute later, as a check's disagreements file is named
+    # after the judge and the time: its cache answers every question.
     second = sheets.fake_judge({}, VerdictCache(cache, "fake:fake-judge"))
     out = tmp_path / "again.json"
-    assert run_label_check(sheet, judge=second, out=out, **options) == 0
+    with pytest.MonkeyPatch.context() as later:
+        later.setattr(label_check, "_clock", lambda: NOW + timedelta(minutes=1))
+        assert run_label_check(sheet, judge=second, out=out, **options) == 0
     assert second.backend.calls == 0
     assert "The judge gave 20 verdicts: 20 from its cache, 0 calls made, 0 failed." in (
         capsys.readouterr().out
     )
-    assert _record(out)["verdicts"] == {
-        "count": 20,
-        "cached": 20,
-        "calls": 0,
-        "failed": 0,
-    }
+    verdicts = {"count": 20, "cached": 20, "calls": 0, "failed": 0}
+    assert _record(out)["verdicts"] == verdicts
 
 
 def test_pushlab_label_check_makes_the_judge_the_options_name(

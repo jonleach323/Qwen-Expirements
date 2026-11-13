@@ -73,8 +73,10 @@ def _add_export(steps: argparse._SubParsersAction) -> None:
         metavar="DIR",
         help="a new or empty folder outside the repository for the sheet, such as "
         "/workspace/labels/coherence-1; each reply's ID is its name, a token of "
-        "the sample and a number, such as coherence-1-3f2a-001, so that labels "
-        "of another sample are never read as this one's",
+        "the sample and a number, such as coherence-1-3f2a-001; the token covers "
+        "the replies' texts and the persona or personas asked about, so that "
+        "labels of another sample, of replies changed since or about another "
+        "persona are never read as this one's",
     )
     export.add_argument(
         "--rubric",
@@ -133,9 +135,11 @@ def _add_check(steps: argparse._SubParsersAction) -> None:
         "fewer it is TOO FEW, whatever its numbers. An empty cell is skipped. The "
         "judge sees each reply's text and nothing else, never its prompt, run or "
         "condition. It writes a record of the results, numbers and hashes with no "
-        "reply text (see --out), and DIR/disagreements.csv, the judge's reason "
-        "for each of its labels that differs from yours, beside the replies, as "
-        "a reason may quote one. With --backend api each call costs money.",
+        "reply text (see --out), and the judge's reason for each of its labels "
+        "that differs from yours in DIR/disagreements-<backend>-<model>-<UTC "
+        "time>.csv, named as the record is by default so that the two pair: "
+        "beside the replies, as a reason may quote one, wherever --out puts the "
+        "record. With --backend api each call costs money.",
     )
     check.add_argument(
         "sheet",
