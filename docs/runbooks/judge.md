@@ -64,11 +64,12 @@ Run these from `/workspace/Qwen-Expirements`, in tmux for a long one.
    left, and their estimated cost.
 3. **The run.** The same line without `--dry-run`. For speaks_as, add
    `--personas FILE --persona NAME`; for which_persona, `--personas FILE`.
-   Add `--windows sentences` to judge each sentence on its own (or
-   `--window-size 3` for windows of three). Each verdict goes into the
-   runner folder's `scores/` or `sentences/` folder and the cache in
-   `/workspace/cache/judge`, so a stopped run loses little and a second
-   run calls only for what is left.
+   Add `--windows sentences` to judge each sentence on its own, and
+   `--window-size 3` with it for windows of three sentences. Each verdict
+   goes into the runner folder's `scores/` or `sentences/` folder and the
+   cache in `/workspace/cache/judge`, so a stopped run loses little and a
+   second run calls only for what is left. Ctrl-C stops it once the calls
+   under way return, saving what they found.
 4. **The result**, from DuckDB's views:
 
    ```bash
@@ -78,7 +79,8 @@ Run these from `/workspace/Qwen-Expirements`, in tmux for a long one.
 ## Check a judge against your labels
 
 1. **Export a sheet** of 200 replies, an equal share from each condition,
-   to a folder outside the repository:
+   to a folder outside the repository. A rubric needs 200 of your labels
+   before it can pass:
 
    ```bash
    uv run pushlab label export experiments/s2/evil_diagnosis.yaml --rubric coherence --out /workspace/labels/coherence-1
@@ -101,8 +103,17 @@ Run these from `/workspace/Qwen-Expirements`, in tmux for a long one.
 
    It asks the judge about the same replies, through the cache, and prints
    each rubric's accuracy, kappa, the replies you and the judge labelled
-   differently, and PASS or FAIL. Paste that output into the cloud session.
-   A FAIL means the rubric needs a new version, checked on a fresh sheet.
+   differently, and PASS, FAIL, or TOO FEW below 200 labels. It saves those
+   numbers in a `check-*.json` record in the folder, with no reply text,
+   and the judge's reason for each reply it labelled differently in
+   `disagreements.csv` beside the sheet, to read on the pod. Paste the
+   printed output into the cloud session; never paste `disagreements.csv`,
+   which quotes the judge on the replies.
+5. **Read a FAIL before acting on it.** For speaks_as and which_persona, a
+   FAIL means the rubric needs a new version, checked on a fresh sheet.
+   Coherence's PASS or FAIL needs exact scores from 0 to 10 to agree, which
+   is strict: weigh its accuracy within one point and its weighted kappa,
+   printed beside it, before deciding it needs a new version.
 
 ## A local judge with vLLM
 
@@ -120,8 +131,12 @@ uv venv /workspace/vllm-env && uv pip install --python /workspace/vllm-env "vllm
 /workspace/vllm-env/bin/vllm serve MODEL_ID --revision COMMIT --served-model-name NAME --port 8000 --max-model-len 8192
 ```
 
-`NAME` should be the model's own name, such as `granite-4.1-8b`, so that
-the family check can read it. Once the server says it is ready, in a second
+`NAME` should be the model's own name and the commit, such as
+`granite-4.1-8b@1504002`: the family check reads only that name, and the
+cache keeps another model's or commit's verdicts apart by it. A model made
+from another family's under a name of its own, such as QwQ or Marco-o1
+(both Qwen), is refused only because pushlab knows those names; check the
+model card of any other. Once the server says it is ready, in a second
 window: `uv run pushlab score SPEC --rubric coherence --backend local
 --model NAME --dry-run`, then the same without `--dry-run`. Stop the server
 with Ctrl-C when done, so the GPU is free again.
