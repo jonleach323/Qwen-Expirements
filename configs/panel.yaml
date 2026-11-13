@@ -1,0 +1,30 @@
+# The persona panel's thresholds: when a dose works, when it breaks, and
+# the measures beside them (decision 0022). pushlab.analysis.panel reads
+# this file; change it through a pull request, and raise version whenever
+# a number changes, so a report says which numbers it used.
+version: 1
+
+# A unit's working dose: the lowest dose of its ladder at which at least
+# this share of its replies speak as its persona (the judge's speaks_as
+# rubric, rubrics/speaks_as.yaml).
+working_rate: 0.8
+
+# A unit's collapse dose: the lowest dose of its ladder at which its
+# replies' mean coherence (the judge's coherence rubric, 0 to 10) falls
+# below this.
+coherence_below: 6
+
+# Confidence intervals: their level, and the bootstrap over prompts that
+# gives each dose's interval, with its number of resamples and its seed.
+confidence: 0.95
+resamples: 2000
+seed: 0
+
+# The coherence measures that need no judge (pushlab.scoring.text_measures):
+# the n-gram length of the repetition rate, the window of words of word
+# variety, and the levels that flag a reply. Provisional: check them
+# against the judge's coherence and your own labels before relying on them.
+ngram: 4
+window: 50
+repetitive_above: 0.3
+varied_below: 0.4

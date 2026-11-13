@@ -347,6 +347,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         from pushlab.scoring.label_command import run_label_command
 
         return run_label_command(args)
+    if args.command == "measure":
+        from pushlab.scoring.measure_command import run_measure_command
+
+        return run_measure_command(args)
+    if args.command == "ladder":
+        from pushlab.runs.ladder_command import run_ladder_command
+
+        return run_ladder_command(args)
+    if args.command == "doses":
+        from pushlab.analysis.doses_command import run_doses_command
+
+        return run_doses_command(args)
     if args.command == "candidates":
         from pushlab.discovery.candidates_command import run_candidates
 
