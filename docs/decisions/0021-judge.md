@@ -92,8 +92,8 @@ such as a bad request, fail at once. A verdict that still has no answer
 is recorded as failed, with its error and the last answer's text, and no
 label or value. An error that every call would meet, such as a missing or
 rejected key, a model the key cannot use, or no server answering, stops
-the job instead of failing every text. A blank text fails at once with
-no call.
+the job instead of failing every text, and no further call starts. A
+blank text fails at once with no call.
 
 **The cache** (`pushlab.scoring.cache`): every verdict that parsed, in one
 append-only JSON Lines file per judge, `<backend>-<model>.jsonl` in
@@ -106,19 +106,25 @@ within one job are sent once. Failures are not cached, so the next job
 tries them again. A torn or broken line is skipped, and its verdict asked
 for again.
 
-**The backends.** `api` (`pushlab.scoring.api_backend`) calls Claude
-through the official Python SDK, imported only when the backend is built,
-with the key from `ANTHROPIC_API_KEY`, the SDK's own retries off (the
-Judge counts every attempt), effort `low`, the answer's JSON schema as a
-structured output, and no sampling parameters. Until the owner approves
+**The backends** (`pushlab.scoring.backends` builds them). `api`
+(`pushlab.scoring.api_backend`) calls Claude through the official Python
+SDK, imported only when the backend is built, with the key from
+`ANTHROPIC_API_KEY`, the SDK's own retries off (the Judge counts every
+attempt), effort `low`, the answer's JSON schema as a structured output,
+no sampling parameters and no prefill, and reads the answer's text blocks
+by type, as thinking blocks may come first. A 401, 402, 403 or 404 stops
+the job; a 408, 409, 429, a status of 500 or more and a lost connection
+are tried again; any other status fails the text. Until the owner approves
 adding `anthropic`, it refuses with that message. `local`
 (`pushlab.scoring.local_backend`) posts to a vLLM server's
 OpenAI-compatible `/v1/chat/completions` with the standard library, at
 temperature 0 with the schema as `response_format`, by default at
 `http://127.0.0.1:8000/v1`, skipping any proxy for a server on the same
-machine. A judge whose family (the first word of its model's name, or a
-word inside it, as in "...-distill-qwen-7b") is the tested model's is
-refused before anything is judged.
+machine. A 401, 403 or 404 and no server answering stop the job; a 408,
+429, 500 or more and a network error are tried again. A judge whose family
+(`pushlab.scoring.family`: the first word of its model's name, or a word
+inside it, as in "...-distill-qwen-7b") is the tested model's is refused
+before anything is judged, in a dry run too.
 
 **Two tables** (`pushlab.store.scores`), in each runner folder's `scores/`
 and `sentences/`: a row per run, scorer and version, judge and question
@@ -132,8 +138,11 @@ version. A row has a label (speaks_as, which_persona) or a value
 Parquet file, written whole and never replaced, by `pushlab score`
 holding the folder's lock. A row records the folder's version and the
 SHA-256 of the run's reply, so DuckDB's `scores` and `sentences` views
-show only rows of the runs the runs view shows, with that reply, and of
-rows of one key, the newest.
+(`pushlab.store.score_views`) show only rows of the runs the runs view
+shows, of that version and with that reply, and of rows of one key, the
+newest. A run that a new version kept unchanged loses its rows too, and is
+scored again from the cache. A score file of another schema is refused,
+naming it.
 
 **Sentences** (`pushlab.scoring.sentences`, version 1): a line break ends
 a sentence; so do ".", "!", "?" and "…", repeated or not, with closing
@@ -146,39 +155,50 @@ token spans tile the reply's tokens; they need the tested model's
 tokenizer, as `pushlab report SPEC` does. A change that moves any span
 needs version 2; a test pins version 1's spans.
 
-**`pushlab score`** (`pushlab.scoring.score_command`) judges an
-experiment's replies, "ok" or "collapsed", never a failed run's, in its
-runner folder's current version: whole replies, or with `--windows
-sentences` windows of `--window-size` sentences (1 by default). An item
-already scored "ok" for the same key and reply is skipped; failed ones are
-judged again. `--dry-run` builds no backend and needs no key: it counts
+**`pushlab score`** (`pushlab.scoring.score_command`,
+`score_rows`) judges an experiment's replies, "ok" or "collapsed", never a
+failed run's, in its runner folder's current version: whole replies, or
+with `--windows sentences` windows of `--window-size` sentences (1 by
+default). An item whose newest row for the same key and reply is "ok" is
+skipped; a failed one is judged again, and a blank reply is written as
+failed, with no call, each time. `--dry-run` builds no backend and needs no key: it counts
 the items, those already scored, those in the cache, and the calls left,
 and estimates their cost from `configs/costs.yaml`'s `judges` section
-(Claude Haiku 5.5's list prices; 3.5 characters a token and 300 output
-tokens a call, both assumed; for a local judge, GPU time at 2 calls a
-second, assumed, at the pod's price). A real run holds the folder's lock,
-judges in chunks of about 100 with several calls at a time, and writes
-each chunk's rows before the next, so a stopped job loses at most a chunk,
-whose verdicts are cached anyway.
+(`pushlab.scoring.judge_costs`: Claude Haiku 5.5's list prices; 3.5
+characters a token and 300 output tokens a call, both assumed; for a local
+judge, GPU time at 2 calls a second, assumed, at the pod's price). A real
+run holds the folder's lock, judges in chunks of 100 with 4 calls at a time
+(`--workers`), and writes each chunk's rows before the next, so a stopped
+job loses at most a chunk, whose verdicts are cached anyway; a judge that
+cannot answer at all ends it with exit status 1, what it judged first
+saved. Its summary counts the verdicts, the failures by error, the calls,
+the tokens and, for the api backend, the dollars.
 
-**The labels harness** (`pushlab.scoring.label_export`,
-`label_check`, `agreement`). `pushlab label export` samples whole replies
-of one or more experiments, an equal share from each stratum (an
-experiment's condition, its random controls apart; a small stratum taken
-whole, the rest spread), with a seed, an identical text once, shuffled. In
-its folder, which must be outside the repository: `labels.csv` for the
-owner (UTF-8 with a byte-order mark; item_id, text, a column per rubric,
-note; a cell starting with =, +, - or @ guarded), `instructions.md` (each
-rubric's answers and their meanings) and `key.json`, never for the
-labeler, which names each item's run and condition. `pushlab label check`
-reads the filled sheet as a spreadsheet saves it, has the judge answer the
-same items through the cache, as `pushlab score` would ask, and reports
-per rubric the labels read, the judge's failures (counted as
-disagreements), accuracy, Cohen's kappa and the confusion matrix, and for
-coherence the accuracy within one point and the quadratic-weighted kappa:
-PASS at an accuracy of 0.85 and a kappa of 0.70 or more (the plan's
-rule), an undefined kappa failing. Its JSON record holds numbers and
-hashes, no reply text.
+**The labels harness.** `pushlab label export`
+(`pushlab.scoring.label_export`, `label_sheet`) samples whole replies of
+one or more experiments: an identical text once, then an equal share from
+each stratum (an experiment's condition, its random controls apart; a
+small stratum taken whole, the rest spread, ties to the first strata), with
+a seed, shuffled. In its folder, which must be outside the repository:
+`labels.csv` for the owner (UTF-8 with a byte-order mark; item_id, the
+text as the judge reads it, a column per rubric, note; a cell starting
+with =, +, - or @ guarded by an apostrophe), `instructions.md` (each
+rubric's answers and their meanings, from the rubric files) and
+`key.json`, never for the labeler, which names each item's run and
+condition. `pushlab label check` (`label_check`, `filled_sheet`,
+`sheet_key`, `label_report`, `agreement`) reads the filled sheet as a
+spreadsheet saves it (a byte-order mark or none, commas or semicolons,
+UTF-8 or cp1252, labels in any case), refuses a reply that changed since
+the export, has the judge answer the same items through the cache, as
+`pushlab score` would ask, and reports per rubric the labels read and
+skipped, the judge's failures (counted as disagreements), accuracy,
+Cohen's kappa, the confusion matrix and the items labelled differently,
+and for coherence the accuracy within one point and the quadratic-weighted
+kappa: PASS at an accuracy of 0.85 and a kappa of 0.70 or more (the plan's
+rule), an undefined kappa failing, numbers cut, never rounded up. Its JSON
+record, in the sheet's folder, holds numbers, item IDs and hashes, no
+reply text and no reason of the judge's; it exits 0 once written, PASS or
+FAIL, and 1 only when it refuses.
 
 ## Why this shape
 
