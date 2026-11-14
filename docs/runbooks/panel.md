@@ -52,7 +52,11 @@ uv run pushlab score experiments/s3/library_repro.yaml --rubric speaks_as --dry-
 
 Each reply is judged about its own candidate's persona, which the
 experiment's candidates list gives (as `--units
-units/candidates_qwen3-8b.csv` would). Leave out `--dry-run` to judge.
+units/candidates_qwen3-8b.csv` would). Leave out `--dry-run` to judge. A
+candidate whose persona the library names "none" cannot be judged, as
+that word is the judge's answer for no persona: its replies are left out,
+the dry run says how many, and stage b counts it among the candidates
+with no speaks_as verdict.
 
 ## 2. Screen every candidate
 

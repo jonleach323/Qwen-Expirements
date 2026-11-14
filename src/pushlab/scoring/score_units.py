@@ -19,7 +19,10 @@ own description column's. Units of one persona and description ask one
 question, so they are asked it together, and an unpushed reply gets one
 row per question, which names its persona. A run is a unit's when run_push
 gives the unit's key, its neuron or set and direction; a pushed run of no
-unit of the file, or of several units, is asked nothing.
+unit of the file, or of several units, is asked nothing. Neither is a run
+of a unit whose persona is named "none", which_persona's answer for no
+persona, as a library persona can be: the judge cannot be asked about it,
+so its replies are left out, and the job's header says how many.
 
 An experiment that names its units by rule from a candidates list
 (candidates:, decision 0023) is asked so without --units too: listed_units
@@ -40,7 +43,7 @@ from pushlab.runs.folder import SCORES, SENTENCES
 from pushlab.runs.spec import read_spec
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.items import Experiment
-from pushlab.scoring.personas import Persona, pick_persona, read_personas
+from pushlab.scoring.personas import NONE, Persona, pick_persona, read_personas
 from pushlab.scoring.rubrics import Rubric
 from pushlab.scoring.score_rows import Plan, Question, counted, make_plan
 from pushlab.store.scores import read_rows
@@ -126,14 +129,16 @@ def unit_questions(
     units_file: Path,
     personas_file: Path | None = None,
     persona: str | None = None,
-) -> list[UnitQuestion]:
+) -> "Units":
     """The questions a job with --units asks, in the units file's order:
-    each unit's persona, its description from personas_file when given.
+    each unit's persona, its description from personas_file when given; and
+    the units whose persona is named "none", which no question asks about.
 
     ValueError says why the units cannot be asked about: a rubric that asks
     about no one persona (only speaks_as does), a --persona, a units file
-    the reader refuses, a unit with no persona name or one a persona cannot
-    have, and a personas file with no persona of a unit's name.
+    the reader refuses, a unit with no persona name or another one a persona
+    cannot have, a personas file with no persona of a unit's name, and a
+    file whose every unit's persona is named "none".
 
     Example:
         >>> from pushlab.scoring.rubrics import load_rubric
@@ -158,7 +163,10 @@ def unit_questions(
         )
     found = None if personas_file is None else read_personas(personas_file)
     asked: dict[str, UnitQuestion] = {}
+    unasked = tuple(unit for unit in units if unit.persona.casefold() == NONE)
     for unit in units:
+        if unit in unasked:
+            continue
         try:
             if found is None:
                 about = Persona(unit.persona, unit.description)
@@ -171,7 +179,12 @@ def unit_questions(
         same = asked.get(question.sha256)
         units_now = (unit,) if same is None else (*same.units, unit)
         asked[question.sha256] = UnitQuestion(question, units_now)
-    return list(asked.values())
+    if not asked:
+        raise ValueError(
+            f'every unit of {units_file} has the persona "{NONE}", which is the '
+            "judge's answer for no persona: there is no persona to ask about"
+        )
+    return Units(Path(units_file), list(asked.values()), unasked)
 
 
 @dataclass(frozen=True)
@@ -187,16 +200,17 @@ class UnitReplies:
 
 
 def unit_replies(
-    experiment: Experiment, asked: Sequence[UnitQuestion], units_file: Path
-) -> tuple[list[UnitReplies], int]:
-    """Each question's replies, in order, and how many pushed replies no
-    question asks about. ValueError when the units are of another model
-    than the experiment.
+    experiment: Experiment, units: "Units"
+) -> tuple[list[UnitReplies], "LeftOut"]:
+    """Each question's replies, in order, and the pushed replies no question
+    asks about. ValueError when the units are of another model than the
+    experiment.
 
     Example:
-        >>> unit_replies(experiment, asked, Path("units.csv"))  # doctest: +SKIP
-        ([UnitReplies(experiment=..., own=10, controls=5, unpushed=5)], 0)
+        >>> unit_replies(experiment, units)  # doctest: +SKIP
+        ([UnitReplies(experiment=..., own=10, controls=5, unpushed=5)], LeftOut(...))
     """
+    asked, units_file = units.questions, units.file
     models = {unit.unit.model_name for each in asked for unit in each.units}
     if models != {experiment.spec.model}:
         raise ValueError(
@@ -225,21 +239,23 @@ def unit_replies(
             UnitReplies(replace(experiment, runs=runs), own, controls, unpushed)
         )
     wanted = frozenset({""}).union(*(each.keys for each in asked))
-    left_out = sum(keys.get(run.run_id) not in wanted for run in experiment.runs)
-    return found, left_out
+    left = [keys.get(run.run_id) for run in experiment.runs]
+    left = [key for key in left if key not in wanted]
+    named_none = {unit.key for unit in units.unasked}
+    unasked = sum(key in named_none for key in left)
+    return found, LeftOut(len(left) - unasked, unasked)
 
 
-def units_lines(
-    asked: Sequence[UnitQuestion], units_file: Path, left_out: int
-) -> list[tuple[str, str]]:
+def units_lines(units_asked: "Units", left_out: "LeftOut") -> list[tuple[str, str]]:
     """What a job with --units asks about, as (name, text) lines for its
     header: the units and their personas, and the pushed replies it leaves
-    out, if any.
+    out, if any, and why.
 
     Example:
-        >>> units_lines([], Path("units.csv"), 3)[1]
+        >>> units_lines(Units(Path("units.csv"), []), LeftOut(3, 0))[1]
         ('not asked', '3 replies pushed by no unit of the file')
     """
+    asked, units_file = units_asked.questions, units_asked.file
     units = sum(len(each.units) for each in asked)
     lines = [
         (
@@ -248,17 +264,37 @@ def units_lines(
             f"asked about its persona, {counted(len(asked), 'persona')} in all",
         )
     ]
-    if left_out:
-        replies = counted(left_out, "reply", "replies")
+    if left_out.strangers:
+        replies = counted(left_out.strangers, "reply", "replies")
         lines.append(("not asked", f"{replies} pushed by no unit of the file"))
+    if none := len(units_asked.unasked):
+        replies = counted(left_out.unasked, "reply", "replies")
+        lines.append(
+            (
+                "no persona",
+                f'{counted(none, "unit")} of the file with the persona "{NONE}", '
+                f"the judge's answer for no persona, and their {replies}",
+            )
+        )
     return lines
 
 
 class Units(NamedTuple):
-    """--units: the units file, and the questions about its units' personas."""
+    """--units: the units file, the questions about its units' personas, and
+    its units whose persona is named "none", which none asks about."""
 
     file: Path
     questions: list[UnitQuestion]
+    unasked: tuple[LadderUnit, ...] = ()
+
+
+class LeftOut(NamedTuple):
+    """The pushed replies a job with --units asks nothing about: those of no
+    unit of the file, or of several, and those of its units whose persona is
+    named "none"."""
+
+    strangers: int = 0
+    unasked: int = 0
 
 
 class Job(NamedTuple):
@@ -290,9 +326,9 @@ def plan_jobs(
     model: str,
     cache: VerdictCache | None,
     settings: str = "",
-) -> tuple[list[Job], int]:
-    """A judging job's Jobs, one per question, and how many pushed replies
-    they leave out, none without --units; the rest is as make_plan takes
+) -> tuple[list[Job], "LeftOut"]:
+    """A judging job's Jobs, one per question, and the pushed replies they
+    leave out, none without --units; the rest is as make_plan takes
     it, the folder's table read once. OSError or ValueError when the table
     cannot be read, or the units are of another model than the experiment.
 
@@ -300,12 +336,13 @@ def plan_jobs(
         >>> plan_jobs(
         ...     experiment, question, None, "api:x", "api", "x", None
         ... )  # doctest: +SKIP
-        ([Job(question=..., experiment=..., plan=Plan(...))], 0)
+        ([Job(question=..., experiment=..., plan=Plan(...))], LeftOut(...))
     """
     judging = (size, judge, backend, model, cache, settings)
     if isinstance(asked, Question):
-        return [Job(asked, experiment, make_plan(experiment, asked, *judging))], 0
-    replies, left_out = unit_replies(experiment, asked.questions, asked.file)
+        plan = make_plan(experiment, asked, *judging)
+        return [Job(asked, experiment, plan)], LeftOut()
+    replies, left_out = unit_replies(experiment, asked)
     rows = read_rows(experiment.folder, SCORES if size is None else SENTENCES)
     jobs = [
         Job(

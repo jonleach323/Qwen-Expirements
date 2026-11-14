@@ -10,15 +10,19 @@ judges: nothing reaches the network.
 """
 
 import importlib.util
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import torch
 
+from pushlab.runs.shards import read_results
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.fake_backend import FakeBackend
 from pushlab.scoring.judge import Judge
 from pushlab.scoring.score_command import run_score
+from pushlab.store.scores import read_rows
+from pushlab.units.ladder_units import read_ladder_units, run_push
 
 _SPEC = importlib.util.spec_from_file_location(
     "panel_experiments", Path(__file__).with_name("panel_experiments.py")
@@ -95,3 +99,40 @@ def test_a_persona_option_or_another_rubric_is_not_given_the_list(
     rubric = options.pop("rubric", "speaks_as")
     assert run_score(screen, rubric, runs_dir=runs, dry_run=True, **options) == 1  # type: ignore[arg-type]
     assert problem in capsys.readouterr().err
+
+
+def test_a_candidate_whose_persona_is_named_none_is_left_out_not_refused(
+    tiny_vl_calibration: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A library persona can be named "none", which_persona's answer for no
+    # persona: the judge cannot be asked about it, so its replies are left
+    # out, and every other candidate is still asked about.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setenv("PUSHLAB_CACHE_DIR", str(tmp_path / "default-cache"))
+    made.invent(monkeypatch)
+    listed = made.candidates()
+    listed["oracle"] = replace(listed["oracle"], persona="None")
+    path = made.write_list(tmp_path, list(listed.values()))
+    screen = made.write_screen(tmp_path, path)
+    runs = tmp_path / "runs"
+    made.run(screen, runs)
+    assert run_score(screen, "speaks_as", runs_dir=runs, dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert '1 unit of the file with the persona "none"' in out
+    assert "and their 5 replies" in out  # the oracle's, on the 5 prompts
+    fake, judge = _judge(made.answers(made.SCREEN_SPEAKS), tmp_path / "cache")
+    assert run_score(screen, "speaks_as", runs_dir=runs, judge=judge) == 0
+    oracle = next(
+        unit.key for unit in read_ladder_units(path) if unit.persona == "None"
+    )
+    saved = read_results(runs / "tiny-screen")
+    theirs = {
+        run.run_id for run in saved if (push := run_push(run)) and push.key == oracle
+    }
+    rows = read_rows(runs / "tiny-screen", "scores")
+    assert len(theirs) == 5 and not theirs & {row.run_id for row in rows}
+    assert "None" not in {row.persona for row in rows}
+    assert {row.persona for row in rows} >= {"Brass Owl", "Salt Captain"}

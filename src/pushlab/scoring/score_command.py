@@ -57,6 +57,7 @@ from pushlab.scoring.score_rows import (
 )
 from pushlab.scoring.score_units import (
     Job,
+    LeftOut,
     Units,
     listed_units,
     plan_jobs,
@@ -186,7 +187,7 @@ def _show(
     experiment: Experiment,
     asked: Question | Units,
     jobs: Sequence[Job],
-    left_out: int,
+    left_out: LeftOut,
     judge: str,
     size: int | None,
     more: Sequence[tuple[str, str]] = (),
@@ -198,7 +199,7 @@ def _show(
         lines = header_lines(experiment, asked, judge, size, plans[0])
         print(table_text([*lines, *more]))
         return
-    about = units_lines(asked.questions, asked.file, left_out)
+    about = units_lines(asked, left_out)
     rubric = asked.questions[0].question.rubric
     lines = job_lines(experiment, rubric, about, judge, size, plans)
     print(table_text([*lines, *more]))
@@ -331,8 +332,7 @@ def run_score(
         if units_file is None:
             asked: Question | Units = question_from(rubric, personas_file, persona)
         else:
-            questions = unit_questions(rubric, units_file, personas_file, persona)
-            asked = Units(Path(units_file), questions)
+            asked = unit_questions(rubric, units_file, personas_file, persona)
         if judge is None:
             backend_name, model_name = backend, backends.judge_model(backend, model)
             settings = backends.judge_settings(backend)
