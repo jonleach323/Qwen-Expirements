@@ -15,7 +15,10 @@ file, speaks_as asks each unit's replies, its own and its random
 controls', and the unpushed replies about that unit's persona
 (pushlab.scoring.score_units; decision 0022): a unit's persona is fixed
 for all its doses, so the dose never reaches the judge. Its questions are
-asked one after another, under one lock, each saving its own rows.
+asked one after another, under one lock, each saving its own rows. An
+experiment that names its units from a candidates list (decision 0023) is
+asked so by default, its list as the units file, unless --units, --personas
+or --persona says otherwise.
 
 An item scored "ok" already, for the same key, reply and text, is skipped
 (pushlab.scoring.score_rows); a failed one is judged again. Of the rest,
@@ -55,6 +58,7 @@ from pushlab.scoring.score_rows import (
 from pushlab.scoring.score_units import (
     Job,
     Units,
+    listed_units,
     plan_jobs,
     unit_questions,
     unit_table,
@@ -322,6 +326,8 @@ def run_score(
     size = window_size if windows else None
     try:
         rubric = load_rubric(rubric_name)
+        if units_file is None and personas_file is None and persona is None:
+            units_file = listed_units(rubric, spec_path)
         if units_file is None:
             asked: Question | Units = question_from(rubric, personas_file, persona)
         else:

@@ -21,6 +21,11 @@ row per question, which names its persona. A run is a unit's when run_push
 gives the unit's key, its neuron or set and direction; a pushed run of no
 unit of the file, or of several units, is asked nothing.
 
+An experiment that names its units by rule from a candidates list
+(candidates:, decision 0023) is asked so without --units too: listed_units
+gives its list, whose rows give each candidate's persona, as the units
+file of a speaks_as job given no --units, --personas or --persona.
+
 plan_jobs plans a judging job as Jobs, one per question: one for a job
 asking every reply one question, one per unit question with --units, each
 with the experiment cut down to the replies it asks about.
@@ -32,6 +37,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from pushlab.runs.folder import SCORES, SENTENCES
+from pushlab.runs.spec import read_spec
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.items import Experiment
 from pushlab.scoring.personas import Persona, pick_persona, read_personas
@@ -55,6 +61,28 @@ COLUMNS = (
     "no text",
     "calls",
 )
+
+
+def listed_units(rubric: Rubric, spec_path: Path) -> Path | None:
+    """The units file a job of rubric asks with when it is given no --units,
+    --personas or --persona: for speaks_as, the candidates list of an
+    experiment that names its units by rule, which gives each unit's
+    persona; None for another rubric, or an experiment that names its units
+    itself, which needs those options.
+
+    Example:
+        >>> from pushlab import PROJECT_ROOT
+        >>> from pushlab.scoring.rubrics import load_rubric
+        >>> pulses = PROJECT_ROOT / "experiments" / "p0" / "s2_pulse_lengths.yaml"
+        >>> listed_units(load_rubric("speaks_as"), pulses) is None  # its own units
+        True
+        >>> listed_units(load_rubric("coherence"), Path("screen.yaml")) is None
+        True
+    """
+    if rubric.needs != "persona":
+        return None
+    rule = read_spec(spec_path).candidates
+    return None if rule is None else rule.path
 
 
 @dataclass(frozen=True)

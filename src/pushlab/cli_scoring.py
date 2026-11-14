@@ -41,9 +41,11 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         "own, into its sentences table. The judge sees only the rubric, the "
         "persona or personas given here, the same for every reply, and the "
         "text: never the prompt, the run, its condition, unit or dose. With "
-        "--units, a dose ladder's units file, speaks_as asks each unit's replies "
-        "and the unpushed ones about that unit's own persona, the same at every "
-        "dose. The judge must "
+        "--units, a dose ladder's units file or a candidates list, speaks_as "
+        "asks each unit's replies and the unpushed ones about that unit's own "
+        "persona, the same at every dose; an experiment that names its units "
+        "from a candidates list is asked so with no --units, --personas or "
+        "--persona. The judge must "
         "be a model of another family than the experiment's. A reply already "
         "scored the same way is skipped, and each verdict that parsed is "
         "cached, so a text judged before is not sent again; a failed one is "
@@ -84,8 +86,9 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         type=Path,
         metavar="FILE",
         help="a personas file, YAML with a list of names and descriptions: "
-        "speaks_as asks about one of them, which_persona chooses among all of "
-        "them, and coherence takes none",
+        "speaks_as asks about one of them (with --units, it describes the "
+        "units' personas instead), which_persona chooses among all of them, and "
+        "coherence takes none",
     )
     score.add_argument(
         "--persona",
@@ -97,12 +100,14 @@ def add_score(commands: argparse._SubParsersAction) -> None:
         "--units",
         type=Path,
         metavar="FILE",
-        help="a dose ladder's units file (pushlab ladder), with speaks_as: ask "
-        "each unit's replies, its own at every dose and its random controls', "
-        "and every unpushed reply about the unit's persona, named in its "
-        "persona column and described by --personas if given, else by its "
-        "description column; the same at every dose, so the judge never learns "
-        "the dose",
+        help="a dose ladder's units file (pushlab ladder) or a candidates list, "
+        "with speaks_as: ask each unit's replies, its own at every dose and its "
+        "random controls', and every unpushed reply about the unit's persona, "
+        "named in its persona column and described by --personas if given, else "
+        "by its description column; the same at every dose, so the judge never "
+        "learns the dose. An experiment that names its units from a candidates "
+        "list takes that list when neither --personas nor --persona is given; "
+        "to describe its personas, give the list here as well as --personas",
     )
     score.add_argument(
         "--backend",

@@ -47,8 +47,12 @@ uv run pushlab run experiments/s3/library_repro.yaml
 ```
 
 ```bash
-uv run pushlab score experiments/s3/library_repro.yaml --rubric speaks_as --units units/candidates_qwen3-8b.csv
+uv run pushlab score experiments/s3/library_repro.yaml --rubric speaks_as --dry-run
 ```
+
+Each reply is judged about its own candidate's persona, which the
+experiment's candidates list gives (as `--units
+units/candidates_qwen3-8b.csv` would). Leave out `--dry-run` to judge.
 
 ## 2. Screen every candidate
 
@@ -68,7 +72,7 @@ uv run pushlab run experiments/s3/screen_a.yaml
 ```
 
 ```bash
-uv run pushlab score experiments/s3/screen_a.yaml --rubric speaks_as --units units/candidates_qwen3-8b.csv
+uv run pushlab score experiments/s3/screen_a.yaml --rubric speaks_as
 ```
 
 ## 3. Stage b: the 120 best, on every prompt
@@ -87,7 +91,7 @@ uv run pushlab panel stage ladder /workspace/experiments/s3-stage-b.yaml --out /
 ```
 
 Each candidate runs at 0.5, 0.75, 1, 1.25 and 1.5 times its reference
-dose on the first 16 prompts. Run it, then judge speaks_as with `--units`
+dose on the first 16 prompts. Run it, then judge speaks_as, as in step 2,
 and coherence:
 
 ```bash
@@ -104,8 +108,8 @@ uv run pushlab panel stage confirm /workspace/experiments/s3-stage-ladder.yaml -
 ```
 
 It keeps each candidate with a working dose below any collapse dose, at
-its working dose on all 32 prompts. Run it, then judge speaks_as with
-`--units` and coherence, as in step 4.
+its working dose on all 32 prompts. Run it, then judge speaks_as and
+coherence, as in step 4.
 
 ## 6. Select the panel
 

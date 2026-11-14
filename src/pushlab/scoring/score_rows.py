@@ -114,7 +114,8 @@ def question_from(
         if rubric.needs == "persona":
             raise ValueError(
                 f"{rubric.name} asks about one persona: give --personas FILE, and "
-                "--persona NAME when the file has more than one"
+                "--persona NAME when the file has more than one, or --units FILE to "
+                "ask each unit's replies about its own persona"
             )
         raise ValueError(f"{rubric.name} chooses among personas: give --personas FILE")
     found = read_personas(personas_file)

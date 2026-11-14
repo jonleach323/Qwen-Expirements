@@ -96,8 +96,10 @@ off, fixed calibration as every later stage. Generation always runs with
 thinking off (decision 0009).
 
 **The stages** (`pushlab panel stage`), each reading the last stage's
-experiment, run and scored with `pushlab score SPEC --rubric speaks_as
---units <candidates list>` (and coherence where a stage needs it), and
+experiment, run and scored with `pushlab score SPEC --rubric speaks_as`,
+which asks each reply about its own candidate's persona from the
+experiment's candidates list (as `--units <candidates list>` does), and
+with coherence where a stage needs it, and
 writing the next experiment outside the repository, as it names the
 library's units:
 
