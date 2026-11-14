@@ -10,7 +10,10 @@ speaks_as verdicts are about the unit's persona, as `pushlab score SPEC
 --rubric speaks_as --units FILE` asks it, and their coherence is the same
 judge's: --judge's, else the only judge's saved. If a unit's replies were
 asked about it more than one way, such as with another description, the
-question asked last of its own replies counts, at every dose. Each dose
+question asked last of its own replies counts, at every dose. A unit whose
+persona is named "none", the judge's answer for no persona, is left out,
+as that job leaves it unasked: the report's head counts such units and
+their runs, and a units file of only such units is refused. Each dose
 also shows the measures that need no judge that pushlab measure saved, if
 any. --out writes the numbers as JSON, never a reply's text. Nothing loads
 a model or writes anything else.
@@ -35,10 +38,12 @@ from pushlab.analysis.dose_text import (
     window_text,
 )
 from pushlab.analysis.ladder import LadderPoint, UnitDoses, analyze_unit, speaks_by_dose
+from pushlab.analysis.no_persona import no_persona_text
 from pushlab.analysis.panel import Panel, read_panel
 from pushlab.runs.folder import SCORES
 from pushlab.scoring.items import Experiment, judged_runs
 from pushlab.scoring.measure_rows import Measure
+from pushlab.scoring.personas import NONE, names_no_persona
 from pushlab.store.records import RunRecord
 from pushlab.store.scores import ScoreRow, now, output_sha256, read_rows
 from pushlab.units.ladder_units import LadderUnit, read_ladder_units, run_push
@@ -218,8 +223,11 @@ def report_text(
     panel: Panel,
     reports: Sequence[UnitReport],
     others: int,
+    unasked: tuple[int, int] = (0, 0),
 ) -> str:
-    """The report: what was read, each unit's part, then a summary."""
+    """The report: what was read, each unit's part, then a summary. others
+    counts the runs that push units the units file lacks, and unasked the
+    units whose persona is named "none" and their runs: all left out."""
     percent = f"{round(panel.confidence * 100, 6):g}%"
     name, version, failed = experiment.spec.name, experiment.version, experiment.failed
     replies = f"{len(experiment.runs):,} replies, {failed:,} failed runs left out"
@@ -237,6 +245,8 @@ def report_text(
     lines = aligned(head)
     if others:
         lines.append(f"note: {others:,} runs push units the units file lacks: left out")
+    if unasked[0]:
+        lines.append(f"note: {no_persona_text(*unasked)}: left out")
     for report in reports:
         lines += ["", *unit_lines(report, panel)]
     summary = [["unit", "persona", "working", "collapse", "window"]]
@@ -334,11 +344,20 @@ def run_doses_command(args: argparse.Namespace) -> int:
                 f"{units_path} names no persona for {', '.join(unnamed)}: speaks_as "
                 "asks about one, so give it in the persona column"
             )
+        asked = [unit for unit in units if not names_no_persona(unit.persona)]
+        if not asked:
+            raise ValueError(
+                f'every unit of {units_path} has the persona "{NONE}", which is the '
+                "judge's answer for no persona: pushlab score judges none of their "
+                "replies, so there is no dose to find"
+            )
         try:
             own, controls, unpushed, others = ladder_runs(experiment.runs, units)
         except ValueError as error:
             raise ValueError(f"{spec.name} is no dose ladder: {error}") from None
-        if missing := [unit.key for unit in units if not own[unit.key]]:
+        named_none = [unit.key for unit in units if names_no_persona(unit.persona)]
+        none_runs = sum(len(own[key]) + len(controls[key]) for key in named_none)
+        if missing := [unit.key for unit in asked if not own[unit.key]]:
             raise ValueError(
                 f"{spec.name} has no saved run of {', '.join(missing)}: give the "
                 "units file its ladder was written from"
@@ -348,13 +367,17 @@ def run_doses_command(args: argparse.Namespace) -> int:
         judge = pick_judge(rows, args.judge, makes[0])
         measured = current_measures(experiment, panel), experiment.version
         reports = []
-        for unit in units:
+        for unit in asked:
             runs = (own[unit.key], controls[unit.key], unpushed)
             report = unit_report(unit, runs, rows, judge, panel, makes, measured)
             reports.append(report)
     except (OSError, ValueError) as error:
         return _refuse(str(error))
-    print(report_text(experiment, units_path, judge, panel, reports, others), end="")
+    unasked = len(named_none), none_runs
+    print(
+        report_text(experiment, units_path, judge, panel, reports, others, unasked),
+        end="",
+    )
     if out is None:
         return 0
     record = doses_record(experiment, units_path, judge, panel, reports)

@@ -158,7 +158,12 @@ replies counts at every dose. Its working dose is the lowest dose at which
 at least 0.8 of its verdicts are speaks_as; its collapse dose, the lowest at
 which its replies' mean coherence is below 6; a dose with no verdict is
 skipped, and a unit with no speaks_as or coherence verdict at all is
-refused, naming the command that makes them. Each found dose has a
+refused, naming the command that makes them. A unit whose persona is named
+"none", the judge's answer for no persona (a library persona can be), is
+never asked about by `pushlab score`, so `pushlab doses` leaves it out and
+says so in the report's head, refusing only a file of such units alone;
+`pushlab ladder` refuses a units file with such a row before writing
+anything, as its runs could never be judged (added in S3). Each found dose has a
 percentile interval from 2,000 bootstrap resamples of the prompts, a
 prompt's replies under every seed and at every dose kept together, as the
 ladder is paired by prompt; a resample that reaches no dose counts beyond

@@ -332,7 +332,7 @@ def test_the_personas_file_gives_descriptions_and_windows_are_asked_by_unit_too(
         ("which_persona", {}, "give --rubric speaks_as, or leave out --units"),
         ("speaks_as", {"persona": "Brass Owl"}, "leave out --persona"),
         ("speaks_as", {"units_file": "NAMELESS"}, f"gives no persona for {CAPTAIN}-"),
-        ("speaks_as", {"units_file": "NONE"}, 'a persona cannot be named "none"'),
+        ("speaks_as", {"units_file": "NONE"}, 'has the persona "none", which is the'),
         ("speaks_as", {"units_file": "MISSING"}, "cannot read the units file"),
         ("speaks_as", {"personas_file": "OWLS"}, "no persona is named 'Salt Captain'"),
     ],
@@ -349,7 +349,7 @@ def test_units_that_cannot_be_asked_are_refused_before_the_folder_is_read(
     for key, text in [
         ("UNITS", UNITS),
         ("NAMELESS", UNITS.replace("Salt Captain", "")),
-        ("NONE", UNITS.replace("Salt Captain", "None")),
+        ("NONE", UNITS.replace("Salt Captain", "None").replace("Brass Owl", "NONE")),
         ("OWLS", "personas:\n  - {name: Brass Owl}\n"),
     ]:
         paths[key] = tmp_path / f"{key.lower()}.txt"

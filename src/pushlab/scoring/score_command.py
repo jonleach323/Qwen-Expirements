@@ -15,7 +15,10 @@ file, speaks_as asks each unit's replies, its own and its random
 controls', and the unpushed replies about that unit's persona
 (pushlab.scoring.score_units; decision 0022): a unit's persona is fixed
 for all its doses, so the dose never reaches the judge. Its questions are
-asked one after another, under one lock, each saving its own rows.
+asked one after another, under one lock, each saving its own rows. An
+experiment that names its units from a candidates list (decision 0023) is
+asked so by default, its list as the units file, unless --units, --personas
+or --persona says otherwise.
 
 An item scored "ok" already, for the same key, reply and text, is skipped
 (pushlab.scoring.score_rows); a failed one is judged again. Of the rest,
@@ -54,7 +57,9 @@ from pushlab.scoring.score_rows import (
 )
 from pushlab.scoring.score_units import (
     Job,
+    LeftOut,
     Units,
+    listed_units,
     plan_jobs,
     unit_questions,
     unit_table,
@@ -182,7 +187,7 @@ def _show(
     experiment: Experiment,
     asked: Question | Units,
     jobs: Sequence[Job],
-    left_out: int,
+    left_out: LeftOut,
     judge: str,
     size: int | None,
     more: Sequence[tuple[str, str]] = (),
@@ -194,7 +199,7 @@ def _show(
         lines = header_lines(experiment, asked, judge, size, plans[0])
         print(table_text([*lines, *more]))
         return
-    about = units_lines(asked.questions, asked.file, left_out)
+    about = units_lines(asked, left_out)
     rubric = asked.questions[0].question.rubric
     lines = job_lines(experiment, rubric, about, judge, size, plans)
     print(table_text([*lines, *more]))
@@ -227,8 +232,12 @@ def _score(
     )
     _show(experiment, asked, jobs, left_out, judge.name, size)
     if not any(job.plan.todo for job in jobs):
-        saved = any(job.plan.items for job in jobs)
-        why = "every item is scored already" if saved else "no reply is saved yet"
+        left = left_out.strangers + left_out.unasked  # replies no question asks about
+        why = "no reply is saved yet"
+        if any(job.plan.items for job in jobs):
+            why = "every item is scored already"
+        elif experiment.runs and left == len(experiment.runs):
+            why = "every saved reply is left out, as the lines above say"
         print(f"\nNothing to judge: {why}.")
         return 0
     before = judge.spent.now()
@@ -322,11 +331,12 @@ def run_score(
     size = window_size if windows else None
     try:
         rubric = load_rubric(rubric_name)
+        if units_file is None and personas_file is None and persona is None:
+            units_file = listed_units(rubric, spec_path)
         if units_file is None:
             asked: Question | Units = question_from(rubric, personas_file, persona)
         else:
-            questions = unit_questions(rubric, units_file, personas_file, persona)
-            asked = Units(Path(units_file), questions)
+            asked = unit_questions(rubric, units_file, personas_file, persona)
         if judge is None:
             backend_name, model_name = backend, backends.judge_model(backend, model)
             settings = backends.judge_settings(backend)

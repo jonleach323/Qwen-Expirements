@@ -241,6 +241,7 @@ def test_help_loads_nothing_heavy(tmp_path: Path, script: str) -> None:
     [
         ("pirate", {}, "unknown rubric 'pirate'; there are speaks_as, which_persona"),
         ("speaks_as", {}, "speaks_as asks about one persona: give --personas FILE"),
+        ("speaks_as", {}, "or --units FILE to ask each unit's replies about its own"),
         ("speaks_as", {"persona": "Brass Owl"}, "speaks_as asks about one persona"),
         (
             "speaks_as",

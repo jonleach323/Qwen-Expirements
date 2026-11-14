@@ -15,9 +15,10 @@ and chooses which of them go on, as a Stage (pushlab.panel.stage_files):
   whose working dose (pushlab.analysis.ladder, with configs/panel.yaml's
   thresholds) is below any collapse dose, at its working dose, on every
   prompt; NoneKept when none is.
-A candidate with no speaks_as verdict is not ranked. Each stage's shown
-lines say what it read, with notes on what it left out, and a table of the
-candidates it kept with their figures.
+A candidate with no speaks_as verdict is not ranked: one whose persona is
+named "none" never has one (unasked, pushlab.panel.stats). Each stage's
+shown lines say what it read, with notes on what it left out, and a table
+of the candidates it kept with their figures.
 """
 
 import math
@@ -32,7 +33,14 @@ from pushlab.discovery.sources import LIBRARY
 from pushlab.panel.settings import Selection
 from pushlab.panel.stage_files import Stage, chosen_prompts, set_prompts
 from pushlab.panel.stage_text import plain
-from pushlab.panel.stats import COHERENCE, SPEAKS_AS, CandidateStats, Scored
+from pushlab.panel.stats import (
+    COHERENCE,
+    NO_PERSONA,
+    SPEAKS_AS,
+    CandidateStats,
+    Scored,
+    unasked_refusal,
+)
 from pushlab.runs.estimate import exact
 from pushlab.runs.ladder import doses_text
 from pushlab.runs.spec import ExperimentSpec
@@ -104,8 +112,9 @@ def figures_table(rows: Sequence[CandidateStats]) -> list[str]:
 def read_lines(scored: Scored, needs: Sequence[str]) -> list[str]:
     """What a stage read, in words, and notes on what it leaves out: the
     file's changes since the runs were made, candidates with no saved reply,
-    replies with no verdict of a rubric in needs, and replies that push no
-    candidate."""
+    replies with no verdict of a rubric in needs, those of unasked
+    candidates when needs holds speaks_as, which can never have one, and
+    replies that push no candidate."""
     spec, experiment = scored.spec, scored.experiment
     replies = sum(each.total.runs for each in scored.stats)
     lines = [
@@ -128,6 +137,13 @@ def read_lines(scored: Scored, needs: Sequence[str]) -> list[str]:
                 f"{counted(missing, 'reply', 'replies')} {have} no ok {rubric} "
                 f"verdict of {scored.judge}: `{scored.make(rubric)}` judges them."
             )
+    if SPEAKS_AS in needs and (unasked := scored.unasked):
+        replies = counted(sum(each.total.runs for each in unasked), "reply", "replies")
+        notes.append(
+            f"{replies} of {counted(len(unasked), 'candidate')} with {NO_PERSONA}, "
+            "can have no speaks_as verdict, as the judge cannot be asked about it: "
+            "left out."
+        )
     if others := scored.others:
         push = "pushes" if others == 1 else "push"
         replies = counted(others, "reply", "replies")
@@ -148,15 +164,17 @@ def _best(scored: Scored, size: int) -> tuple[list[CandidateStats], list[str]]:
     shown = [*read_lines(scored, (SPEAKS_AS,)), ""]
     if not kept:
         raise NoneKept(
-            f"no candidate of {scored.spec.name} has a speaks_as verdict: "
+            unasked_refusal(scored.path, scored.spec.name, scored.stats)
+            or f"no candidate of {scored.spec.name} has a speaks_as verdict: "
             f"`{scored.make(SPEAKS_AS)}` makes them",
             shown,
         )
     every = "all" if len(kept) == len(best) else "the"
+    have = "has" if unrated == 1 else "have"
     shown.append(
         f"Kept {every} {len(kept):,} with the highest speaks_as rates, ties to the "
         f"more verdicts, then the list's order, of {len(best):,} ranked"
-        + (f" ({unrated:,} more have no speaks_as verdict)" if unrated else "")
+        + (f" ({unrated:,} more {have} no speaks_as verdict)" if unrated else "")
         + ":"
     )
     return kept, shown + figures_table(kept)

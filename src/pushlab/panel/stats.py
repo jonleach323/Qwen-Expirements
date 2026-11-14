@@ -11,11 +11,14 @@ candidate's own persona, and coherence, each from the question asked last
 of the candidate's replies, as pushlab doses takes them. A reply without an
 ok verdict, never judged or failed, counts among the runs but not among the
 verdicts. Figures adds replies up: how many, speaks_as k of n and their
-rate, and their mean coherence.
+rate, and their mean coherence. A candidate whose persona is named "none",
+the judge's answer for no persona, is unasked: pushlab score never asks
+whether its replies speak as it, so they are not counted as unjudged.
 
 read_scored reads a whole experiment from its runner folder and refuses,
 saying what to do, one that names no candidates list, was not run, or was
-not judged. Nothing here writes a file or loads a model.
+not judged, or whose only candidates with a saved reply are unasked.
+Nothing here writes a file or loads a model.
 """
 
 from collections.abc import Mapping, Sequence
@@ -25,11 +28,13 @@ from pathlib import Path
 from pushlab.analysis.doses_command import asked_last, current_rows, pick_judge
 from pushlab.analysis.ladder import LadderPoint
 from pushlab.discovery.candidates import Candidate
+from pushlab.panel.figures import Figures, Reply
 from pushlab.prompts import read_prompt_set
 from pushlab.runs.folder import SCORES
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.runs.spec_candidates import CandidatesRule, chosen_candidates
 from pushlab.scoring.items import Experiment, judged_runs
+from pushlab.scoring.personas import NONE, names_no_persona
 from pushlab.store.records import RunRecord
 from pushlab.store.scores import ScoreRow, read_rows
 from pushlab.units.ladder_units import run_push
@@ -39,78 +44,8 @@ SPEAKS_AS, COHERENCE = "speaks_as", "coherence"
 RUBRICS = (SPEAKS_AS, COHERENCE)
 # Each rubric's verdict on a Reply.
 VERDICTS = {SPEAKS_AS: "speaks", COHERENCE: "coherence"}
-
-
-@dataclass(frozen=True)
-class Reply:
-    """One reply of a candidate: its run, prompt and text, and the judge's
-    verdicts on it. speaks is True when its speaks_as label about the
-    candidate's persona was speaks_as, False for any other label, None
-    without an ok verdict; coherence is its score from 0 to 10, None
-    without an ok one.
-
-    Example:
-        >>> Reply("s3-screen-a-000001", "heldout32-01", "Hoo.", True, 8.0).speaks
-        True
-    """
-
-    run_id: str
-    prompt_id: str
-    text: str
-    speaks: bool | None = None
-    coherence: float | None = None
-
-
-@dataclass(frozen=True)
-class Figures:
-    """Replies added up: runs, how many; n, those with a speaks_as verdict,
-    and k of them speaking as the persona; their rate, None without a
-    verdict; scored, those with a coherence score, and their mean, None
-    without one; and the prompts they answered, in order.
-
-    Example:
-        >>> figures = Figures((Reply("r1", "p1", "", True, 8.0), Reply("r2", "p2", "")))
-        >>> figures.runs, figures.k, figures.n, figures.rate, figures.coherence
-        (2, 1, 1, 1.0, 8.0)
-    """
-
-    replies: tuple[Reply, ...] = ()
-
-    @property
-    def runs(self) -> int:
-        """How many replies, with a verdict or not."""
-        return len(self.replies)
-
-    @property
-    def n(self) -> int:
-        """The replies with an ok speaks_as verdict."""
-        return sum(reply.speaks is not None for reply in self.replies)
-
-    @property
-    def k(self) -> int:
-        """The replies the judge says speak as the persona."""
-        return sum(reply.speaks is True for reply in self.replies)
-
-    @property
-    def rate(self) -> float | None:
-        """k of n, None when n is 0."""
-        return self.k / self.n if self.n else None
-
-    @property
-    def scored(self) -> int:
-        """The replies with an ok coherence score."""
-        return sum(reply.coherence is not None for reply in self.replies)
-
-    @property
-    def coherence(self) -> float | None:
-        """The mean of their coherence scores, None without one."""
-        scores = [r.coherence for r in self.replies if r.coherence is not None]
-        return sum(scores) / len(scores) if scores else None
-
-    @property
-    def prompts(self) -> tuple[str, ...]:
-        """The prompts the replies answered, each once, in order."""
-        return tuple(dict.fromkeys(reply.prompt_id for reply in self.replies))
+# An unasked candidate's persona, as notes and refusals name it.
+NO_PERSONA = f'the persona "{NONE}", the judge\'s answer for no persona'
 
 
 @dataclass(frozen=True)
@@ -144,6 +79,12 @@ class CandidateStats:
     def total(self) -> Figures:
         """Every reply, at every dose."""
         return Figures(tuple(r for each in self.doses.values() for r in each.replies))
+
+    @property
+    def unasked(self) -> bool:
+        """Whether its persona is named "none" (names_no_persona), so that
+        its replies never have a speaks_as verdict."""
+        return names_no_persona(self.candidate.persona)
 
     def points(self) -> list[LadderPoint]:
         """The replies as a ladder's points, for pushlab.analysis.ladder.
@@ -257,6 +198,32 @@ def score_command(spec_path: Path, rule: CandidatesRule, rubric: str) -> str:
     return f"uv run pushlab score {spec_path} --rubric {rubric}{units}"
 
 
+def unasked_refusal(path: Path, name: str, stats: Sequence[CandidateStats]) -> str:
+    """Why no reply of the experiment name, its file at path, can have a
+    speaks_as verdict, and what to do, when every candidate of stats with a
+    saved reply is unasked; "" when another has one, or none has.
+
+    Example:
+        >>> unit = NeuronUnit("qwen3-8b", 9, 1)
+        >>> nobody = Candidate("library", "None", unit, -1, 1.5, False, "f", "r")
+        >>> replied = CandidateStats(nobody, 0, {1.5: Figures((Reply("r", "p", ""),))})
+        >>> print(unasked_refusal(Path("a.yaml"), "screen-a", [replied]))
+        ... # doctest: +ELLIPSIS
+        every candidate of screen-a with a saved reply, such as library/L9N1-, has ...
+    """
+    replied = [each for each in stats if each.doses]
+    if not replied or not all(each.unasked for each in replied):
+        return ""
+    then = "give an experiment that pushes candidates of other personas"
+    if any(not each.doses and not each.unasked for each in stats):
+        then = f"`uv run pushlab run {path}` runs the other candidates"
+    return (
+        f"every candidate of {name} with a saved reply, such as {replied[0].key}, "
+        f"has {NO_PERSONA}, which the judge cannot be asked about, so no reply "
+        f"can have a speaks_as verdict: {then}"
+    )
+
+
 @dataclass(frozen=True)
 class Scored:
     """A scored experiment that pushes candidates, read: the experiment
@@ -288,13 +255,21 @@ class Scored:
         """Each candidate's stats by its key, in the experiment's order."""
         return {stats.key: stats for stats in self.stats}
 
+    @property
+    def unasked(self) -> tuple[CandidateStats, ...]:
+        """The unasked candidates with a saved reply, in order: their persona
+        is named "none", so their replies never have a speaks_as verdict."""
+        return tuple(stats for stats in self.stats if stats.doses and stats.unasked)
+
     def unjudged(self, rubric: str) -> int:
         """How many of the candidates' replies have no ok verdict of rubric,
-        speaks_as or coherence."""
+        speaks_as or coherence; for speaks_as, the unasked candidates'
+        replies aside, as pushlab score cannot judge them."""
         verdict = VERDICTS[rubric]
         return sum(
             getattr(reply, verdict) is None
             for stats in self.stats
+            if not (rubric == SPEAKS_AS and stats.unasked)
             for reply in stats.total.replies
         )
 
@@ -316,8 +291,9 @@ def read_scored(
 
     ValueError says why, and what to do: a file that cannot be read or
     whose candidates list is missing; no runner folder, or no saved reply;
-    a file with no candidates: setting; no verdict of the judge, or of a
-    rubric in needs on no candidate's reply; two candidates of one push.
+    a file with no candidates: setting; with speaks_as in needs, replies of
+    unasked candidates alone (unasked_refusal); no verdict of the judge, or
+    of a rubric in needs on no candidate's reply; two candidates of one push.
 
     Example:
         >>> read_scored(Path("experiments/s3/screen_a.yaml"))  # doctest: +SKIP
@@ -344,14 +320,17 @@ def read_scored(
             f"no reply of {spec.name} is saved in {experiment.folder} yet: `uv run "
             f"pushlab run {spec_path}` runs it on the pod"
         )
+    pushed = [by_key[key] for key in keys]
+    places = {candidate.key: place for place, candidate in enumerate(listed)}
+    if SPEAKS_AS in needs:  # before the verdicts: no judge can help with this
+        replied, _ = candidate_stats(pushed, places, experiment.runs, (), "")
+        if refusal := unasked_refusal(spec_path, spec.name, replied):
+            raise ValueError(refusal)
     saved = read_rows(experiment.folder, SCORES)
     rows = current_rows(saved, experiment.runs, experiment.version)
     make = score_command(spec_path, rule, SPEAKS_AS)
     chosen = pick_judge(rows, judge, f"`{make}` makes them")
-    places = {candidate.key: place for place, candidate in enumerate(listed)}
-    found, others = candidate_stats(
-        [by_key[key] for key in keys], places, experiment.runs, rows, chosen
-    )
+    found, others = candidate_stats(pushed, places, experiment.runs, rows, chosen)
     if not any(stats.doses for stats in found):
         raise ValueError(
             f"none of the {len(experiment.runs):,} replies saved for {spec.name} "
@@ -361,9 +340,9 @@ def read_scored(
     scored = Scored(
         spec_path, experiment, rule, chosen, tuple(prompts), tuple(found), others
     )
-    replies = sum(stats.total.runs for stats in scored.stats)
+    replies = [reply for stats in found for reply in stats.total.replies]
     for rubric in needs:
-        if scored.unjudged(rubric) == replies:
+        if all(getattr(reply, VERDICTS[rubric]) is None for reply in replies):
             raise ValueError(
                 f"no reply of a candidate of {spec.name} has an ok {rubric} verdict "
                 f"of {chosen}: `{scored.make(rubric)}` makes them"

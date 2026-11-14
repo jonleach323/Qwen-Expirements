@@ -16,7 +16,7 @@ import pytest
 import torch
 
 from pushlab.discovery.candidates import Candidate
-from pushlab.panel import stats
+from pushlab.panel import figures, stats
 from pushlab.panel.stats import (
     CandidateStats,
     Figures,
@@ -223,6 +223,7 @@ def test_figures_add_replies_up() -> None:
     assert points == [(0.5, "p1", True), (1.0, "p1", False), (1.0, "p2", None)]
 
 
-def test_the_examples_in_the_docstrings_hold() -> None:
-    result = doctest.testmod(stats)
+@pytest.mark.parametrize("module", [stats, figures])
+def test_the_examples_in_the_docstrings_hold(module: object) -> None:
+    result = doctest.testmod(module)  # type: ignore[arg-type]
     assert result.failed == 0 and result.attempted > 0

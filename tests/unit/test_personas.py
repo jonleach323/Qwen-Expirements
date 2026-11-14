@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from pushlab.scoring import personas as personas_module
-from pushlab.scoring.personas import Persona, pick_persona, read_personas
+from pushlab.scoring.personas import (
+    Persona,
+    names_no_persona,
+    pick_persona,
+    read_personas,
+)
 
 OWLS = """\
 personas:
@@ -69,3 +74,19 @@ def test_docstring_examples_run() -> None:
     result = doctest.testmod(personas_module)
     assert result.attempted > 0
     assert result.failed == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "answer"),
+    [
+        ("none", True),
+        ("None", True),
+        (" NONE ", True),
+        ("Nonesuch", False),
+        ("", False),
+    ],
+)
+def test_names_no_persona_is_the_judges_answer_in_any_case(
+    name: str, answer: bool
+) -> None:
+    assert names_no_persona(name) is answer

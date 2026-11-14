@@ -29,7 +29,10 @@ then add the rows you choose (any editor, or `grep` for the persona
 names). Library personas stay off git (decision 0020), so keep the file
 under `/workspace`. `pushlab ladder` takes single neurons: a set's row is
 refused, and `pushlab panel stage ladder` ladders sets (decision 0023,
-docs/runbooks/panel.md).
+docs/runbooks/panel.md). Leave out any row whose persona is `none` (the
+library names one persona so): `none` is the judge's answer for no
+persona, so that unit's replies could never be judged, and
+`pushlab ladder` refuses the file, naming the row.
 
 ## 2. Write the ladder
 
@@ -91,5 +94,7 @@ working dose, the lowest dose where at least 80% speak as the persona,
 and the collapse dose, the lowest where mean coherence falls below 6
 (`configs/panel.yaml`), each with an interval from resampling the
 prompts. An interval that ends "beyond the ladder" means the ladder did
-not reach that dose often enough: climb further. Paste the printed
-report into the cloud session; the JSON stays on the pod.
+not reach that dose often enough: climb further. A unit whose persona is
+`none` is left out, as `pushlab score` never judges it, and a note at the
+report's top counts such units and their runs. Paste the printed report
+into the cloud session; the JSON stays on the pod.
