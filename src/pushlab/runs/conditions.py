@@ -6,7 +6,10 @@ gives some of a shape's params as lists of values, and the condition then
 holds one schedule per combination of values, each labelled with its
 values, such as `pulse length=16`; the first param changes slowest.
 controls asks for that many random controls of each run, drawn from
-control_seed by pushlab.runs.expand. experiments/README.md has the format.
+control_seed by pushlab.runs.expand. A condition with each_candidate
+becomes one condition per candidate of the experiment's candidates list,
+each recording its candidate's key (pushlab.runs.spec_candidates).
+experiments/README.md has the format.
 """
 
 import itertools
@@ -29,6 +32,7 @@ CONDITION_KEYS = (
     "allow_over_ceiling",
     "controls",
     "control_seed",
+    "each_candidate",
 )
 # The most runs an experiment can have: run IDs count with six digits.
 MOST_RUNS = 999_999
@@ -78,17 +82,20 @@ class Condition:
     one pair, the condition's own label, when it has no grid. Each schedule
     is named after the condition. controls is how many random controls each
     of its runs gets, drawn from control_seed (None when controls is 0).
+    candidate is the key of the persona candidate it pushes, such as
+    library/L9N4242-, for a condition each_candidate made, else None.
 
     Example:
         >>> condition = Condition("none", (("none", Schedule("none")),))
-        >>> condition.controls, condition.control_seed
-        (0, None)
+        >>> condition.controls, condition.control_seed, condition.candidate
+        (0, None, None)
     """
 
     label: str
     points: tuple[tuple[str, Schedule], ...]
     controls: int = 0
     control_seed: int | None = None
+    candidate: str | None = None
 
 
 def _value_text(param: object, value: object) -> str:
@@ -155,6 +162,78 @@ def _grid_points(
     return tuple(points.items())
 
 
+def condition_label(data: object, i: int) -> str:
+    """conditions[i]'s label, checked: lowercase letters and digits joined
+    by single hyphens.
+
+    ValueError names the condition by its place when data is not a mapping
+    or its label is missing or not such a name.
+
+    Example:
+        >>> condition_label({"label": "pulse-16"}, 0)
+        'pulse-16'
+        >>> condition_label({"label": "Pulse 16"}, 2)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: conditions[2]: label must be lowercase letters and digits ...
+    """
+    if not isinstance(data, Mapping):
+        raise ValueError(
+            f"conditions[{i}] must be a mapping with a label and a schedule, "
+            f"not {data!r}"
+        )
+    label = data.get("label")
+    if label is None:
+        raise ValueError(f"conditions[{i}] needs a label, such as pulse-16")
+    if not isinstance(label, str):
+        raise ValueError(f"conditions[{i}]: {not_text('label', label, 'pulse-16')}")
+    if not SCHEDULE_NAME.fullmatch(label):
+        raise ValueError(
+            f"conditions[{i}]: label must be lowercase letters and digits joined "
+            f"by single hyphens, such as pulse-16, not {label!r}"
+        )
+    return label
+
+
+def condition_controls(data: Mapping, where: str) -> tuple[int, int | None]:
+    """A condition's controls and control_seed, checked; where starts each
+    message, such as "conditions[1] (pulse): ".
+
+    controls is 0 when absent, and control_seed is needed with controls of
+    1 or more and refused with none.
+
+    Example:
+        >>> condition_controls({"controls": 2, "control_seed": 7}, "")
+        (2, 7)
+        >>> condition_controls({}, "")
+        (0, None)
+        >>> condition_controls({"controls": 1}, "conditions[0] (x): ")
+        ... # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: conditions[0] (x): 1 control needs a control_seed, the seed ...
+    """
+    controls = data.get("controls", 0)
+    if not _is_whole(controls) or controls < 0:
+        raise ValueError(
+            f"{where}controls must be a whole number from 0, not {controls!r}"
+        )
+    seed = data.get("control_seed")
+    if controls and seed is None:
+        need = "1 control needs" if controls == 1 else f"{controls} controls need"
+        raise ValueError(
+            f"{where}{need} a control_seed, the seed their neurons are drawn from"
+        )
+    if not controls and "control_seed" in data:
+        raise ValueError(f"{where}control_seed goes with controls of 1 or more")
+    if seed is not None and not (_is_whole(seed) and 0 <= seed <= MAX_SEED):
+        raise ValueError(
+            f"{where}control_seed must be a whole number from 0 to {MAX_SEED}, "
+            f"not {seed!r}"
+        )
+    return controls, seed
+
+
 def condition_from_mapping(data: object, i: int) -> Condition:
     """Check conditions[i] of an experiment file and return the condition.
 
@@ -178,41 +257,16 @@ def condition_from_mapping(data: object, i: int) -> Condition:
         >>> [label for label, _ in condition.points]
         ['pulse length=4', 'pulse length=16']
     """
-    if not isinstance(data, Mapping):
-        raise ValueError(
-            f"conditions[{i}] must be a mapping with a label and a schedule, "
-            f"not {data!r}"
-        )
-    label = data.get("label")
-    if label is None:
-        raise ValueError(f"conditions[{i}] needs a label, such as pulse-16")
-    if not isinstance(label, str):
-        raise ValueError(f"conditions[{i}]: {not_text('label', label, 'pulse-16')}")
-    if not SCHEDULE_NAME.fullmatch(label):
-        raise ValueError(
-            f"conditions[{i}]: label must be lowercase letters and digits joined "
-            f"by single hyphens, such as pulse-16, not {label!r}"
-        )
+    label = condition_label(data, i)
     where = f"conditions[{i}] ({label}): "
     refuse_unknown_keys(data, CONDITION_KEYS, where)
-    controls = data.get("controls", 0)
-    if not _is_whole(controls) or controls < 0:
+    if "each_candidate" in data:  # spec_from_mapping reads it with the list
         raise ValueError(
-            f"{where}controls must be a whole number from 0, not {controls!r}"
+            f"{where}each_candidate makes a condition per candidate of the "
+            "experiment's candidates list, so it is read with the whole "
+            "experiment (pushlab.runs.spec.spec_from_mapping)"
         )
-    seed = data.get("control_seed")
-    if controls and seed is None:
-        need = "1 control needs" if controls == 1 else f"{controls} controls need"
-        raise ValueError(
-            f"{where}{need} a control_seed, the seed their neurons are drawn from"
-        )
-    if not controls and "control_seed" in data:
-        raise ValueError(f"{where}control_seed goes with controls of 1 or more")
-    if seed is not None and not (_is_whole(seed) and 0 <= seed <= MAX_SEED):
-        raise ValueError(
-            f"{where}control_seed must be a whole number from 0 to {MAX_SEED}, "
-            f"not {seed!r}"
-        )
+    controls, seed = condition_controls(data, where)
     schedule = {
         key: data[key] for key in ("segments", "shape", "params") if key in data
     }

@@ -1,11 +1,15 @@
 """Pushes: adding to chosen neurons during forward passes, while each is active.
 
 A decoding loop runs a prompt pass, then one pass per reply token. A Push
-names a neuron, a dose and the passes it is active on: reply tokens start to
+names a unit, a dose and the passes it is active on: reply tokens start to
 end (end not included), and the prompt pass if include_prompt. A StepState
 says which pass is running, and pushes_active installs one hook per pushed
 layer that adds each active push's amount to its neuron's MLP value (the
 input of down_proj) at every real position of the pass.
+
+A unit is a neuron or a NeuronSet, whose amount is per unit of coefficient:
+each of its neurons gets the amount times its coefficient c_i, in its own
+layer, so the set pushes along its write direction (decision 0019).
 
 A push on reply token k changes the computation at token k's position, so it
 first shows in the choice of token k + 1, and it stays in the cache for the
@@ -24,7 +28,8 @@ from torch import nn
 from pushlab.models.discovery import find_mlp_modules
 from pushlab.schedules.model import Schedule, Segment
 from pushlab.units.dose import amount
-from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron import NeuronUnit  # noqa: F401 (the examples use it)
+from pushlab.units.neuron_set import Unit, is_unit, unit_layers, unit_neurons
 
 
 def _is_whole(value: object) -> bool:
@@ -33,7 +38,8 @@ def _is_whole(value: object) -> bool:
 
 @dataclass(frozen=True, kw_only=True)
 class Push:
-    """One neuron pushed by a dose alpha, on some passes of a reply.
+    """One unit, a neuron or a NeuronSet, pushed by a dose alpha, on some
+    passes of a reply.
 
     start is the first reply token the push applies to, counting from 0, and
     end the first it no longer applies to (None: to the end of the reply).
@@ -53,16 +59,18 @@ class Push:
         >>> window = Push(unit=unit, alpha=1.0, start=3, end=6, include_prompt=False)
     """
 
-    unit: NeuronUnit
+    unit: Unit
     alpha: float
     start: int = 0
     end: int | None = None
     include_prompt: bool
 
     def __post_init__(self) -> None:
-        """Refuse a push that is not a neuron, a finite dose and a real window."""
-        if not isinstance(self.unit, NeuronUnit):
-            raise ValueError(f"unit must be a NeuronUnit, not {self.unit!r}")
+        """Refuse a push that is not a unit, a finite dose and a real window."""
+        if not is_unit(self.unit):
+            raise ValueError(
+                f"unit must be a NeuronUnit or a NeuronSet, not {self.unit!r}"
+            )
         alpha = self.alpha
         if not (
             isinstance(alpha, numbers.Real)
@@ -292,15 +300,27 @@ def add_amounts(
 
 
 def _down_proj_hook(
-    pushes: Sequence[tuple[Push, float]], state: StepState
+    pushes: Sequence[tuple[Push, float]], state: StepState, layer: int | None = None
 ) -> Callable[[nn.Module, tuple], tuple | None]:
-    """A forward pre-hook that adds the active pushes' amounts to down_proj's input."""
+    """A forward pre-hook that adds the active pushes' amounts to down_proj's input.
+
+    pushes are (push, amount) pairs. Each adds its amount times c_i to each
+    of its neurons i in layer, the layer hooked (c is 1.0 for a neuron's own
+    push), or in any layer if layer is None. Pushes on one neuron add up, in
+    the pushes' order.
+    """
+    targets = []  # each push's neurons in the layer, and their coefficients
+    for push, value in pushes:
+        neurons = unit_neurons(push.unit)
+        mine = [(n.index, c) for n, c in neurons if layer in (None, n.layer)]
+        targets.append((push, value, mine))
 
     def hook(module: nn.Module, args: tuple) -> tuple | None:
         totals: dict[int, float] = {}
-        for push, value in pushes:
+        for push, value, neurons in targets:
             if push.active_at(state):
-                totals[push.unit.index] = totals.get(push.unit.index, 0.0) + value
+                for index, coefficient in neurons:
+                    totals[index] = totals.get(index, 0.0) + value * coefficient
         if not totals:
             return None  # nothing active: the input passes on untouched
         values = args[0]
@@ -327,11 +347,13 @@ def pushes_active(
     """Install the pushes' hooks for the length of a with block.
 
     Each push's amount comes from its dose and norms (units.dose.amount),
-    which also checks that the push is a neuron of this model. Every pushed
+    which also checks that the push is a unit of this model. Every pushed
     layer gets one forward pre-hook on its down_proj, shared by its pushes;
-    pushes add up, on one neuron or many. The hooks read state on every pass,
-    and they are removed when the block ends, even after an error. The block
-    gets each push's amount, in order.
+    a NeuronSet is pushed in every layer it has neurons in. Pushes add up,
+    on one neuron or many, in the pushes' order. The hooks read state on
+    every pass, and they are removed when the block ends, even after an
+    error. The block gets each push's amount, in order (a set's per unit of
+    coefficient).
 
     Example:
         >>> from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -364,12 +386,13 @@ def pushes_active(
     amounts = tuple(amount(push.unit, push.alpha, model, norms) for push in pushes)
     by_layer: dict[int, list[tuple[Push, float]]] = {}
     for push, value in zip(pushes, amounts, strict=True):
-        by_layer.setdefault(push.unit.layer, []).append((push, value))
+        for layer in unit_layers(push.unit):  # a set's every layer
+            by_layer.setdefault(layer, []).append((push, value))
     mlps = dict(find_mlp_modules(model))
     handles = []
     try:
         for layer, here in by_layer.items():
-            hook = _down_proj_hook(here, state)
+            hook = _down_proj_hook(here, state, layer)
             handles.append(mlps[layer].down_proj.register_forward_pre_hook(hook))
         yield amounts
     finally:

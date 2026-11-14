@@ -1,7 +1,9 @@
 """Shapes: the common schedules of the research plan, built as segments.
 
 Each helper returns a Schedule whose segments are the ones you would write by
-hand (research plan, "Schedules"). Reply tokens count from 0, and a push on
+hand (research plan, "Schedules"). A unit is a neuron (NeuronUnit) or a set
+of neurons (NeuronSet), which every dose pushes as a whole (decision 0019);
+the shapes treat both alike. Reply tokens count from 0, and a push on
 reply token k is on the pass that reads token k, so it first changes token
 k + 1; only the prompt pass reaches token 0 (decision 0008). constant and
 handoff start with the reply, so by default they also push the prompt pass,
@@ -19,7 +21,8 @@ model and a reply length is for pushlab.schedules.validation.validate.
 from collections.abc import Callable
 
 from pushlab.schedules.model import Schedule, Segment
-from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron import NeuronUnit  # noqa: F401 (the examples use it)
+from pushlab.units.neuron_set import NeuronSet, Unit  # noqa: F401 (examples: NeuronSet)
 
 
 def _whole(name: str, value: object, minimum: int) -> int:
@@ -46,25 +49,26 @@ def _flag(name: str, value: object) -> bool:
     return value
 
 
-def _on_prompt(unit: NeuronUnit, alpha: float) -> Segment:
+def _on_prompt(unit: Unit, alpha: float) -> Segment:
     return Segment(unit, alpha, alpha, region="prompt")
 
 
-def _on_reply(unit: NeuronUnit, alpha: float, start: int, end: int | None) -> Segment:
+def _on_reply(unit: Unit, alpha: float, start: int, end: int | None) -> Segment:
     return Segment(unit, alpha, alpha, start, end, "reply")
 
 
 def constant(
-    unit: NeuronUnit,
+    unit: Unit,
     alpha: float,
     include_prompt: bool = True,
     *,
     name: str | None = None,
 ) -> Schedule:
-    """One neuron at one dose from the prompt pass to the end of the reply.
+    """One unit at one dose from the prompt pass to the end of the reply.
 
     This is the evil-Qwen recipe's setup, the reference for every other
     shape. With include_prompt=False the reply's first token is left alone.
+    Every shape takes a set of neurons as it takes a neuron.
 
     Example:
         >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
@@ -72,6 +76,9 @@ def constant(
         ...     print(segment.describe())
         qwen3.5-4b:L14:N8949 at +1 on the prompt pass
         qwen3.5-4b:L14:N8949 at +1 from reply token 0 to the end
+        >>> pair = NeuronSet("qwen3-8b", "pair", [(14, 1, 1.0), (14, 2, -0.5)], "x")
+        >>> constant(pair, -1.0, include_prompt=False).segments[0].describe()
+        'qwen3-8b:set:pair at -1 from reply token 0 to the end'
     """
     segments = [_on_reply(unit, alpha, 0, None)]
     if _flag("include_prompt", include_prompt):
@@ -80,14 +87,14 @@ def constant(
 
 
 def pulse(
-    unit: NeuronUnit,
+    unit: Unit,
     alpha: float,
     start: int,
     length: int,
     *,
     name: str | None = None,
 ) -> Schedule:
-    """One neuron on for length reply tokens from start, then off.
+    """One unit on for length reply tokens from start, then off.
 
     The research plan's pulse "on for tokens 0 to 15" is pulse(unit, alpha,
     0, 16). The prompt pass is not pushed, so token 0 is never changed.
@@ -105,13 +112,13 @@ def pulse(
 
 
 def onset(
-    unit: NeuronUnit,
+    unit: Unit,
     alpha: float,
     start: int,
     *,
     name: str | None = None,
 ) -> Schedule:
-    """One neuron on from reply token start to the end of the reply: a late onset.
+    """One unit on from reply token start to the end of the reply: a late onset.
 
     Example:
         >>> unit = NeuronUnit.parse("qwen3.5-4b:L14:N8949")
@@ -122,8 +129,8 @@ def onset(
 
 
 def handoff(
-    a: NeuronUnit,
-    b: NeuronUnit,
+    a: Unit,
+    b: Unit,
     alpha_a: float,
     alpha_b: float,
     switch_at: int,
@@ -173,8 +180,8 @@ def handoff(
 
 
 def alternate(
-    a: NeuronUnit,
-    b: NeuronUnit,
+    a: Unit,
+    b: Unit,
     alpha_a: float,
     alpha_b: float,
     period: int,
@@ -227,7 +234,7 @@ def alternate(
 
 
 def ramp(
-    unit: NeuronUnit,
+    unit: Unit,
     alpha_from: float,
     alpha_to: float,
     start: int,
@@ -235,7 +242,7 @@ def ramp(
     *,
     name: str | None = None,
 ) -> Schedule:
-    """One neuron whose dose moves in a straight line over reply tokens start to end.
+    """One unit whose dose moves in a straight line over reply tokens start to end.
 
     alpha_from goes on reply token start and alpha_to on end - 1, with equal
     steps between (Segment.alpha_at), so a ramp with two different doses needs

@@ -1,0 +1,58 @@
+# S3's first screen of the persona candidates (decision 0023): every
+# candidate of units/candidates_qwen3-8b.csv, which `uv run pushlab
+# candidates --model qwen3-8b --out units/candidates_qwen3-8b.csv` makes on
+# the pod from the Neuron Persona Library's neurons and Mayner's persona
+# sets (decision 0020), pushed at its reference dose on the first 8
+# held-out prompts. Its replies, judged with `uv run pushlab score
+# experiments/s3/screen_a.yaml --rubric speaks_as --units
+# units/candidates_qwen3-8b.csv`, give each candidate's speaks_as rate,
+# from which `pushlab panel stage b` takes the 120 best.
+# `uv run pushlab expand experiments/s3/screen_a.yaml --summary` counts its
+# runs, the list's candidates times 8, and `uv run pushlab run
+# experiments/s3/screen_a.yaml --dry-run` their cost.
+#
+# It names no unit itself: the list stays on the pod, out of git, as the
+# library states no licence (decision 0020). each_candidate below makes one
+# condition per candidate of the list, in the list's order, and records its
+# candidate's key; the spec's hash covers every unit and dose it resolves
+# to, so the same list gives the same experiment.
+name: s3-screen-a
+model: qwen3-8b
+prompts: prompts/heldout32.jsonl
+# The held-out set's first 8 prompts (configs/panel.yaml: screen_prompts).
+prompt_ids:
+  - heldout32-01
+  - heldout32-02
+  - heldout32-03
+  - heldout32-04
+  - heldout32-05
+  - heldout32-06
+  - heldout32-07
+  - heldout32-08
+# Greedy decoding draws no random numbers, so it takes one seed. Thinking
+# is off in every run (decision 0009).
+decoding: {strategy: greedy}
+seeds: [0]
+max_new_tokens: 160
+batch_size: 16
+# Each layer's residual size from calibration/ (decision 0007), as every
+# later stage of the panel; `uv run pushlab calibrate --model qwen3-8b`
+# makes it once on the pod.
+calibration: fixed
+# For about 850 candidates (Mayner's 550 sets, his 275 roles at 10 and 50
+# neurons, and the library's persona neurons; decision 0020), 8 prompts and
+# 160 reply tokens at configs/costs.yaml's 22 reply tokens a second for
+# qwen3-8b: 13.7 hours, times 1.5, rounded up to a quarter hour, as pushlab
+# ladder's default. `pushlab run --dry-run` on the pod gives the hours for
+# the list there: raise this if the list is longer.
+max_gpu_hours: 20.75
+# Every candidate of the list.
+candidates:
+  file: units/candidates_qwen3-8b.csv
+conditions:
+  # Each candidate pushed in its direction at its reference dose, the
+  # library's strength for a neuron and Mayner's, dose 1, for a set, on the
+  # prompt pass and every reply token: candidate-0001, candidate-0002 and
+  # so on. Some library strengths pass the ceiling of 1.4, so it is allowed.
+  - label: candidate
+    each_candidate: {doses: [1.0], allow_over_ceiling: true}

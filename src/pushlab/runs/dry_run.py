@@ -1,14 +1,15 @@
 """`pushlab run --dry-run`: what a run would do and cost, with nothing run.
 
-It prints the experiment's runs by condition (as `pushlab expand --summary`
-does), then the runs still to run in its folder as the same command would
-take them (with --limit, --retry-failed and --overwrite-version), their
-reply tokens, the speed it estimates with, the GPU-hours against what is
-left of max_gpu_hours, and the cost (pushlab.runs.estimate). It loads no
-model (only its tokenizer, for the prompts' lengths) and writes nothing, so
-it works in a cloud session too. There, where the model is not downloaded,
-it cannot read the prompts' lengths in tokens, nor check the model download
-and calibration, and says so.
+It prints the experiment's settings, its calibration among them, and its
+runs by condition (as `pushlab expand --summary` does), then the runs still
+to run in its folder as the same command would take them (with --limit,
+--retry-failed and --overwrite-version), their reply tokens, the speed it
+estimates with, the GPU-hours against what is left of max_gpu_hours, and
+the cost (pushlab.runs.estimate). It loads no model (only its tokenizer,
+for the prompts' lengths) and writes nothing, so it works in a cloud
+session too. There, where the model is not downloaded, it cannot read the
+prompts' lengths in tokens, nor check the model download and the fixed
+calibration's file, and says so; the per_prompt calibration has no file.
 """
 
 from pathlib import Path
@@ -33,9 +34,10 @@ def _inputs(
     """The inputs' hashes now, and a note when some cannot be read.
 
     Where the model is not downloaded, as in a cloud session, the download
-    and the calibration are taken to be as the folder has them. Where it is
-    but the rest cannot be read, such as a calibration not made yet, the
-    note says why pushlab run would refuse.
+    and the calibration are taken to be as the folder has them; but the
+    per_prompt calibration needs no file, so it is known here too. Where
+    the model is downloaded but the rest cannot be read, such as a
+    calibration not made yet, the note says why pushlab run would refuse.
     """
     from pushlab.models import load
 
@@ -49,8 +51,12 @@ def _inputs(
     try:
         revision = load.downloaded_revision(spec.model)
     except FileNotFoundError:
-        unchecked = "the model is not downloaded here: its download and calibration"
-        return known, f"{unchecked} were not checked"
+        unchecked = "the model is not downloaded here: its download"
+        if spec.calibration != plan.PER_PROMPT:
+            return known, f"{unchecked} and calibration were not checked"
+        pushed = any(run.record.schedule for run in expansion.runs)
+        known["calibration_sha256"] = plan.PER_PROMPT if pushed else None
+        return known, f"{unchecked} was not checked"
     except ValueError as error:
         return known, f"pushlab run would refuse this: {error}"
     try:

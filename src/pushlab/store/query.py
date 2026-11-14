@@ -1,6 +1,6 @@
-"""DuckDB views across every experiment's runs and steps.
+"""DuckDB views across every experiment's runs, steps and judged replies.
 
-connect() opens an in-memory DuckDB connection with three views over every
+connect() opens an in-memory DuckDB connection with five views over every
 runner folder in a runs dir: a folder with experiment.json, as
 pushlab.runs.folder describes, whose name is its experiment's, as the
 runner names it. Each view holds a folder's current version only, and each
@@ -13,6 +13,11 @@ run as its latest mark in the index says, as pushlab.runs.shards reads them:
 - conditions: each saved run's experiment, version, run ID and condition
   label from experiment.json, such as "pulse length=16", to group runs or
   steps by with a join; NULL in a folder saved before labels were kept.
+- scores and sentences: the judges' verdicts on those runs' replies, whole
+  or by windows of their sentences, with the scores and sentences tables'
+  columns (pushlab.store.scores) and the experiment. Each verdict shows
+  once, the newest, and only while the runs view shows the reply it
+  judged, in its version (pushlab.store.score_views).
 So each run of an experiment shows once, and each of its steps once, and
 (experiment, version, run_id) names one run.
 
@@ -44,12 +49,15 @@ Example:
 import re
 import warnings
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pyarrow as pa
 
 from pushlab.runs import folder
+from pushlab.store import score_views
 from pushlab.store.records import RUNS_FILE, RUNS_SCHEMA
+from pushlab.store.scores import SCHEMAS
 from pushlab.store.steps import STEPS_SCHEMA
 
 # Each saved run of a runner folder's version, and the files that hold it.
@@ -69,20 +77,21 @@ _PATTERN = re.compile(r"[*?\[]")
 
 
 def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
-    """An in-memory DuckDB connection with the views runs, steps and
-    conditions over every runner folder in runs_dir, default_runs_dir()
-    when None, as the module's docstring says.
+    """An in-memory DuckDB connection with the views runs, steps,
+    conditions, scores and sentences over every runner folder in runs_dir,
+    default_runs_dir() when None, as the module's docstring says.
 
     Other folders, such as S1's with one runs.parquet, and files are
     skipped; with no runner folder, or nothing saved, the views have their
     columns and no rows. A copy of a runner folder, whose name is not its
     experiment's, is skipped with a UserWarning. The views are a snapshot
     of what was saved when connect was called: connect again to see later
-    batches.
+    batches and verdicts.
 
     FileNotFoundError says when runs_dir is not a folder or a shard that an
     index names is missing; ValueError when runs_dir is a run folder itself,
-    or a folder's experiment.json or index is broken.
+    a folder's experiment.json or index is broken, or a file in its scores/
+    or sentences/ is not that table's.
 
     Example:
         >>> con = connect(Path("/workspace/runs"))  # doctest: +SKIP
@@ -96,7 +105,10 @@ def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
         FileNotFoundError: there is no folder /no/such/folder; ...
     """
     runs_dir = folder.default_runs_dir() if runs_dir is None else Path(runs_dir)
-    marks = _marks(runs_dir)
+    folders = _runner_folders(runs_dir)
+    marks = _marks(folders)
+    # The judges' files, each checked before DuckDB reads any.
+    judged = {table: score_views.table_files(folders, table) for table in SCHEMAS}
     con = duckdb.connect()
     con.register("_marks", marks)
     runs = _source(con, "_no_runs", RUNS_SCHEMA, marks["shard"].to_pylist())
@@ -121,12 +133,18 @@ def connect(runs_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
         "CREATE VIEW conditions AS "
         "SELECT experiment, version, run_id, condition FROM _marks"
     )
+    for table, files in judged.items():
+        con.register(f"_{table}_files", files)
+        paths = files["filename"].to_pylist()
+        source = _source(con, f"_no_{table}", SCHEMAS[table], paths)
+        con.execute(score_views.view(table, source, f"_{table}_files"))
     return con
 
 
-def _marks(runs_dir: Path) -> pa.Table:
-    """Each saved run of every runner folder in runs_dir, as MARKS_SCHEMA; a
-    copy of one is left out, with a warning (see the module's docstring)."""
+def _runner_folders(runs_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Each runner folder in runs_dir, in name order, with its
+    experiment.json; a copy of one is left out, with a warning (see the
+    module's docstring)."""
     if not runs_dir.is_dir():
         raise FileNotFoundError(
             f"there is no folder {runs_dir}; the runs dir is the folder that "
@@ -138,17 +156,25 @@ def _marks(runs_dir: Path) -> pa.Table:
             f"{runs_dir} is a run folder (it holds {', '.join(held)}); give the "
             "folder that holds experiments' folders, such as /workspace/runs"
         )
-    rows = []
+    found = []
     for path in sorted(runs_dir.iterdir()):
         identity = folder.read_identity(path) if path.is_dir() else None
         if identity is None:
             continue  # not a runner folder
-        # The identity first: a new version's marks are all in the index
-        # before its experiment.json is.
-        experiment, version = identity["experiment"], identity["version"]
-        if path.name != experiment:
-            warnings.warn(_copy(path, experiment), stacklevel=3)
+        if path.name != identity["experiment"]:
+            warnings.warn(_copy(path, identity["experiment"]), stacklevel=3)
             continue
+        found.append((path, identity))
+    return found
+
+
+def _marks(folders: list[tuple[Path, dict[str, Any]]]) -> pa.Table:
+    """Each saved run of the runner folders, as MARKS_SCHEMA."""
+    rows = []
+    for path, identity in folders:
+        # The identity was read first: a new version's marks are all in the
+        # index before its experiment.json is.
+        experiment, version = identity["experiment"], identity["version"]
         labels = identity.get("conditions") or {}
         states = folder.latest(folder.read_index(path), version)
         files: dict[str, tuple[str, str | None]] = {}

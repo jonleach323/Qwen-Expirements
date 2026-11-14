@@ -25,6 +25,9 @@ EXPERIMENT_MANIFEST_FIELDS = (
 )
 RUN_STATES = ("ok", "failed", "pending")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+# calibration_sha256 of runs whose doses take each prompt's own residual
+# sizes, the per_prompt calibration, which has no file to hash.
+PER_PROMPT = "per_prompt"
 
 
 def _count(value: object) -> bool:
@@ -37,7 +40,8 @@ def check_experiment_manifest(info: Mapping[str, Any]) -> str:
 
     Beyond check_manifest's fields, info must have every field in
     EXPERIMENT_MANIFEST_FIELDS: the experiment's name and version (from 1),
-    the experiment file's SHA-256, the calibration's (None when nothing is
+    the experiment file's SHA-256, the calibration file's (PER_PROMPT when
+    each prompt's own sizes are measured instead, None when nothing is
     pushed), the runs ok, failed and pending, which add up to run_count, and
     a list of sessions, each with an ID and its start and end times.
 
@@ -59,12 +63,13 @@ def check_experiment_manifest(info: Mapping[str, Any]) -> str:
     spec, calibration = info["spec_sha256"], info["calibration_sha256"]
     if not (isinstance(spec, str) and SHA256.fullmatch(spec)):
         raise ValueError(f"spec_sha256 must be a SHA-256 in hex, not {spec!r}")
-    if calibration is not None and not (
+    if calibration not in (None, PER_PROMPT) and not (
         isinstance(calibration, str) and SHA256.fullmatch(calibration)
     ):
         raise ValueError(
-            f"calibration_sha256 must be a SHA-256 in hex, or None when nothing is "
-            f"pushed, not {calibration!r}"
+            f"calibration_sha256 must be a SHA-256 in hex, {PER_PROMPT} when each "
+            "prompt's own sizes are measured, or None when nothing is pushed, not "
+            f"{calibration!r}"
         )
     counts = info["runs_by_status"]
     if not (

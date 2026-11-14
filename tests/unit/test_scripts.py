@@ -60,7 +60,7 @@ def test_cloud_setup_refuses_to_run_on_a_gpu_machine(tmp_path: Path) -> None:
 def test_the_pod_env_example_names_the_tokens_without_values() -> None:
     text = (ROOT / "scripts" / "pod.env.example").read_text()
     settings = [line for line in text.splitlines() if line and line[0] != "#"]
-    assert settings == ["HF_TOKEN=", "GITHUB_TOKEN="]
+    assert settings == ["HF_TOKEN=", "GITHUB_TOKEN=", "ANTHROPIC_API_KEY="]
 
 
 def test_cloud_setup_makes_uv_use_the_system_certificates() -> None:

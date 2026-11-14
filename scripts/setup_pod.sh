@@ -240,11 +240,10 @@ if ((DRY_RUN)); then
 else
   mkdir -p "$WORKSPACE/logs"
   LOG="$WORKSPACE/logs/setup-$(date +%Y-%m-%d-%H%M%S).log"
-  # Copy everything to the log. tee ignores Ctrl-C so it still logs the exit.
-  exec > >(
-    trap '' INT
-    exec tee -a "$LOG"
-  ) 2>&1
+  # Copy everything to the log. tee -i ignores Ctrl-C by itself, so it still
+  # logs the exit. A trap '' INT before exec tee does not do it everywhere:
+  # bash 5.3 gives tee the default Ctrl-C back when it starts it.
+  exec > >(exec tee -a -i "$LOG") 2>&1
   trap on_exit EXIT
   trap 'exit 130' INT # without it, on_exit would see status 0 after Ctrl-C
   export PATH="$HOME/.local/bin:$PATH"

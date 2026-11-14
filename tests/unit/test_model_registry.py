@@ -1,6 +1,7 @@
 """The model registry: every entry, and the real models' published shapes."""
 
 import doctest
+import re
 from typing import get_args
 
 import pytest
@@ -35,6 +36,20 @@ def test_real_entries_match_their_published_configs(name: str) -> None:
     spec = REGISTRY[name]
     actual = (spec.hf_id, spec.kind, spec.layers, spec.hidden_size, spec.mlp_size)
     assert actual == PUBLISHED[name]
+
+
+@pytest.mark.parametrize(
+    "name", sorted(name for name, spec in REGISTRY.items() if spec.kind != "test")
+)
+def test_every_downloaded_model_is_pinned_to_a_commit(name: str) -> None:
+    # A branch name such as "main" can move to new weights unnoticed.
+    assert re.fullmatch(r"[0-9a-f]{40}", REGISTRY[name].revision)
+
+
+def test_qwen3_8b_is_pinned_to_the_commit_mayners_data_used() -> None:
+    # persona_neurons/config.py's MODEL_REVISION, so his neuron sets push the
+    # same weights here (decision 0019).
+    assert REGISTRY["qwen3-8b"].revision == "b968826d9c46dd6066d109eabc6255188de91218"
 
 
 def test_tiny_entry_matches_the_tiny_model(tiny_model: Qwen3ForCausalLM) -> None:

@@ -27,7 +27,19 @@ token, with the pushes behind each token; `pushlab verify` checks them
 against the experiment file, `pushlab report` shows an experiment's
 replies with a marker wherever a push switched on or off, and
 `pushlab.store.query` opens every experiment's runs and steps in DuckDB
-(decision 0016).
+(decision 0016), and once they are judged, their scores (decision 0021).
+A schedule built in Python, not yet one in a file, can also push a
+NeuronSet, a few neurons pushed as one unit, such as a persona's top
+neurons from Will Mayner's persona-neurons data, which dose 1 pushes at his
+strength; and doses can be scaled by each prompt's own residual sizes, as
+the Neuron Persona Library scales them, instead of the fixed calibration
+(decision 0019). S3's main model for this work is Qwen3-8B.
+`pushlab score` has a judge model label an experiment's replies, whole or
+sentence by sentence: does the model speak as a persona, which persona, and
+how coherent is it. The judge sees only the text and the question, never
+which condition made the reply, and `pushlab label export` and
+`pushlab label check` measure how well it agrees with your own labels
+before it is trusted (decision 0021).
 
 ## Getting started
 
@@ -77,6 +89,28 @@ manifest (`manifest.json`) in a new folder. Never use
 
 Where things go: see "Repository layout and conventions" in
 `docs/plan/development-plan.md`. Design decisions live in `docs/decisions/`.
+
+## Data and credits
+
+pushlab reads persona candidates for Qwen3-8B from two sources, which
+`pushlab fetch` downloads on the GPU pod (decision 0020). Neither source's
+data is in this repository.
+
+- **persona-neurons**, by Will Mayner: code at
+  [github.com/wmayner/persona-neurons](https://github.com/wmayner/persona-neurons)
+  (MIT), data at
+  [huggingface.co/datasets/wmayner/persona-neurons](https://huggingface.co/datasets/wmayner/persona-neurons)
+  under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). A
+  NeuronSet made from it pushes exactly his top-neuron steering at dose 1
+  (decision 0019), and a candidate list made from it (`pushlab candidates`)
+  credits his data, and says how it adapts it, on each of its rows.
+  `tests/unit/mayner_reference.py` copies a few of his functions under his
+  MIT notice, unchanged but for one renamed function.
+- **The Neuron Persona Library** for Qwen3-8B: Fonseca Rivera, J. (2026).
+  *Neuron Persona Library: What Language Models Say They Are When One Neuron
+  Is Pushed.* [neuronpersonas.com](https://neuronpersonas.com). It states no
+  licence and asks to be cited, as above, so its data, and the candidate
+  lists made from it, stay out of git.
 
 ## License
 

@@ -2,11 +2,13 @@
 
 There is one run per prompt, seed, condition (each grid value its own) and
 control, in that order, nested as written: every run of the first prompt,
-its first seed first, then the next. Within a seed come the conditions in
-the file's order, each condition's own run followed by its controls. Run
-IDs count up in that order, `<experiment>-000001` first, so the same spec
-always gives the same IDs. An experiment of more than 999,999 runs, which
-six digits cannot number, is refused.
+its first seed first, then the next. The prompts are the set's, or the
+spec's prompt_ids in their order; an ID the set lacks is refused. Within a
+seed come the conditions in the file's order, each condition's own run
+followed by its controls. Run IDs count up in that order,
+`<experiment>-000001` first, so the same spec always gives the same IDs.
+An experiment of more than 999,999 runs, which six digits cannot number,
+is refused.
 
 Before any run is made, every condition's schedule and every control's
 passes validate(), at the default dose ceiling unless the condition allows
@@ -15,10 +17,12 @@ more; the first that fails stops expansion with a message naming it.
 A condition's random controls are copies of its schedules with each unit
 swapped for a neuron of the same layer, at the same doses on the same
 passes. They are drawn from the condition's control_seed and never land on
-a unit in units/known.csv, a unit any condition of the experiment pushes,
-or an earlier control of the condition. Control k pushes the same neurons
-for every prompt, seed and grid value, so the controls match the condition
-point for point, and its runs' control_of names the run they mirror.
+a unit in units/known.csv, a neuron any condition of the experiment pushes,
+alone or in a set, or an earlier control of the condition. Control k pushes
+the same neurons for every prompt, seed and grid value, so the controls
+match the condition point for point, and its runs' control_of names the run
+they mirror. A condition that pushes a set of neurons has no controls yet
+(decision 0019), and a set's ID names one set in the whole experiment.
 
 Runs are batched in order. A batch holds runs of one prompt, so no row is
 padded, and one seed, since generate draws a batch's samples from one
@@ -32,10 +36,11 @@ it mirrors.
 
 Each run is a RunRecord with no reply yet: status "planned", which
 write_runs refuses, empty output, the model's revision, the run's
-sampling seed, and its schedule's segments, each with control_for (the
-unit a control replaces) and control_seed, both None for a condition's own
-run. The label of its condition's schedule, which no RunRecord field
-holds, comes with it.
+sampling seed, and its schedule's segments as a schedule file writes them
+(a set's with its definition, so the record alone makes the set again),
+each with control_for (the unit a control replaces) and control_seed, both
+None for a condition's own run. The label of its condition's schedule,
+which no RunRecord field holds, comes with it.
 """
 
 import hashlib
@@ -52,9 +57,11 @@ from pushlab.runs.spec import Condition, ExperimentSpec
 from pushlab.schedules.model import Schedule
 from pushlab.schedules.validation import ScheduleWarning, validate
 from pushlab.schedules.yaml_io import to_mapping
+from pushlab.schedules.yaml_sets import refuse_two_definitions
 from pushlab.store.records import RunRecord, make_run_id
 from pushlab.units import controls
 from pushlab.units.neuron import NeuronUnit
+from pushlab.units.neuron_set import NeuronSet, unit_neurons
 
 # The status of a run that has not run yet; write_runs saves only results.
 PLANNED = "planned"
@@ -132,6 +139,12 @@ def _draw(
         raise ValueError(
             f"condition {condition.label!r}: it pushes no unit to draw a control "
             "for; remove its controls"
+        )
+    if sets := [unit for unit in units if isinstance(unit, NeuronSet)]:
+        raise ValueError(
+            f"condition {condition.label!r}: it pushes the set of neurons "
+            f"{sets[0]}, and random controls for sets come later (decision 0019); "
+            "remove its controls and control_seed"
         )
     taken = set(avoid) | set(units)
     n = condition.controls
@@ -254,8 +267,9 @@ def _pack(sets: Sequence[Sequence[T]], size: int) -> list[list[T]]:
 def expand(spec: ExperimentSpec) -> Expansion:
     """Every run the spec means, in order, after checking every condition.
 
-    A prompt set that cannot be read, more runs than MOST_RUNS, a condition
-    that validate() refuses, or controls that cannot be drawn raise
+    A prompt set that cannot be read, a prompt ID it lacks, more runs than
+    MOST_RUNS, a set's ID given two definitions, a condition that validate()
+    refuses, or controls that cannot be drawn, such as a set's, raise
     ValueError, before any run is made. Nothing loads a model.
 
     Example:
@@ -277,13 +291,28 @@ def expand(spec: ExperimentSpec) -> Expansion:
         raise ValueError(f"cannot read the prompt set {path}: {why}") from None
     except ValueError as error:
         raise ValueError(f"cannot read the prompt set {path}: {error}") from None
+    prompt_ids = prompt_set.prompt_ids
+    if spec.prompt_ids is not None:
+        if missing := [p for p in spec.prompt_ids if p not in prompt_ids]:
+            more = f" and {len(missing) - 1} more" if missing[1:] else ""
+            raise ValueError(
+                f"prompt_ids names {missing[0]!r}{more}, which {spec.prompts} lacks; "
+                f"give IDs of its prompts, such as {prompt_ids[0]!r}"
+            )
+        prompt_ids = spec.prompt_ids
     per_seed = sum(len(c.points) * (1 + c.controls) for c in spec.conditions)
-    total = len(prompt_set.prompt_ids) * len(spec.seeds) * per_seed
+    total = len(prompt_ids) * len(spec.seeds) * per_seed
     if total > MOST_RUNS:
         raise ValueError(
             f"it means {total:,} runs, more than the {MOST_RUNS:,} that six-digit "
             "run IDs can number; split it into smaller experiments"
         )
+    refuse_two_definitions(
+        (f"condition {label!r}", unit)
+        for condition in spec.conditions
+        for label, schedule in condition.points
+        for unit in schedule.units()
+    )
     found: list[str] = []
     for condition in spec.conditions:
         for label, schedule in condition.points:
@@ -292,11 +321,12 @@ def expand(spec: ExperimentSpec) -> Expansion:
     known_sha256 = None
     if any(condition.controls for condition in spec.conditions):
         known, known_sha256 = _known()
-        pushed = {
-            unit
+        pushed = {  # every neuron pushed, a set's each
+            neuron
             for condition in spec.conditions
             for _, schedule in condition.points
             for unit in schedule.units()
+            for neuron, _ in unit_neurons(unit)
         }
         for condition in spec.conditions:
             if condition.controls:
@@ -319,7 +349,7 @@ def expand(spec: ExperimentSpec) -> Expansion:
     model_name = f"{spec.model}@{model.revision}"
     runs: list[PlannedRun] = []
     batch = 0
-    for prompt_id in prompt_set.prompt_ids:
+    for prompt_id in prompt_ids:
         for seed in spec.seeds:
             # Each run with its controls: (condition, control, schedule, control_of).
             sets: list[list[tuple[str, int, list[dict[str, Any]], str]]] = []

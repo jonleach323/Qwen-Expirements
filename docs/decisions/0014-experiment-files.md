@@ -210,7 +210,7 @@ command's help, list, quoting, summary, warnings and refusals.
 - The controls depend on `units/known.csv` as well as the spec: a unit
   added there can change which neurons later controls draw. The code
   commit pins that file, and `known_sha256` shows that it changed.
-- `qwen3-8b` still has no pinned revision, so its planned runs record
-  `qwen3-8b@main`; pin it before its first run.
+- `qwen3-8b` had no pinned revision yet, so its planned runs recorded
+  `qwen3-8b@main`. Decision 0019 pinned it, before its first run.
 - `pushlab steer` keeps decision 0010's records, the control seed in the
   seed field. CLAUDE.md lists `pushlab expand`.

@@ -16,6 +16,12 @@ import torch
 # Tests never download from Hugging Face; an accidental download fails fast.
 # Set before transformers is imported: huggingface_hub reads it once, then.
 os.environ["HF_HUB_OFFLINE"] = "1"
+# Tests never call the Anthropic API either, now that its SDK is installed:
+# no key, and the SDK pointed at a closed local port, so a test that makes a
+# real client by mistake fails at once instead of making a paid call. A test
+# that needs a key sets a made-up one, with a stand-in for the SDK.
+os.environ.pop("ANTHROPIC_API_KEY", None)
+os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9"
 
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers  # noqa: E402
 from transformers import (  # noqa: E402

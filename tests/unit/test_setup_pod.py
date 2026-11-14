@@ -11,6 +11,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -335,15 +336,41 @@ def test_stops_with_a_clear_message_when_hf_token_is_missing(
     assert not (tmp_path / "workspace" / ".pushlab-setup-done").exists()
 
 
-def test_ctrl_c_still_says_where_setup_stopped(tmp_path: Path) -> None:
+# A tee that starts with Ctrl-C at its default action, whatever the shell that
+# starts it. bash 5.3 starts the tee of >(trap '' INT; exec tee ...) so, where
+# bash 5.2 leaves Ctrl-C ignored: on GitHub's ubuntu-26.04 runners, Ctrl-C then
+# killed tee before it logged the exit. With this tee, the test checks that tee
+# ignores Ctrl-C by itself, whichever bash runs the tests.
+TEE_WITH_DEFAULT_CTRL_C = (
+    f'exec "{sys.executable}" -I -c "import os, signal, sys; '
+    "signal.signal(signal.SIGINT, signal.SIG_DFL); "
+    f"os.execv(sys.argv[1], ['tee', *sys.argv[2:]])\" "
+    f'"{shutil.which("tee")}" "$@"'
+)
+# How many times at most the fake uv looks for step 3 in the log.
+LOOKS = 5_000
+
+
+@pytest.mark.parametrize(
+    "tee",
+    [None, TEE_WITH_DEFAULT_CTRL_C],
+    ids=["tee as the shell starts it", "tee with Ctrl-C at its default"],
+)
+def test_ctrl_c_still_says_where_setup_stopped(tmp_path: Path, tee: str | None) -> None:
     if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
         pytest.skip("Ctrl-C is ignored in this test run, so it cannot be simulated")
-    # The fake uv interrupts the script during step 3, as Ctrl-C would.
-    # Like Ctrl-C in a terminal, it signals every process of the script.
-    interrupt = (
-        f'[ "$1" = --version ] && echo "{PINNED_UV}"; [ "$1" = sync ] && kill -INT 0'
-    )
-    result, _ = _run(tmp_path, tools={"uv": interrupt})
+    # The fake uv interrupts the script during step 3, as Ctrl-C would, once
+    # tee has logged that step. Like Ctrl-C in a terminal, it signals every
+    # process of the script.
+    logged = 'grep -qs "about 3 GB" "$PUSHLAB_WORKSPACE"/logs/setup-*.log'
+    press = f"n=0; until {logged} || [ $n -ge {LOOKS} ]; do n=$((n + 1)); done"
+    tools = {
+        "uv": f'[ "$1" = --version ] && echo "{PINNED_UV}"; '
+        f'[ "$1" = sync ] && {{ {press}; kill -INT 0; }}'
+    }
+    if tee is not None:
+        tools["tee"] = tee
+    result, _ = _run(tmp_path, tools=tools)
     assert result.returncode == 130
     assert "interrupted during step 3/8" in _log(tmp_path)
     assert not (tmp_path / "workspace" / ".pushlab-setup-done").exists()

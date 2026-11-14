@@ -1,0 +1,100 @@
+# The golden cases for Qwen3-8B (decision 0023; docs/plan/development-plan.md,
+# "Golden tests"). `pushlab golden record` runs each case alone, in bfloat16
+# on the GPU, and writes each reply's fingerprint, the SHA-256 of its token
+# IDs; tests/gpu/test_golden_qwen3_8b.py runs them again and compares them
+# with tests/golden/qwen3-8b.json (docs/runbooks/pod.md, "Golden tests").
+#
+# Three everyday prompts, none from prompts/, each run six ways: greedy and
+# unpushed; greedy with the neuron at dose 1 under the fixed calibration, and
+# again under the per_prompt one; greedy with the set under per_prompt; and
+# sampled at temperature 0.7 with seeds 1 and 2. Every push is constant: from
+# the prompt pass to the end of the reply, as
+# pushlab.schedules.shapes.constant pushes.
+#
+# The neuron and the set are made up. Neither comes from the Neuron Persona
+# Library or Mayner's data, and no persona is known to live in them. The set
+# has neurons in two layers, so it has its own size (made up too), and its
+# dose never depends on the calibration; its per_prompt case still measures
+# the prompt's own sizes on the way, as a per_prompt run does.
+#
+# A changed case no longer matches its fingerprint: record them again, and
+# bring the new file in through a pull request.
+version: 1
+model: qwen3-8b
+dtype: bfloat16
+max_new_tokens: 32
+prompts:
+  kettle: How do I descale a kettle with vinegar?
+  tulips: When should I plant tulip bulbs?
+  laces: How do I tie my shoelaces so they stay tied?
+sets:
+  qwen3-8b:set:golden-trio:
+    entries: [[12, 2718, 1.0], [12, 8281, -0.5], [20, 4590, 0.75]]
+    size: 64.0
+    source: made up for the golden tests
+cases:
+  - id: kettle-greedy
+    prompt: kettle
+    decoding: {strategy: greedy}
+  - id: kettle-neuron-fixed
+    prompt: kettle
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: fixed}
+  - id: kettle-neuron-per-prompt
+    prompt: kettle
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: per_prompt}
+  - id: kettle-set-per-prompt
+    prompt: kettle
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:set:golden-trio, alpha: 1.0, calibration: per_prompt}
+  - id: kettle-sampled-seed-1
+    prompt: kettle
+    decoding: {strategy: sample, temperature: 0.7, seed: 1}
+  - id: kettle-sampled-seed-2
+    prompt: kettle
+    decoding: {strategy: sample, temperature: 0.7, seed: 2}
+
+  - id: tulips-greedy
+    prompt: tulips
+    decoding: {strategy: greedy}
+  - id: tulips-neuron-fixed
+    prompt: tulips
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: fixed}
+  - id: tulips-neuron-per-prompt
+    prompt: tulips
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: per_prompt}
+  - id: tulips-set-per-prompt
+    prompt: tulips
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:set:golden-trio, alpha: 1.0, calibration: per_prompt}
+  - id: tulips-sampled-seed-1
+    prompt: tulips
+    decoding: {strategy: sample, temperature: 0.7, seed: 1}
+  - id: tulips-sampled-seed-2
+    prompt: tulips
+    decoding: {strategy: sample, temperature: 0.7, seed: 2}
+
+  - id: laces-greedy
+    prompt: laces
+    decoding: {strategy: greedy}
+  - id: laces-neuron-fixed
+    prompt: laces
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: fixed}
+  - id: laces-neuron-per-prompt
+    prompt: laces
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:L16:N3141, alpha: 1.0, calibration: per_prompt}
+  - id: laces-set-per-prompt
+    prompt: laces
+    decoding: {strategy: greedy}
+    push: {unit: qwen3-8b:set:golden-trio, alpha: 1.0, calibration: per_prompt}
+  - id: laces-sampled-seed-1
+    prompt: laces
+    decoding: {strategy: sample, temperature: 0.7, seed: 1}
+  - id: laces-sampled-seed-2
+    prompt: laces
+    decoding: {strategy: sample, temperature: 0.7, seed: 2}

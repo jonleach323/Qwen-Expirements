@@ -170,9 +170,10 @@ def test_verify_catches_the_runs_left_unrun(
     with locked(runs / NAME):  # as a runner holds it while it works
         lines = _problems(spec, runs, capsys)
     assert lines[:-1] == [
-        f"{unsaved}; a runner is still working on the folder, and pushlab status "
-        "says how far it has got",
-        "note: a runner is working on the folder; manifest.json is not checked",
+        f"{unsaved}; another pushlab run or pushlab score is working on the "
+        "folder, and pushlab status says how far the run has got",
+        "note: another pushlab run or pushlab score is working on the folder; "
+        "manifest.json is not checked",
     ]
     assert _run(spec, runs) == 0  # the rest, run
     capsys.readouterr()
@@ -316,7 +317,8 @@ def test_while_a_runner_works_the_manifest_is_not_checked(
         assert _verify(spec, runs) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == (
-        "note: a runner is working on the folder; manifest.json is not checked"
+        "note: another pushlab run or pushlab score is working on the folder; "
+        "manifest.json is not checked"
     )
     assert lines[1].endswith("no problem found.")
     assert _verify(spec, runs) == 1  # once it lets go, the counts are checked

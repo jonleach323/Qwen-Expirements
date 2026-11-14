@@ -1,0 +1,4 @@
+{"rule":"made up for pushlab's tests: two persona rows, one incoherent row and one neuron with no row",
+"from":"1794390012000.25|library.json:1964:1794330900000|combos.json:1355:1794330900000|combos3.json:2048:1794330900000|detox.json:512:1794390000000.5",
+"neurons":["18:2468:-1","22:1357:1","15:9000:1","11:2024:-1"],
+"combos":["c-L3-1207-p-L33-4096-m"]}

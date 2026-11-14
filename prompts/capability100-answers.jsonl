@@ -1,0 +1,100 @@
+{"prompt_id": "capability100-001", "version": 1, "kind": "arithmetic", "type": "number", "answer": "123", "also": [], "units": [], "check": "48 + 75"}
+{"prompt_id": "capability100-002", "version": 1, "kind": "arithmetic", "type": "number", "answer": "645", "also": [], "units": [], "check": "256 + 389"}
+{"prompt_id": "capability100-003", "version": 1, "kind": "arithmetic", "type": "number", "answer": "2125", "also": ["2,125"], "units": [], "check": "1250 + 875"}
+{"prompt_id": "capability100-004", "version": 1, "kind": "arithmetic", "type": "number", "answer": "81", "also": [], "units": [], "check": "17 + 26 + 38"}
+{"prompt_id": "capability100-005", "version": 1, "kind": "arithmetic", "type": "number", "answer": "1001", "also": ["1,001"], "units": [], "check": "604 + 397"}
+{"prompt_id": "capability100-006", "version": 1, "kind": "arithmetic", "type": "number", "answer": "132", "also": [], "units": [], "check": "73 + 59"}
+{"prompt_id": "capability100-007", "version": 1, "kind": "arithmetic", "type": "number", "answer": "413", "also": [], "units": [], "check": "145 + 268"}
+{"prompt_id": "capability100-008", "version": 1, "kind": "arithmetic", "type": "number", "answer": "150", "also": [], "units": [], "check": "88 + 47 + 15"}
+{"prompt_id": "capability100-009", "version": 1, "kind": "arithmetic", "type": "number", "answer": "36", "also": [], "units": [], "check": "93 - 57"}
+{"prompt_id": "capability100-010", "version": 1, "kind": "arithmetic", "type": "number", "answer": "337", "also": [], "units": [], "check": "500 - 163"}
+{"prompt_id": "capability100-011", "version": 1, "kind": "arithmetic", "type": "number", "answer": "642", "also": [], "units": [], "check": "1000 - 358"}
+{"prompt_id": "capability100-012", "version": 1, "kind": "arithmetic", "type": "number", "answer": "42", "also": [], "units": [], "check": "71 - 29"}
+{"prompt_id": "capability100-013", "version": 1, "kind": "arithmetic", "type": "number", "answer": "167", "also": [], "units": [], "check": "345 - 178"}
+{"prompt_id": "capability100-014", "version": 1, "kind": "arithmetic", "type": "number", "answer": "407", "also": [], "units": [], "check": "802 - 395"}
+{"prompt_id": "capability100-015", "version": 1, "kind": "arithmetic", "type": "number", "answer": "75", "also": [], "units": [], "check": "120 - 45"}
+{"prompt_id": "capability100-016", "version": 1, "kind": "arithmetic", "type": "number", "answer": "151", "also": [], "units": [], "check": "250 - 99"}
+{"prompt_id": "capability100-017", "version": 1, "kind": "arithmetic", "type": "number", "answer": "391", "also": [], "units": [], "check": "17 * 23"}
+{"prompt_id": "capability100-018", "version": 1, "kind": "arithmetic", "type": "number", "answer": "180", "also": [], "units": [], "check": "12 * 15"}
+{"prompt_id": "capability100-019", "version": 1, "kind": "arithmetic", "type": "number", "answer": "1200", "also": ["1,200"], "units": [], "check": "25 * 48"}
+{"prompt_id": "capability100-020", "version": 1, "kind": "arithmetic", "type": "number", "answer": "72", "also": [], "units": [], "check": "9 * 8"}
+{"prompt_id": "capability100-021", "version": 1, "kind": "arithmetic", "type": "number", "answer": "396", "also": [], "units": [], "check": "36 * 11"}
+{"prompt_id": "capability100-022", "version": 1, "kind": "arithmetic", "type": "number", "answer": "210", "also": [], "units": [], "check": "7 * 6 * 5"}
+{"prompt_id": "capability100-023", "version": 1, "kind": "arithmetic", "type": "number", "answer": "1000", "also": ["1,000"], "units": [], "check": "125 * 8"}
+{"prompt_id": "capability100-024", "version": 1, "kind": "arithmetic", "type": "number", "answer": "301", "also": [], "units": [], "check": "43 * 7"}
+{"prompt_id": "capability100-025", "version": 1, "kind": "arithmetic", "type": "number", "answer": "13", "also": [], "units": [], "check": "156 / 12"}
+{"prompt_id": "capability100-026", "version": 1, "kind": "arithmetic", "type": "number", "answer": "24", "also": [], "units": [], "check": "96 / 4"}
+{"prompt_id": "capability100-027", "version": 1, "kind": "arithmetic", "type": "number", "answer": "40", "also": [], "units": [], "check": "1000 / 25"}
+{"prompt_id": "capability100-028", "version": 1, "kind": "arithmetic", "type": "number", "answer": "39", "also": [], "units": [], "check": "351 / 9"}
+{"prompt_id": "capability100-029", "version": 1, "kind": "arithmetic", "type": "number", "answer": "12", "also": [], "units": [], "check": "84 / 7"}
+{"prompt_id": "capability100-030", "version": 1, "kind": "arithmetic", "type": "number", "answer": "27", "also": [], "units": [], "check": "675 / 25"}
+{"prompt_id": "capability100-031", "version": 1, "kind": "arithmetic", "type": "number", "answer": "72", "also": [], "units": [], "check": "432 / 6"}
+{"prompt_id": "capability100-032", "version": 1, "kind": "arithmetic", "type": "number", "answer": "80", "also": [], "units": [], "check": "2400 / 30"}
+{"prompt_id": "capability100-033", "version": 1, "kind": "arithmetic", "type": "number", "answer": "20", "also": [], "units": [], "check": "25 / 100 * 80"}
+{"prompt_id": "capability100-034", "version": 1, "kind": "arithmetic", "type": "number", "answer": "45", "also": [], "units": [], "check": "10 / 100 * 450"}
+{"prompt_id": "capability100-035", "version": 1, "kind": "arithmetic", "type": "number", "answer": "30", "also": [], "units": [], "check": "15 / 100 * 200"}
+{"prompt_id": "capability100-036", "version": 1, "kind": "arithmetic", "type": "number", "answer": "50", "also": [], "units": [], "check": "6 * 7 + 8"}
+{"prompt_id": "capability100-037", "version": 1, "kind": "arithmetic", "type": "number", "answer": "126", "also": [], "units": [], "check": "(15 + 27) * 3"}
+{"prompt_id": "capability100-038", "version": 1, "kind": "arithmetic", "type": "number", "answer": "7", "also": [], "units": [], "check": "(40 - 12) / 4"}
+{"prompt_id": "capability100-039", "version": 1, "kind": "arithmetic", "type": "number", "answer": "25", "also": [], "units": [], "check": "72 / 8 + 16"}
+{"prompt_id": "capability100-040", "version": 1, "kind": "arithmetic", "type": "number", "answer": "58", "also": [], "units": [], "check": "2 * 35 - 12"}
+{"prompt_id": "capability100-041", "version": 1, "kind": "fact", "type": "text", "answer": "Au", "also": [], "units": [], "check": "Gold's symbol is Au, from its Latin name, aurum."}
+{"prompt_id": "capability100-042", "version": 1, "kind": "fact", "type": "text", "answer": "Ag", "also": [], "units": [], "check": "Silver's symbol is Ag, from its Latin name, argentum."}
+{"prompt_id": "capability100-043", "version": 1, "kind": "fact", "type": "text", "answer": "Pb", "also": [], "units": [], "check": "Lead's symbol is Pb, from its Latin name, plumbum."}
+{"prompt_id": "capability100-044", "version": 1, "kind": "fact", "type": "text", "answer": "Na", "also": [], "units": [], "check": "Sodium's symbol is Na, from its Latin name, natrium."}
+{"prompt_id": "capability100-045", "version": 1, "kind": "fact", "type": "text", "answer": "iron", "also": [], "units": [], "check": "Fe, from the Latin ferrum, is the symbol of iron."}
+{"prompt_id": "capability100-046", "version": 1, "kind": "fact", "type": "text", "answer": "potassium", "also": [], "units": [], "check": "K, from the Latin kalium, is the symbol of potassium."}
+{"prompt_id": "capability100-047", "version": 1, "kind": "fact", "type": "text", "answer": "Paris", "also": [], "units": [], "check": "Paris is the capital and largest city of France."}
+{"prompt_id": "capability100-048", "version": 1, "kind": "fact", "type": "text", "answer": "Ottawa", "also": [], "units": [], "check": "Ottawa is the capital of Canada; Toronto is its largest city."}
+{"prompt_id": "capability100-049", "version": 1, "kind": "fact", "type": "text", "answer": "Nairobi", "also": [], "units": [], "check": "Nairobi is the capital and largest city of Kenya."}
+{"prompt_id": "capability100-050", "version": 1, "kind": "fact", "type": "text", "answer": "Oslo", "also": [], "units": [], "check": "Oslo is the capital and largest city of Norway."}
+{"prompt_id": "capability100-051", "version": 1, "kind": "fact", "type": "text", "answer": "Lima", "also": [], "units": [], "check": "Lima is the capital and largest city of Peru."}
+{"prompt_id": "capability100-052", "version": 1, "kind": "fact", "type": "text", "answer": "Madrid", "also": [], "units": [], "check": "Spain's constitution names Madrid as its capital."}
+{"prompt_id": "capability100-053", "version": 1, "kind": "fact", "type": "text", "answer": "Mercury", "also": [], "units": [], "check": "Of the eight planets, Mercury has the innermost orbit."}
+{"prompt_id": "capability100-054", "version": 1, "kind": "fact", "type": "text", "answer": "Jupiter", "also": [], "units": [], "check": "Jupiter is the largest planet by both diameter and mass."}
+{"prompt_id": "capability100-055", "version": 1, "kind": "fact", "type": "text", "answer": "Mars", "also": [], "units": [], "check": "Mars is called the Red Planet for the iron oxide on its surface."}
+{"prompt_id": "capability100-056", "version": 1, "kind": "fact", "type": "text", "answer": "Saturn", "also": [], "units": [], "check": "Titan is the largest moon of Saturn."}
+{"prompt_id": "capability100-057", "version": 1, "kind": "fact", "type": "text", "answer": "Venus", "also": [], "units": [], "check": "Outwards from the Sun the planets begin Mercury, Venus, Earth."}
+{"prompt_id": "capability100-058", "version": 1, "kind": "fact", "type": "text", "answer": "newton", "also": ["newtons"], "units": [], "check": "The newton (N) is the SI unit of force."}
+{"prompt_id": "capability100-059", "version": 1, "kind": "fact", "type": "text", "answer": "watt", "also": ["watts"], "units": [], "check": "The watt (W), one joule per second, is the SI unit of power."}
+{"prompt_id": "capability100-060", "version": 1, "kind": "fact", "type": "text", "answer": "joule", "also": ["joules"], "units": [], "check": "The joule (J) is the SI unit of energy."}
+{"prompt_id": "capability100-061", "version": 1, "kind": "fact", "type": "text", "answer": "hertz", "also": [], "units": [], "check": "The hertz (Hz), one cycle per second, is the SI unit of frequency."}
+{"prompt_id": "capability100-062", "version": 1, "kind": "fact", "type": "text", "answer": "ampere", "also": ["amperes", "amp", "amps", "ampère", "ampères"], "units": [], "check": "The ampere (A), amp for short and ampère in French, is the SI base unit of electric current."}
+{"prompt_id": "capability100-063", "version": 1, "kind": "fact", "type": "text", "answer": "ohm", "also": ["ohms"], "units": [], "check": "The ohm (Ω) is the SI unit of electrical resistance."}
+{"prompt_id": "capability100-064", "version": 1, "kind": "fact", "type": "text", "answer": "Jane Austen", "also": ["Austen"], "units": [], "check": "Jane Austen wrote Pride and Prejudice."}
+{"prompt_id": "capability100-065", "version": 1, "kind": "fact", "type": "text", "answer": "Herman Melville", "also": ["Melville"], "units": [], "check": "Herman Melville wrote Moby-Dick."}
+{"prompt_id": "capability100-066", "version": 1, "kind": "fact", "type": "text", "answer": "Charles Dickens", "also": ["Dickens"], "units": [], "check": "Charles Dickens wrote Great Expectations."}
+{"prompt_id": "capability100-067", "version": 1, "kind": "fact", "type": "text", "answer": "Daniel Defoe", "also": ["Defoe"], "units": [], "check": "Daniel Defoe wrote Robinson Crusoe."}
+{"prompt_id": "capability100-068", "version": 1, "kind": "fact", "type": "text", "answer": "Bram Stoker", "also": ["Stoker"], "units": [], "check": "Bram Stoker wrote Dracula."}
+{"prompt_id": "capability100-069", "version": 1, "kind": "fact", "type": "text", "answer": "Jules Verne", "also": ["Verne"], "units": [], "check": "Jules Verne wrote Around the World in Eighty Days."}
+{"prompt_id": "capability100-070", "version": 1, "kind": "fact", "type": "text", "answer": "pentagon", "also": [], "units": [], "check": "Penta- means five: a five-sided polygon is a pentagon."}
+{"prompt_id": "capability100-071", "version": 1, "kind": "reasoning", "type": "text", "answer": "Cora", "also": [], "units": [], "check": "Ana is taller than Ben and Ben than Cora, so Cora is the shortest."}
+{"prompt_id": "capability100-072", "version": 1, "kind": "reasoning", "type": "text", "answer": "Finn", "also": [], "units": [], "check": "The finishing order is Dev, Eli, Finn, so Finn was last."}
+{"prompt_id": "capability100-073", "version": 1, "kind": "reasoning", "type": "text", "answer": "Ivy", "also": [], "units": [], "check": "Ivy is older than Gia and Gia than Hal, so Ivy is the oldest."}
+{"prompt_id": "capability100-074", "version": 1, "kind": "reasoning", "type": "text", "answer": "red", "also": [], "units": [], "check": "Red is heavier than blue and blue than green, so the red box is heaviest."}
+{"prompt_id": "capability100-075", "version": 1, "kind": "reasoning", "type": "text", "answer": "Kai", "also": [], "units": [], "check": "The order of arrival is Kai, Jon, Lea, so Kai was first."}
+{"prompt_id": "capability100-076", "version": 1, "kind": "reasoning", "type": "text", "answer": "Omar", "also": [], "units": [], "check": "Mo has more than Nia and Nia more than Omar, so Omar has the fewest."}
+{"prompt_id": "capability100-077", "version": 1, "kind": "reasoning", "type": "text", "answer": "Sam", "also": [], "units": [], "check": "From the front the line is Pia, Raj, Sam, so Sam is last."}
+{"prompt_id": "capability100-078", "version": 1, "kind": "reasoning", "type": "text", "answer": "Uma", "also": [], "units": [], "check": "The finishing order is Tess, Uma, Vic, so Uma came second."}
+{"prompt_id": "capability100-079", "version": 1, "kind": "reasoning", "type": "text", "answer": "Thursday", "also": [], "units": [], "check": "Three days after Monday: Tuesday, Wednesday, Thursday."}
+{"prompt_id": "capability100-080", "version": 1, "kind": "reasoning", "type": "text", "answer": "Wednesday", "also": [], "units": [], "check": "Two days before Friday: Thursday, then Wednesday."}
+{"prompt_id": "capability100-081", "version": 1, "kind": "reasoning", "type": "text", "answer": "Monday", "also": [], "units": [], "check": "Yesterday Saturday makes today Sunday, so tomorrow is Monday."}
+{"prompt_id": "capability100-082", "version": 1, "kind": "reasoning", "type": "text", "answer": "Friday", "also": [], "units": [], "check": "Ten days is a week and three days, and three days after Tuesday is Friday."}
+{"prompt_id": "capability100-083", "version": 1, "kind": "reasoning", "type": "text", "answer": "Saturday", "also": [], "units": [], "check": "The day before Sunday is Saturday."}
+{"prompt_id": "capability100-084", "version": 1, "kind": "reasoning", "type": "text", "answer": "Tuesday", "also": [], "units": [], "check": "Five days after Thursday: Friday, Saturday, Sunday, Monday, Tuesday."}
+{"prompt_id": "capability100-085", "version": 1, "kind": "reasoning", "type": "text", "answer": "Sunday", "also": [], "units": [], "check": "Two days after Friday: Saturday, then Sunday."}
+{"prompt_id": "capability100-086", "version": 1, "kind": "reasoning", "type": "text", "answer": "Wednesday", "also": [], "units": [], "check": "Monday, then Tuesday yesterday, makes today Wednesday."}
+{"prompt_id": "capability100-087", "version": 1, "kind": "reasoning", "type": "number", "answer": "6", "also": [], "units": [], "check": "p, l, a, n, e, t: six letters."}
+{"prompt_id": "capability100-088", "version": 1, "kind": "reasoning", "type": "number", "answer": "3", "also": [], "units": [], "check": "Apple, banana and pear are fruits; chair and lamp are not."}
+{"prompt_id": "capability100-089", "version": 1, "kind": "reasoning", "type": "number", "answer": "3", "also": [], "units": [], "check": "8, 14 and 20 are even; 5 and 11 are odd."}
+{"prompt_id": "capability100-090", "version": 1, "kind": "reasoning", "type": "number", "answer": "7", "also": [], "units": [], "check": "A triangle has 3 sides and a square 4: 3 + 4 = 7."}
+{"prompt_id": "capability100-091", "version": 1, "kind": "reasoning", "type": "number", "answer": "6", "also": [], "units": [], "check": "Birds, sing, in, the, early, morning: six words."}
+{"prompt_id": "capability100-092", "version": 1, "kind": "reasoning", "type": "number", "answer": "21", "also": [], "units": ["days"], "check": "A week has 7 days: 3 × 7 = 21."}
+{"prompt_id": "capability100-093", "version": 1, "kind": "reasoning", "type": "number", "answer": "4", "also": [], "units": [], "check": "Cat, horse, goat and tiger are animals; spoon and cup are not."}
+{"prompt_id": "capability100-094", "version": 1, "kind": "reasoning", "type": "number", "answer": "7", "also": [], "units": [], "check": "Mia keeps 12 - 5 = 7 apples."}
+{"prompt_id": "capability100-095", "version": 1, "kind": "reasoning", "type": "number", "answer": "24", "also": [], "units": [], "check": "Four boxes of 6 eggs hold 4 × 6 = 24 eggs."}
+{"prompt_id": "capability100-096", "version": 1, "kind": "reasoning", "type": "number", "answer": "150", "also": [], "units": ["minutes", "minute", "mins", "min"], "check": "Two and a half hours: 2 × 60 + 30 = 150 minutes."}
+{"prompt_id": "capability100-097", "version": 1, "kind": "reasoning", "type": "number", "answer": "6", "also": [], "units": [], "check": "Five birds, 3 more land and 2 leave: 5 + 3 - 2 = 6."}
+{"prompt_id": "capability100-098", "version": 1, "kind": "reasoning", "type": "number", "answer": "90", "also": [], "units": [], "check": "15 pages a day for 6 days is 15 × 6 = 90 pages."}
+{"prompt_id": "capability100-099", "version": 1, "kind": "reasoning", "type": "number", "answer": "4", "also": [], "units": [], "check": "Four friends eat 4 × 2 = 8 slices, and 12 - 8 = 4."}
+{"prompt_id": "capability100-100", "version": 1, "kind": "reasoning", "type": "number", "answer": "16", "also": [], "units": ["years old", "years"], "check": "Her brother is 9 + 4 = 13 now, and 13 + 3 = 16 in three years."}

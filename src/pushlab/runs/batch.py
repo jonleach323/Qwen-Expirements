@@ -3,22 +3,28 @@
 What a run is made from was checked before the model loaded
 (pushlab.runs.plan); session_inputs reads the calibration and the prompt
 set again, as the session uses them, and refuses them if they changed in
-between. run_call then runs one call's runs together, every row where the
-plan puts it, and returns the records of its due runs: ok with their
-replies and their steps (pushlab.store.steps), or all failed with the
-error, when generate raised or the steps cannot be saved (an amount no
-16-bit float holds, as a huge dose gives), so that one bad call never
-stops an unattended run.
+between. Under the per_prompt calibration there is no calibration file:
+each call measures its rows' prompts on the loaded model instead, each
+prompt once a session (PromptSizes). run_call then runs one call's runs
+together, every row where the plan puts it, and returns the records of its
+due runs: ok with their replies and their steps (pushlab.store.steps), or
+all failed with the error, when measuring or generate raised or the steps
+cannot be saved (an amount no 16-bit float holds, as a huge dose gives),
+so that one bad call never stops an unattended run.
 """
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pushlab.runs.plan import Call
+from pushlab.runs.plan import PER_PROMPT, Call
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.records import RunRecord
 from pushlab.store.steps import MAX_FLOAT16, StepRecord, steps_table
+
+if TYPE_CHECKING:  # imported only when a call measures, as torch comes with it
+    from pushlab.units.dose import PerPromptNorms
 
 # What a call's error adds when its steps hold an amount no 16-bit float can:
 # a lower dose makes its pushed runs new runs, which --overwrite-version runs,
@@ -30,13 +36,51 @@ LOWER_THE_DOSE = (
 )
 
 
+class PromptSizes:
+    """Each prompt's own residual sizes, for the per_prompt calibration: a
+    prompt is measured on the loaded model the first time a call needs it
+    (pushlab.units.calibration_mode.per_prompt_norms), and its sizes are
+    kept by its text for the rest of the session.
+
+    Example:
+        >>> sizes = PromptSizes()
+        >>> norms = sizes.norms(loaded, ["Hi", "Bye", "Hi"])  # doctest: +SKIP
+        >>> len(norms), sorted(sizes.measured)  # doctest: +SKIP
+        (3, ['Bye', 'Hi'])
+    """
+
+    def __init__(self) -> None:
+        self.measured: dict[str, tuple[float, ...]] = {}
+
+    def norms(self, loaded: Any, texts: Sequence[str]) -> "PerPromptNorms":
+        """The sizes of each text's prompt, in the texts' order, as a
+        PerPromptNorms: those not measured yet this session are measured
+        now, each once, with no push active.
+
+        Example:
+            >>> PromptSizes().norms(loaded, ["Hi", "Hi"]).rows[1]  # doctest: +SKIP
+            (0.1645, 0.1671, 0.1674, 0.173)
+        """
+        from pushlab.units.calibration_mode import per_prompt_norms
+        from pushlab.units.dose import PerPromptNorms
+
+        new = [text for text in dict.fromkeys(texts) if text not in self.measured]
+        if new:
+            rows = per_prompt_norms(loaded.model, loaded.tokenizer, new).rows
+            self.measured.update(zip(new, rows, strict=True))
+        return PerPromptNorms(tuple(self.measured[text] for text in texts))
+
+
 @dataclass(frozen=True)
 class Inputs:
-    """What a session generates with: the calibration's sizes, if anything is
-    pushed, and each prompt's text by its ID."""
+    """What a session generates with: each prompt's text by its ID, and, if
+    anything is pushed, the sizes that turn doses into amounts: under the
+    fixed calibration its file's (norms), which every row shares; under
+    per_prompt each prompt's own, measured as calls need them (sizes)."""
 
     norms: list[float] | None
     texts: dict[str, str]
+    sizes: PromptSizes | None = None
 
 
 def session_inputs(
@@ -45,7 +89,9 @@ def session_inputs(
     """Read the calibration and the prompts again, as the session uses them.
 
     ValueError says which changed since the folder's version was made from
-    them, such as a prompt set edited while the model loaded.
+    them, such as a prompt set edited while the model loaded. Under the
+    per_prompt calibration no file is read: the sizes start empty, to be
+    measured as calls need them.
 
     Example:
         >>> session_inputs(
@@ -59,19 +105,41 @@ def session_inputs(
 
     if f"{spec.model}@{revision}" != identity["model"]:
         raise ValueError(f"{spec.model}'s download changed while it loaded; run again")
-    norms = None
+    norms, sizes = None, None
     if any(run.record.schedule for call in chosen for run in call.runs):
-        calibration = calibrate.load_calibration(spec.model, revision)
-        path = calibrate.calibration_path(spec.model, revision)
-        if file_sha256(path) != identity["calibration_sha256"]:
-            raise ValueError(f"{path} changed while it was read; run again")
-        norms = list(calibration.norms)
+        if spec.calibration == PER_PROMPT:
+            sizes = PromptSizes()  # measured as calls need them: no file
+        else:
+            calibration = calibrate.load_calibration(spec.model, revision)
+            path = calibrate.calibration_path(spec.model, revision)
+            if file_sha256(path) != identity["calibration_sha256"]:
+                raise ValueError(f"{path} changed while it was read; run again")
+            norms = list(calibration.norms)
     prompt_set = read_prompt_set(spec.prompts_path)
     if prompt_set.sha256 != identity["prompts_sha256"]:
         raise ValueError(f"{spec.prompts_path} changed while it was read; run again")
-    return Inputs(
-        norms, dict(zip(prompt_set.prompt_ids, prompt_set.prompts, strict=True))
-    )
+    texts = dict(zip(prompt_set.prompt_ids, prompt_set.prompts, strict=True))
+    return Inputs(norms, texts, sizes)
+
+
+def call_norms(
+    inputs: Inputs, loaded: Any, texts: Sequence[str], pushed: bool
+) -> "list[float] | PerPromptNorms | None":
+    """The norms a call's rows take, given the rows' prompts and whether any
+    row pushes: the fixed calibration's sizes, which every row shares; or
+    under per_prompt each row's prompt's own, in the rows' order, measured
+    the first time a call needs them (PromptSizes), and None for a call
+    that pushes nothing, which needs no sizes.
+
+    Example:
+        >>> call_norms(Inputs([0.5, 0.75], {}), None, ["Hi"], True)
+        [0.5, 0.75]
+        >>> call_norms(Inputs(None, {}, PromptSizes()), None, ["Hi"], False) is None
+        True
+    """
+    if inputs.sizes is None:
+        return inputs.norms
+    return inputs.sizes.norms(loaded, texts) if pushed else None
 
 
 @dataclass(frozen=True)
@@ -197,7 +265,10 @@ def run_call(
     """Run every row of one call, and return its due runs' records.
 
     Each record's batch_key is where it ran: stem, its shard's name without
-    .parquet, and its row there, such as v1-b000001-1:0.
+    .parquet, and its row there, such as v1-b000001-1:0. Under per_prompt
+    the rows' prompts are measured first, those the session has not
+    measured yet (call_norms); a call that raises there fails as one whose
+    generate raised. Its seconds count generate alone, for the speed.
 
     Example:
         >>> run_call(
@@ -217,7 +288,7 @@ def run_call(
             raise ValueError(f"{call.key} mixes runs that cannot share a batch")
     model = f"{spec.model}@{loaded.revision}"
     sample = spec.decoding["strategy"] == "sample"
-    start = time.perf_counter()
+    start = generating = time.perf_counter()
     try:
         decoding = Decoding(
             strategy=spec.decoding["strategy"],
@@ -226,14 +297,19 @@ def run_call(
             top_p=spec.decoding["top_p"],
             seed=first.seed if sample else None,
         )
+        texts = [inputs.texts[record.prompt_id] for record in planned]
+        schedules = [record_schedule(record) for record in planned]
+        pushed = any(schedule.segments for schedule in schedules)
+        norms = call_norms(inputs, loaded, texts, pushed)
+        generating = time.perf_counter()
         replies = generate(
             loaded.model,
             loaded.tokenizer,
-            [inputs.texts[record.prompt_id] for record in planned],
+            texts,
             [],
             decoding,
-            inputs.norms,
-            schedules=[record_schedule(record) for record in planned],
+            norms,
+            schedules=schedules,
         )
     except Exception as error:  # the call's due runs are saved as failed
         message = f"{type(error).__name__}: {error}"
@@ -244,7 +320,7 @@ def run_call(
             )
         failed = _failed(call, planned, stem, model)
         return Outcome(failed, message, time.perf_counter() - start, 0)
-    seconds = time.perf_counter() - start
+    seconds = time.perf_counter() - generating
     tokens = sum(len(reply.token_ids) for reply in replies)
     done, due = [], []
     for row, (record, reply) in enumerate(zip(planned, replies, strict=True)):

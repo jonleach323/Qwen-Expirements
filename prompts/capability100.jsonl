@@ -1,0 +1,100 @@
+{"prompt_id": "capability100-001", "version": 1, "prompt": "What is 48 + 75? Answer with the number only."}
+{"prompt_id": "capability100-002", "version": 1, "prompt": "What is 256 + 389? Answer with the number only."}
+{"prompt_id": "capability100-003", "version": 1, "prompt": "What is 1250 + 875? Answer with the number only."}
+{"prompt_id": "capability100-004", "version": 1, "prompt": "What is 17 + 26 + 38? Answer with the number only."}
+{"prompt_id": "capability100-005", "version": 1, "prompt": "What is 604 + 397? Answer with the number only."}
+{"prompt_id": "capability100-006", "version": 1, "prompt": "What is 73 + 59? Answer with the number only."}
+{"prompt_id": "capability100-007", "version": 1, "prompt": "What is 145 + 268? Answer with the number only."}
+{"prompt_id": "capability100-008", "version": 1, "prompt": "What is 88 + 47 + 15? Answer with the number only."}
+{"prompt_id": "capability100-009", "version": 1, "prompt": "What is 93 - 57? Answer with the number only."}
+{"prompt_id": "capability100-010", "version": 1, "prompt": "What is 500 - 163? Answer with the number only."}
+{"prompt_id": "capability100-011", "version": 1, "prompt": "What is 1000 - 358? Answer with the number only."}
+{"prompt_id": "capability100-012", "version": 1, "prompt": "What is 71 - 29? Answer with the number only."}
+{"prompt_id": "capability100-013", "version": 1, "prompt": "What is 345 - 178? Answer with the number only."}
+{"prompt_id": "capability100-014", "version": 1, "prompt": "What is 802 - 395? Answer with the number only."}
+{"prompt_id": "capability100-015", "version": 1, "prompt": "What is 120 - 45? Answer with the number only."}
+{"prompt_id": "capability100-016", "version": 1, "prompt": "What is 250 - 99? Answer with the number only."}
+{"prompt_id": "capability100-017", "version": 1, "prompt": "What is 17 × 23? Answer with the number only."}
+{"prompt_id": "capability100-018", "version": 1, "prompt": "What is 12 × 15? Answer with the number only."}
+{"prompt_id": "capability100-019", "version": 1, "prompt": "What is 25 × 48? Answer with the number only."}
+{"prompt_id": "capability100-020", "version": 1, "prompt": "What is 9 × 8? Answer with the number only."}
+{"prompt_id": "capability100-021", "version": 1, "prompt": "What is 36 × 11? Answer with the number only."}
+{"prompt_id": "capability100-022", "version": 1, "prompt": "What is 7 × 6 × 5? Answer with the number only."}
+{"prompt_id": "capability100-023", "version": 1, "prompt": "What is 125 × 8? Answer with the number only."}
+{"prompt_id": "capability100-024", "version": 1, "prompt": "What is 43 × 7? Answer with the number only."}
+{"prompt_id": "capability100-025", "version": 1, "prompt": "What is 156 divided by 12? Answer with the number only."}
+{"prompt_id": "capability100-026", "version": 1, "prompt": "What is 96 divided by 4? Answer with the number only."}
+{"prompt_id": "capability100-027", "version": 1, "prompt": "What is 1000 divided by 25? Answer with the number only."}
+{"prompt_id": "capability100-028", "version": 1, "prompt": "What is 351 divided by 9? Answer with the number only."}
+{"prompt_id": "capability100-029", "version": 1, "prompt": "What is 84 divided by 7? Answer with the number only."}
+{"prompt_id": "capability100-030", "version": 1, "prompt": "What is 675 divided by 25? Answer with the number only."}
+{"prompt_id": "capability100-031", "version": 1, "prompt": "What is 432 divided by 6? Answer with the number only."}
+{"prompt_id": "capability100-032", "version": 1, "prompt": "What is 2400 divided by 30? Answer with the number only."}
+{"prompt_id": "capability100-033", "version": 1, "prompt": "What is 25% of 80? Answer with the number only."}
+{"prompt_id": "capability100-034", "version": 1, "prompt": "What is 10% of 450? Answer with the number only."}
+{"prompt_id": "capability100-035", "version": 1, "prompt": "What is 15% of 200? Answer with the number only."}
+{"prompt_id": "capability100-036", "version": 1, "prompt": "Multiply 6 by 7, then add 8. What is the result? Answer with the number only."}
+{"prompt_id": "capability100-037", "version": 1, "prompt": "Add 15 and 27, then multiply the sum by 3. What is the result? Answer with the number only."}
+{"prompt_id": "capability100-038", "version": 1, "prompt": "Subtract 12 from 40, then divide by 4. What is the result? Answer with the number only."}
+{"prompt_id": "capability100-039", "version": 1, "prompt": "Divide 72 by 8, then add 16. What is the result? Answer with the number only."}
+{"prompt_id": "capability100-040", "version": 1, "prompt": "Double 35, then subtract 12. What is the result? Answer with the number only."}
+{"prompt_id": "capability100-041", "version": 1, "prompt": "What is the chemical symbol for gold? Answer with one word only."}
+{"prompt_id": "capability100-042", "version": 1, "prompt": "What is the chemical symbol for silver? Answer with one word only."}
+{"prompt_id": "capability100-043", "version": 1, "prompt": "What is the chemical symbol for the element lead? Answer with one word only."}
+{"prompt_id": "capability100-044", "version": 1, "prompt": "What is the chemical symbol for sodium? Answer with one word only."}
+{"prompt_id": "capability100-045", "version": 1, "prompt": "Which chemical element has the symbol Fe? Answer with one word only."}
+{"prompt_id": "capability100-046", "version": 1, "prompt": "Which chemical element has the symbol K? Answer with one word only."}
+{"prompt_id": "capability100-047", "version": 1, "prompt": "What is the capital city of France? Answer with one word only."}
+{"prompt_id": "capability100-048", "version": 1, "prompt": "What is the capital city of Canada? Answer with one word only."}
+{"prompt_id": "capability100-049", "version": 1, "prompt": "What is the capital city of Kenya? Answer with one word only."}
+{"prompt_id": "capability100-050", "version": 1, "prompt": "What is the capital city of Norway? Answer with one word only."}
+{"prompt_id": "capability100-051", "version": 1, "prompt": "What is the capital city of Peru? Answer with one word only."}
+{"prompt_id": "capability100-052", "version": 1, "prompt": "What is the capital city of Spain? Answer with one word only."}
+{"prompt_id": "capability100-053", "version": 1, "prompt": "Which planet is closest to the Sun? Answer with one word only."}
+{"prompt_id": "capability100-054", "version": 1, "prompt": "Which planet is the largest in the Solar System? Answer with one word only."}
+{"prompt_id": "capability100-055", "version": 1, "prompt": "Which planet is known as the Red Planet? Answer with one word only."}
+{"prompt_id": "capability100-056", "version": 1, "prompt": "Which planet does the moon Titan orbit? Answer with one word only."}
+{"prompt_id": "capability100-057", "version": 1, "prompt": "Which planet is second in order from the Sun? Answer with one word only."}
+{"prompt_id": "capability100-058", "version": 1, "prompt": "What is the name of the SI unit of force? Answer with one word only."}
+{"prompt_id": "capability100-059", "version": 1, "prompt": "What is the name of the SI unit of power? Answer with one word only."}
+{"prompt_id": "capability100-060", "version": 1, "prompt": "What is the name of the SI unit of energy? Answer with one word only."}
+{"prompt_id": "capability100-061", "version": 1, "prompt": "What is the name of the SI unit of frequency? Answer with one word only."}
+{"prompt_id": "capability100-062", "version": 1, "prompt": "What is the name of the SI unit of electric current? Answer with one word only."}
+{"prompt_id": "capability100-063", "version": 1, "prompt": "What is the name of the SI unit of electrical resistance? Answer with one word only."}
+{"prompt_id": "capability100-064", "version": 1, "prompt": "Who wrote the novel Pride and Prejudice? Answer with the name only."}
+{"prompt_id": "capability100-065", "version": 1, "prompt": "Who wrote the novel Moby-Dick? Answer with the name only."}
+{"prompt_id": "capability100-066", "version": 1, "prompt": "Who wrote the novel Great Expectations? Answer with the name only."}
+{"prompt_id": "capability100-067", "version": 1, "prompt": "Who wrote the novel Robinson Crusoe? Answer with the name only."}
+{"prompt_id": "capability100-068", "version": 1, "prompt": "Who wrote the novel Dracula? Answer with the name only."}
+{"prompt_id": "capability100-069", "version": 1, "prompt": "Who wrote the novel Around the World in Eighty Days? Answer with the name only."}
+{"prompt_id": "capability100-070", "version": 1, "prompt": "What is a polygon with five sides called? Answer with one word only."}
+{"prompt_id": "capability100-071", "version": 1, "prompt": "Ana is taller than Ben, and Cora is shorter than Ben. Who is the shortest of the three? Answer with the name only."}
+{"prompt_id": "capability100-072", "version": 1, "prompt": "Three runners raced. Dev finished before Eli, and Finn finished after Eli. Who finished last? Answer with the name only."}
+{"prompt_id": "capability100-073", "version": 1, "prompt": "Gia is older than Hal, and Ivy is older than Gia. Who is the oldest of the three? Answer with the name only."}
+{"prompt_id": "capability100-074", "version": 1, "prompt": "A blue box is lighter than a red box, and a green box is lighter than the blue box. Which box is the heaviest? Answer with one word only."}
+{"prompt_id": "capability100-075", "version": 1, "prompt": "Jon arrived after Kai but before Lea. Who arrived first? Answer with the name only."}
+{"prompt_id": "capability100-076", "version": 1, "prompt": "Mo has more coins than Nia, and Omar has fewer coins than Nia. Who has the fewest coins? Answer with the name only."}
+{"prompt_id": "capability100-077", "version": 1, "prompt": "In a line, Raj stands ahead of Sam and behind Pia. Who is last in the line? Answer with the name only."}
+{"prompt_id": "capability100-078", "version": 1, "prompt": "In a race, Tess beat Uma and Uma beat Vic. Of the three runners, who came second? Answer with the name only."}
+{"prompt_id": "capability100-079", "version": 1, "prompt": "If today is Monday, what day of the week will it be in three days? Answer with one word only."}
+{"prompt_id": "capability100-080", "version": 1, "prompt": "If today is Friday, what day of the week was it two days ago? Answer with one word only."}
+{"prompt_id": "capability100-081", "version": 1, "prompt": "If yesterday was Saturday, what day of the week is tomorrow? Answer with one word only."}
+{"prompt_id": "capability100-082", "version": 1, "prompt": "If today is Tuesday, what day of the week will it be in ten days? Answer with one word only."}
+{"prompt_id": "capability100-083", "version": 1, "prompt": "If tomorrow is Sunday, what day of the week is today? Answer with one word only."}
+{"prompt_id": "capability100-084", "version": 1, "prompt": "If today is Thursday, what day of the week will it be in five days? Answer with one word only."}
+{"prompt_id": "capability100-085", "version": 1, "prompt": "Which day of the week comes two days after Friday? Answer with one word only."}
+{"prompt_id": "capability100-086", "version": 1, "prompt": "If the day before yesterday was Monday, what day of the week is today? Answer with one word only."}
+{"prompt_id": "capability100-087", "version": 1, "prompt": "How many letters are in the word \"planet\"? Answer with the number only."}
+{"prompt_id": "capability100-088", "version": 1, "prompt": "How many of these words name fruits: apple, chair, banana, pear, lamp? Answer with the number only."}
+{"prompt_id": "capability100-089", "version": 1, "prompt": "How many even numbers are in this list: 5, 8, 11, 14, 20? Answer with the number only."}
+{"prompt_id": "capability100-090", "version": 1, "prompt": "How many sides do a triangle and a square have altogether? Answer with the number only."}
+{"prompt_id": "capability100-091", "version": 1, "prompt": "How many words are in the sentence \"Birds sing in the early morning\"? Answer with the number only."}
+{"prompt_id": "capability100-092", "version": 1, "prompt": "How many days are there in 3 weeks? Answer with the number only."}
+{"prompt_id": "capability100-093", "version": 1, "prompt": "How many of these words name animals: cat, spoon, horse, cup, goat, tiger? Answer with the number only."}
+{"prompt_id": "capability100-094", "version": 1, "prompt": "Mia has 12 apples and gives 5 of them to a friend. How many apples does Mia have left? Answer with the number only."}
+{"prompt_id": "capability100-095", "version": 1, "prompt": "A box holds 6 eggs. How many eggs are there in 4 full boxes? Answer with the number only."}
+{"prompt_id": "capability100-096", "version": 1, "prompt": "A bus leaves at 09:00 and arrives at 11:30 the same morning. How many minutes does the trip take? Answer with the number only."}
+{"prompt_id": "capability100-097", "version": 1, "prompt": "There are 5 birds on a fence. 3 more birds land on it, and then 2 fly away. How many birds are on the fence now? Answer with the number only."}
+{"prompt_id": "capability100-098", "version": 1, "prompt": "Leo reads 15 pages every day. How many pages does he read in 6 days? Answer with the number only."}
+{"prompt_id": "capability100-099", "version": 1, "prompt": "A pizza is cut into 12 equal slices. Four friends eat 2 slices each. How many slices are left? Answer with the number only."}
+{"prompt_id": "capability100-100", "version": 1, "prompt": "Sara is 9 years old, and her brother is 4 years older than her. How old will her brother be in 3 years? Answer with the number only."}

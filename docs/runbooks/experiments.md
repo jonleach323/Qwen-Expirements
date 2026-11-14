@@ -33,7 +33,10 @@ and a second one to watch it.
    ```
 
    Read its `to run`, `gpu-hours` and `cost` lines. When the GPU-hours are
-   more than the file's `max_gpu_hours`, the run will stop part way.
+   more than the file's `max_gpu_hours`, the run will stop part way. Its
+   `calibration` line, as `pushlab status`'s, says what scales the doses:
+   the model's calibration file (`fixed`), or each prompt's own residual
+   sizes (`per_prompt`), which the run measures itself, with no push.
 2. **Start it in tmux,** so that it survives a dropped connection:
 
    ```bash

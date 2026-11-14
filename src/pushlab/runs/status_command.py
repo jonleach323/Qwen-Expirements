@@ -2,8 +2,9 @@
 
 It reads the experiment file for the experiment's name, then its runner
 folder: experiment.json, the index and the heartbeat. It prints the runs
-saved ok, failed and pending, the batches saved, the speed measured over
-them, the GPU-hours used of max_gpu_hours and the time left at that speed
+saved ok, failed and pending, the calibration the runs use (fixed or
+per_prompt), the batches saved, the speed measured over them, the
+GPU-hours used of max_gpu_hours and the time left at that speed
 (or, before any batch, at the speed estimates use, with the model's load).
 It loads no model and writes nothing, so it works while a run is going; to
 see whether a runner holds the folder, it tries a shared lock for an instant.
@@ -108,7 +109,12 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
         ... )  # doctest: +SKIP
         [('experiment', 's2-pulse-lengths, version 1, in /workspace/runs/...'), ...]
     """
-    from pushlab.runs.plan import folder_problem, runs_dir_problem
+    from pushlab.runs.plan import (
+        PER_PROMPT,
+        calibration_text,
+        folder_problem,
+        runs_dir_problem,
+    )
 
     spec = read_spec(spec_path)
     path = runs_dir / spec.name
@@ -120,12 +126,14 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
     if identity is None:
         from pushlab.runs.expand import expand  # for the runs it would make
 
-        total = len(expand(spec).runs)
+        runs = expand(spec).runs
+        total, pushed = len(runs), any(run.record.schedule for run in runs)
         where = "does not exist yet" if not path.exists() else "holds no runs yet"
         lines = [
             ("experiment", spec.name),
             ("runner", f"not started: {path} {where}"),
             ("runs", f"{total}: 0 ok, 0 failed, {total} pending"),
+            ("calibration", calibration_text(spec.calibration, pushed)),
         ]
         if speed is not None:
             lines.append(("time left", _estimated(total, spec.max_new_tokens, speed)))
@@ -142,6 +150,9 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
     batches = f"{len(ran)} saved" + (
         f", and {kept} kept from earlier versions" if kept else ""
     )
+    # The version's own: its file's SHA-256 (fixed), PER_PROMPT, or None.
+    mark = identity.get("calibration_sha256")
+    mode = PER_PROMPT if mark == PER_PROMPT else "fixed"
     lines = [
         ("experiment", f"{spec.name}, version {version}, in {path}"),
         ("runner", _runner(path, folder.read_json(path / folder.HEARTBEAT_FILE))),
@@ -149,6 +160,7 @@ def status_lines(spec_path: Path, runs_dir: Path) -> list[tuple[str, str]]:
             "runs",
             f"{total}: {counts['ok']} ok, {counts['failed']} failed, {pending} pending",
         ),
+        ("calibration", calibration_text(mode, mark is not None)),
         ("batches", batches),
     ]
     good = [e for e in ran if not e.get("error")]

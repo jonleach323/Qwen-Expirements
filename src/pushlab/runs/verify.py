@@ -19,11 +19,15 @@ and steps its latest marks count (pushlab.runs.shards). It checks that:
    j - 1 for step j; decision 0008), in the schedule's order, each amount
    of its dose's sign, 0 at dose 0, and the dose times one number per unit,
    its dose-1 amount, on every step of every run, up to 16-bit rounding;
+   when experiment.json records the per_prompt calibration, whose doses
+   take each prompt's own sizes, one number per unit and prompt (a set
+   with its own size takes no sizes: one number still);
 7. manifest.json, if any, is a valid experiment manifest; it repeats
    experiment.json's experiment, version, experiment file, hashes and model
    download, and has the revision that download names, experiment.json's
    number of runs and the index's counts by status. It is not checked while
-   a runner is working on the folder, as a session rewrites it when it ends.
+   a runner or pushlab score holds the folder's lock, as a runner's session
+   rewrites it when it ends.
 A counted shard may hold other runs, such as runs of a batch that a later
 attempt ran again; only the runs it counts are read from it. It loads no
 model and writes nothing.
@@ -41,9 +45,16 @@ import pyarrow as pa
 from pushlab.runs import folder, plan
 from pushlab.runs.expand import Expansion, expand
 from pushlab.runs.spec import read_spec
-from pushlab.runs.verify_steps import Bound, check_steps, count, listed
+from pushlab.runs.verify_steps import (
+    Bound,
+    ScaleKey,
+    check_steps,
+    count,
+    listed,
+    scale_problem,
+)
 from pushlab.runs.versions import SAME_RUN, same_run
-from pushlab.store.manifest import check_experiment_manifest
+from pushlab.store.manifest import PER_PROMPT, check_experiment_manifest
 from pushlab.store.records import MANIFEST_FILE, RunRecord, read_runs_file
 from pushlab.store.steps import StepRecord, read_steps_file
 
@@ -126,7 +137,10 @@ class _Check:
         self.verdict = Verdict(identity["experiment"], self.version, len(self.states))
         self.verdict.failed = sum(s["status"] == "failed" for s in self.states.values())
         self.say = self.verdict.problems.append
-        self.scales: dict[str, Bound] = {}  # each unit's, over every run
+        # Each unit's dose-1 amount over every run, under per_prompt each
+        # unit's on each prompt, as the version's runs were made.
+        self.scales: dict[ScaleKey, Bound] = {}
+        self.by_prompt = identity.get("calibration_sha256") == PER_PROMPT
         self.planned = self._plan(expansion)
 
     def run(self) -> Verdict:
@@ -136,9 +150,9 @@ class _Check:
             by_shard.setdefault(self.states[run_id]["shard"], []).append(run_id)
         for shard, run_ids in by_shard.items():
             self._shard(shard, run_ids)
-        for unit, bound in self.scales.items():
-            if where := bound.disagreement("in"):
-                self.say(f"{unit}'s amount per dose {where}")
+        for key, bound in self.scales.items():
+            if problem := scale_problem(key, bound):
+                self.say(problem)
         self._manifest()
         return self.verdict
 
@@ -155,8 +169,8 @@ class _Check:
         planned = {run.record.run_id: run.record for run in expansion.runs}
         if missing := [run_id for run_id in planned if run_id not in self.states]:
             if self.busy:
-                how = "a runner is still working on the folder, and pushlab status"
-                how += " says how far it has got"
+                how = "another pushlab run or pushlab score is working on the "
+                how += "folder, and pushlab status says how far the run has got"
             else:
                 how = "pushlab status says how far the run has got"
             unsaved = f"{_are(missing, 'planned run')} not saved yet"
@@ -248,12 +262,12 @@ class _Check:
             return
         self.verdict.steps += len(steps)
         if record.status != "failed":
-            check_steps(record, steps, self.say, self.scales)
+            check_steps(record, steps, self.say, self.scales, self.by_prompt)
         elif steps:
             self.say(f"{run_id} failed but steps/{shard} has {len(steps)} of its steps")
 
     def _manifest(self) -> None:
-        """Check 7, unless a runner is working on the folder."""
+        """Check 7, unless a runner or pushlab score holds the folder."""
         if self.busy:
             return
         try:
@@ -349,6 +363,9 @@ def run_verify(spec_path: Path, runs_dir: Path | None = None) -> int:
     for line in shown_problems(verdict.problems):
         print(line)
     if busy:
-        print("note: a runner is working on the folder; manifest.json is not checked")
+        print(
+            "note: another pushlab run or pushlab score is working on the folder; "
+            "manifest.json is not checked"
+        )
     print(verdict.summary())
     return 1 if verdict.problems else 0

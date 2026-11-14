@@ -22,7 +22,8 @@ pushlab research. It runs eight steps:
 The target is under 20 minutes on a fresh pod and under 3 minutes on a warm
 volume, where an earlier run has finished. Expect the first run to take 5 to 10
 minutes; most of it is downloading about 3 GB of CUDA packages and the 9 GB
-Qwen3.5-4B model. Each step is logged with a timestamp to
+Qwen3.5-4B model. Qwen3-8B, which S3 added, is about 16 GB more to download,
+on the first run after the pull too. Each step is logged with a timestamp to
 `/workspace/logs/setup-<date and time>.log`. To see the steps without running
 them, run `bash scripts/setup_pod.sh --dry-run`.
 
@@ -332,6 +333,53 @@ prompts in the same batch, so their replies must be identical. `pushlab
 baseline` runs one prompt alone, and on the GPU a batch can tip a near tie
 the other way (decision 0009). Decision `docs/decisions/0010-steer-and-report.md`
 says what each command records.
+
+## Golden tests
+
+Golden tests check that Qwen3-8B still gives exactly the replies it gave
+when they were recorded. `tests/golden/qwen3-8b.yaml` holds 18 fixed
+cases: three everyday prompts, each answered greedily and sampled with two
+seeds, unpushed and with a made-up neuron or set of neurons pushed. Each
+reply is kept as a fingerprint, the SHA-256 of its token IDs, with the
+environment that made it. A changed reply means the code or the
+environment changed (decision `docs/decisions/0023-persona-panel.md`), so
+run the golden test before every experiment. The cases need Qwen3-8B's
+residual sizes: run `uv run pushlab calibrate --model qwen3-8b` first if
+you have not.
+
+1. Record the fingerprints once, on the pod. It is a GPU job of a few
+   minutes, most of them loading the model:
+
+   ```bash
+   cd /workspace/Qwen-Expirements
+   uv run pushlab golden record --model qwen3-8b --out /workspace/golden/qwen3-8b.json
+   ```
+
+   It prints one line per case and writes the file outside the
+   repository, as nothing on the pod may change the repository. It refuses
+   a file that already exists: give a new name, such as
+   `/workspace/golden/qwen3-8b-2.json`.
+
+2. Bring the file into the repository from a cloud session. Download it
+   from JupyterLab's file browser (right-click, **Download**), give it to
+   Claude in a cloud session, and ask it to save the file as
+   `tests/golden/qwen3-8b.json` and open a pull request. Merge it, then run
+   `git pull` on the pod.
+
+3. Run the golden test:
+
+   ```bash
+   uv run pytest -m gpu -k golden
+   ```
+
+   It ends with `1 passed`. Until step 2 is merged it ends with
+   `1 skipped`, and the `SKIPPED` line above it says how to record the
+   fingerprints. A failure lists each changed case, with its reply's first
+   tokens and text when recorded and now, and what of the environment
+   differs from the recorded one, such as a new torch, another GPU or a new
+   calibration. Give it to Claude in a cloud session. If the change is
+   meant, record again under a new name (step 1) and bring the new file in
+   through a pull request with a decision note.
 
 ## Rules on the pod
 

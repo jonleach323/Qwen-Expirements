@@ -3,9 +3,10 @@
 - Whose folder it is: the runner works only in a folder that is empty or
   holds a runner folder of the same experiment.
 - What its runs were made from: the hashes of the experiment file, the
-  prompt set, units/known.csv, the model download and the calibration. A
-  folder made from other ones is refused, unless a new version is asked
-  for (pushlab.runs.versions).
+  prompt set, units/known.csv, the model download and the calibration file,
+  or per_prompt in the file's place when each prompt's own sizes are
+  measured instead. A folder made from other ones is refused, unless a new
+  version is asked for (pushlab.runs.versions).
 - How the runs run: in calls, each one generate() call of planned batches
   that can share a batch; and what is left: the calls with runs still to
   run, or with runs that failed, in plan order.
@@ -21,9 +22,12 @@ from pushlab.runs import folder
 from pushlab.runs.expand import Expansion, PlannedRun
 from pushlab.runs.spec import ExperimentSpec
 from pushlab.store.folders import shown_path
+from pushlab.store.manifest import PER_PROMPT
 from pushlab.store.records import RUNS_FILE
 
-# Each input a folder's runs are made from, and its name in messages.
+# Each input a folder's runs are made from, and its name in messages. The
+# calibration's is its file's SHA-256, PER_PROMPT when each prompt's own
+# sizes are measured, or None when nothing is pushed.
 IDENTITY_KEYS = {
     "spec_sha256": "experiment file",
     "prompts_sha256": "prompt set",
@@ -109,9 +113,10 @@ def runs_dir_problem(runs_dir: Path) -> str | None:
 def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]:
     """The hashes of what the spec's runs would be made from now.
 
-    It reads the model's download record and, when anything is pushed, its
-    calibration, but loads no model. FileNotFoundError or ValueError says
-    what is missing and how to make it.
+    It reads the model's download record and, when anything is pushed under
+    the fixed calibration, its calibration file, but loads no model. Under
+    per_prompt no file is needed: the calibration's entry is PER_PROMPT.
+    FileNotFoundError or ValueError says what is missing and how to make it.
 
     Example:
         >>> current_inputs(spec, expand(spec))["model"]  # doctest: +SKIP
@@ -124,10 +129,13 @@ def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]
     revision = load.downloaded_revision(spec.model)
     calibration_sha256 = None
     if any(run.record.schedule for run in expansion.runs):
-        calibrate.load_calibration(spec.model, revision)  # checked, or refused
-        calibration_sha256 = file_sha256(
-            calibrate.calibration_path(spec.model, revision)
-        )
+        if spec.calibration == PER_PROMPT:  # measured as the run goes: no file
+            calibration_sha256 = PER_PROMPT
+        else:
+            calibrate.load_calibration(spec.model, revision)  # checked, or refused
+            calibration_sha256 = file_sha256(
+                calibrate.calibration_path(spec.model, revision)
+            )
     return {
         "spec_sha256": expansion.spec_sha256,
         "prompts_sha256": expansion.prompts_sha256,
@@ -135,6 +143,26 @@ def current_inputs(spec: ExperimentSpec, expansion: Expansion) -> dict[str, Any]
         "model": f"{spec.model}@{revision}",
         "calibration_sha256": calibration_sha256,
     }
+
+
+def calibration_text(mode: str, pushed: bool) -> str:
+    """Which residual sizes turn a run's doses into amounts, in words: mode
+    is the calibration, fixed or per_prompt, and pushed whether any run
+    pushes anything.
+
+    Example:
+        >>> calibration_text("fixed", True)
+        "fixed: each layer's residual size, from the model's calibration file"
+        >>> calibration_text("per_prompt", True)
+        "per_prompt: each prompt's own residual sizes, measured with no push"
+        >>> calibration_text("per_prompt", False)
+        'none: nothing is pushed'
+    """
+    if not pushed:
+        return "none: nothing is pushed"
+    if mode == PER_PROMPT:
+        return "per_prompt: each prompt's own residual sizes, measured with no push"
+    return "fixed: each layer's residual size, from the model's calibration file"
 
 
 # A change to one of these makes every saved run another run: none is kept.
