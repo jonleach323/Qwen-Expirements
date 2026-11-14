@@ -260,7 +260,9 @@ result, and 1 only when it refuses.
 
 - **The owner decides on the `anthropic` dependency.** Until it is added
   (one line in `pyproject.toml` and the lock), `--backend api` refuses;
-  `--backend local`, the dry runs and the tests work without it.
+  `--backend local`, the dry runs and the tests work without it. (The owner
+  approved it in S3; `anthropic>=2.8` is a dependency since then, and the
+  tests keep the API out of reach with no key and a closed local URL.)
 - **A local judge needs its own environment** for vLLM, outside this lock,
   and a model of another family, which the owner chooses
   (`docs/runbooks/judge.md`).

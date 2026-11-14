@@ -2,9 +2,9 @@
 
 ApiBackend asks Claude, Claude Haiku 5.5 (claude-haiku-5-5) unless told
 another model, through Anthropic's official Python SDK, the anthropic
-package. pushlab does not install that package yet, so it is imported only
-when an ApiBackend is made: pushlab, its tests and every --help work
-without it. The key is read from ANTHROPIC_API_KEY.
+package, which pushlab installs. It is imported only when an ApiBackend is
+made, so every other command and every --help answers without loading it.
+The key is read from ANTHROPIC_API_KEY.
 
 A request sends the rubric's instructions as the system prompt, its
 question and the text as the one user message, and the rubric's JSON
@@ -48,8 +48,8 @@ RETRY_STATUSES = (408, 409, 429)
 BILLING_STATUS = 402  # the account cannot pay: every call would fail
 SHOWN = 300  # characters of an error's message kept
 NO_PACKAGE = (
-    "the api backend needs the anthropic package, which pushlab does not "
-    "install yet: ask for it to be added (decision 0021)"
+    "the api backend needs the anthropic package, which this environment "
+    "lacks: run uv sync, or on the GPU pod bash scripts/setup_pod.sh"
 )
 NO_KEY = "the api backend reads ANTHROPIC_API_KEY, which is not set"
 # The SDK's errors that no call can pass, by class name, with what they mean.

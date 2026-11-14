@@ -227,7 +227,7 @@ def test_a_judge_that_cannot_answer_is_refused(
     [
         ({"backend": "local"}, "the local backend needs --model"),
         ({"backend": "cloud"}, "unknown judge backend 'cloud'"),
-        ({"backend": "api"}, "the api backend "),  # no anthropic package or key
+        ({"backend": "api"}, "the api backend "),  # no ANTHROPIC_API_KEY
         ({"base_url": "http://127.0.0.1:9000/v1"}, "the api backend calls the "),
     ],
 )

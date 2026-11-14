@@ -18,6 +18,9 @@ dependencies = [
     "duckdb>=2.0",
     "numpy>=2.4",
     "pyyaml>=6.0",
+    # The judge's api backend: Claude through Anthropic's official SDK
+    # (src/pushlab/scoring/api_backend.py, decision 0021).
+    "anthropic>=2.8",
 ]
 
 # The pushlab command (src/pushlab/cli.py), installed by uv sync.

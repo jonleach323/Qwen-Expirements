@@ -1,7 +1,7 @@
 """The judge's backends by name (pushlab.scoring.backends): their default
 models, their refusals, and the kind of backend each name makes. A stand-in
-anthropic package takes the place of the real one, which pushlab does not
-install yet; nothing here reaches the network."""
+anthropic package takes the place of the real one; nothing here reaches the
+network."""
 
 import doctest
 import subprocess
@@ -23,8 +23,8 @@ from pushlab.scoring.backends import (
 from pushlab.scoring.local_backend import LOCAL_URL, LocalBackend
 
 KEY = "test-key-not-real"
-# What importing the factory must not load: the package pushlab does not
-# install, and the heavy ones, which would slow every --help.
+# What importing the factory must not load: the anthropic package, which an
+# ApiBackend imports only when made, and the heavy ones; any would slow --help.
 NOT_LOADED = ("anthropic", "torch", "pandas", "pyarrow")
 IMPORT = f"""
 import sys

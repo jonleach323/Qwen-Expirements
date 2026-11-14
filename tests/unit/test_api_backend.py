@@ -1,11 +1,13 @@
 """The judge's api backend (pushlab.scoring.api_backend): Claude through the
 Anthropic API. A fake client stands in for the SDK's, and classes with the
-SDK's names for its errors, so nothing here reaches the network or needs the
-anthropic package, which pushlab does not install yet (decision 0021)."""
+SDK's names for its errors, so nothing here reaches the network; one test
+checks the backend against the anthropic package that pushlab installs."""
 
 import doctest
+import inspect
 import sys
 import types
+import typing
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -330,7 +332,7 @@ def test_a_missing_or_blank_key_is_refused(
     assert made == []
 
 
-def test_without_the_anthropic_package_it_says_to_ask_for_it(
+def test_without_the_anthropic_package_it_says_how_to_install_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(sys.modules, "anthropic", None)  # import anthropic fails
@@ -338,12 +340,37 @@ def test_without_the_anthropic_package_it_says_to_ask_for_it(
     with pytest.raises(ValueError) as raised:
         ApiBackend()
     assert str(raised.value) == (
-        "the api backend needs the anthropic package, which pushlab does not "
-        "install yet: ask for it to be added (decision 0021)"
+        "the api backend needs the anthropic package, which this environment "
+        "lacks: run uv sync, or on the GPU pod bash scripts/setup_pod.sh"
     )
     # A client given still needs the package, for its error classes.
     with pytest.raises(ValueError, match="needs the anthropic package"):
         ApiBackend(client=NS(messages=Messages(())))
+
+
+def test_the_installed_sdk_has_what_the_backend_uses() -> None:
+    # The real anthropic package, which pushlab installs. Making a client calls
+    # nothing, and tests/conftest.py leaves no key and a closed URL besides.
+    import anthropic
+    from anthropic.types import JSONOutputFormatParam, OutputConfigParam, StopReason
+
+    for name in api_backend.CAUGHT:
+        kind = getattr(anthropic, name, None)
+        assert isinstance(kind, type) and issubclass(kind, BaseException), name
+    client = anthropic.Anthropic(
+        api_key=KEY, max_retries=0, timeout=api_backend.TIMEOUT
+    )
+    sent = inspect.signature(client.messages.create).parameters
+    assert {"model", "max_tokens", "system", "messages", "output_config"} <= set(sent)
+    config = typing.get_type_hints(OutputConfigParam)
+    efforts = {
+        v for arg in typing.get_args(config["effort"]) for v in typing.get_args(arg)
+    }
+    assert set(api_backend.EFFORTS) <= efforts
+    schema = typing.get_type_hints(JSONOutputFormatParam)
+    assert set(schema) == {"type", "schema"}
+    assert typing.get_args(schema["type"]) == ("json_schema",)
+    assert set(api_backend.STOPS) <= set(typing.get_args(StopReason))
 
 
 def test_the_model_and_effort_can_be_chosen_and_bad_ones_are_refused() -> None:

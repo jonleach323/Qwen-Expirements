@@ -15,9 +15,8 @@ accuracy and a Cohen's kappa of 0.70 against your labels
 - **`--backend api`**, the default: Claude Haiku 5.5 (`claude-haiku-5-5`)
   through Anthropic's API. It costs money per call, about $0.10 per million
   tokens read and $0.50 per million written; `--dry-run` estimates it
-  first. It needs the `anthropic` package, which pushlab does not install
-  yet: once the owner has approved adding it and the pull request is
-  merged, `bash scripts/setup_pod.sh` installs it. It also needs an API key
+  first. It uses the `anthropic` package, which pushlab installs (on the
+  pod, `bash scripts/setup_pod.sh` brings it in). It also needs an API key
   (next section).
 - **`--backend local --model NAME`**: an open model served by vLLM on the
   pod, which costs GPU time instead. It must be of another family than the
