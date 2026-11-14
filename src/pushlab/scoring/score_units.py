@@ -43,7 +43,13 @@ from pushlab.runs.folder import SCORES, SENTENCES
 from pushlab.runs.spec import read_spec
 from pushlab.scoring.cache import VerdictCache
 from pushlab.scoring.items import Experiment
-from pushlab.scoring.personas import NONE, Persona, pick_persona, read_personas
+from pushlab.scoring.personas import (
+    NONE,
+    Persona,
+    names_no_persona,
+    pick_persona,
+    read_personas,
+)
 from pushlab.scoring.rubrics import Rubric
 from pushlab.scoring.score_rows import Plan, Question, counted, make_plan
 from pushlab.store.scores import read_rows
@@ -163,7 +169,7 @@ def unit_questions(
         )
     found = None if personas_file is None else read_personas(personas_file)
     asked: dict[str, UnitQuestion] = {}
-    unasked = tuple(unit for unit in units if unit.persona.casefold() == NONE)
+    unasked = tuple(unit for unit in units if names_no_persona(unit.persona))
     for unit in units:
         if unit in unasked:
             continue

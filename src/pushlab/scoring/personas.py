@@ -25,6 +25,18 @@ NONE = "none"
 PERSONA_KEYS = ("name", "description")
 
 
+def names_no_persona(name: str) -> bool:
+    """Whether name is NONE, in any case and with any spaces around it: the
+    judge's answer for no persona, which no persona can have, though a
+    source, such as the Neuron Persona Library, may name one so.
+
+    Example:
+        >>> names_no_persona(" None"), names_no_persona("Nonesuch")
+        (True, False)
+    """
+    return name.strip().casefold() == NONE
+
+
 @dataclass(frozen=True)
 class Persona:
     """A persona: its name, as the judge must write it back, and what it is.
@@ -46,7 +58,7 @@ class Persona:
                 f"a persona's name must be one line with no spaces around it, "
                 f"not {self.name!r}"
             )
-        if self.name.casefold() == NONE:
+        if names_no_persona(self.name):
             raise ValueError(
                 f'a persona cannot be named "{NONE}": it is the answer for no persona'
             )
