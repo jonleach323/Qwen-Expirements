@@ -36,19 +36,19 @@ def _add_stage(stages: argparse._SubParsersAction, stage: str, help: str) -> Non
         required=True,
         type=Path,
         metavar="FILE",
-        help="the experiment file to write, outside the repository when it "
-        "holds the Neuron Persona Library's data, such as "
-        "/workspace/experiments/s3-stage-b.yaml",
+        help="the experiment file to write, outside the repository, as it names "
+        "the candidates list's units, such as /workspace/experiments/s3-stage-b.yaml",
     )
     parser.add_argument(
         "--name", help="the experiment's name (default: from --out's file name)"
     )
-    parser.add_argument(
-        "--judge",
-        metavar="NAME",
-        help="whose speaks_as and coherence verdicts to read, when several "
-        "judges' are saved",
-    )
+    if stage != "preview":  # preview reads the panel file, no verdicts
+        parser.add_argument(
+            "--judge",
+            metavar="NAME",
+            help="whose speaks_as and coherence verdicts to read, when several "
+            "judges' are saved",
+        )
     parser.add_argument(
         "--panel",
         type=Path,

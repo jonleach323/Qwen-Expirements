@@ -45,9 +45,9 @@ selection:
   # stage b: the stage_b_size candidates with the highest speaks_as rates,
   # on every prompt of the set.
   stage_b_size: 120
-  # stage ladder: stage b's ladder_size best, at each of ladder_doses, as
-  # multiples of each candidate's reference dose, on the set's first
-  # ladder_prompts prompts.
+  # stage ladder: stage b's ladder_size best, at each of ladder_doses (two
+  # or more), as multiples of each candidate's reference dose, on the set's
+  # first ladder_prompts prompts.
   ladder_size: 40
   ladder_prompts: 16
   ladder_doses: [0.5, 0.75, 1.0, 1.25, 1.5]

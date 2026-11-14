@@ -167,6 +167,7 @@ def assess(confirm: Scored, ladder: Scored, panel: Panel) -> list[Assessed]:
         >>> assess(confirm, ladder, read_panel())  # doctest: +SKIP
         [Assessed(ladder=CandidateStats(...), ..., reason=None, named_like='')]
     """
+    check_roles(confirm, ladder)
     on_ladder = {each.key for each in ladder.stats if each.doses}
     if stray := [each.key for each in confirm.stats if each.key not in on_ladder]:
         raise ValueError(
@@ -189,6 +190,31 @@ def assess(confirm: Scored, ladder: Scored, panel: Panel) -> list[Assessed]:
         assessed = Assessed(each, doses, replies, stats, expected)
         found.append(replace(assessed, reason=failed_rule(assessed, panel)))
     return found
+
+
+def check_roles(confirm: Scored, ladder: Scored) -> None:
+    """Refuse a confirm and a ladder given the wrong way round: one
+    experiment for both, a confirm that pushes a candidate at several doses
+    as a ladder does, or a ladder that pushes each at one dose, as none does
+    (ladder_doses lists two or more); the wrong panel would follow.
+
+    Example:
+        >>> check_roles(confirm, ladder)  # doctest: +SKIP
+    """
+    swap = "give stage confirm's file as CONFIRM and stage ladder's as --ladder"
+    if confirm.spec.name == ladder.spec.name:
+        raise ValueError(f"CONFIRM and --ladder are one experiment: {swap}")
+    if several := [each for each in confirm.stats if len(each.doses) > 1]:
+        raise ValueError(
+            f"{confirm.spec.name} pushes {several[0].key} at {len(several[0].doses)} "
+            f"doses, as a ladder does: {swap}"
+        )
+    pushed = [each for each in ladder.stats if each.doses]
+    if pushed and all(len(each.doses) == 1 for each in pushed):
+        raise ValueError(
+            f"{ladder.spec.name} pushes each candidate at one dose, not at several "
+            f"as a ladder does: {swap}"
+        )
 
 
 def _rank(assessed: Assessed) -> tuple[Fraction, float, str]:

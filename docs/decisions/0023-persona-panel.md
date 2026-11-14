@@ -51,15 +51,19 @@ without its definition, or a definition beside a neuron, is refused. A
 shape's params cannot hold a definition, so a schedule that pushes a set
 is written as segments. Run records keep their segments the same way, so
 the runner, `verify` and `report` rebuild each set from its record alone.
-Random controls for sets are still refused.
+A set's ID names one set in the whole experiment: two definitions of one
+ID are refused. Random controls for sets are still refused, and a
+neuron's random control never lands on a neuron a set of the experiment
+pushes.
 
 **Experiment files** (`pushlab.runs.spec`, `conditions`, `expand`) take
 three optional settings more:
 
 - `calibration: per_prompt` measures each prompt's own residual sizes, as
   the library does; `fixed`, the default, is decision 0007's. The runner
-  measures a call's prompts once each, before its batch, and `verify`
-  checks each unit's amounts per prompt.
+  measures each prompt once a session, with no push, before the first
+  batch that needs it, and `verify` checks each unit's amounts per prompt;
+  a set with its own size is scaled by that one number either way.
 - `prompt_ids: [...]`: which prompts of the set to run, in that order,
   each once.
 - `candidates:` names a candidates list (`file`, from the repository's
@@ -77,12 +81,14 @@ three optional settings more:
 So a file in the repository names its units by rule and holds none of the
 library's data; its runs are the same wherever the list is the same, and
 the spec's hash covers every unit it resolves to. On a machine without
-the list, `expand` says where it is made.
+the list, `expand` says where it is made. The new settings enter the
+spec's hash only when they differ from their defaults, so every earlier
+experiment file keeps its hash.
 
 **The repository's files.** `experiments/s3/library_repro.yaml`: 50
 library neurons sampled across layers (seed 0), each at the library's
 strength in its direction, on `prompts/whoareyou.jsonl` ("Who are
-you?"), greedy, 160 tokens, thinking off, per_prompt. 
+you?"), greedy, 160 tokens, thinking off, per_prompt.
 `experiments/s3/screen_a.yaml`: every candidate at its reference dose
 (the library's strength for a neuron, Mayner's for a set, which is dose
 1) on the held-out set's first 8 prompts, greedy, 160 tokens, thinking
@@ -93,7 +99,7 @@ thinking off (decision 0009).
 experiment, run and scored with `pushlab score SPEC --rubric speaks_as
 --units <candidates list>` (and coherence where a stage needs it), and
 writing the next experiment outside the repository, as it names the
-library's units: 
+library's units:
 
 1. `b`: screen_a's 120 candidates with the highest speaks_as rates, ties
    to the more verdicts, then the list's order, at their reference dose
@@ -112,34 +118,48 @@ library's units:
 Sizes, doses, prompt counts and timings are configs/panel.yaml's
 `selection` section (`pushlab.panel.settings`), version 2.
 
-**Selection** (`pushlab panel select`). From stage confirm's scores, each
-candidate's reliability, its speaks_as share over the 32 prompts, a
-prompt without a verdict counting against it, must reach 0.8, and its
-replies' mean coherence must not fall below 6. The which_persona rubric
-then sees a seeded sample of 8 of each finalist's replies that speak as
-it, with every finalist as an option; a finalist named for fewer than 90%
-of them is dropped, so of two personas the judge confuses, the one whose
-replies are taken for the other goes. Without `--yes`, select prints the
-calls this takes, how many the cache already holds, and their cost, and
-stops; with it, it judges and saves the verdicts in the confirm folder's
-scores table. Each finalist's category comes from a categories file the
-owner fills in, `key,category`, one of the five; select writes it with the
-categories blank when it is missing or unfinished. Of those left, select
-takes up to 24, round by round across the categories, the strongest
-first (reliability, then coherence, then distinctness), within a category
-the kind the panel has fewer of. Fewer than 24 are all kept if at least
-16, with advice from the rule most of the others failed; fewer than 16
-write nothing. It writes the panel file (`pushlab.panel.panel_file`) and
-a page with two example lines per persona, both ignored by git, as they
-name the library's personas.
+**Selection** (`pushlab panel select CONFIRM --ladder LADDER`). It first
+refuses the two files given the wrong way round: one experiment for both,
+a confirm that pushes a candidate at several doses, or a ladder that
+pushes each at one (the settings ask for two or more ladder doses). Each
+candidate's working and collapse doses come from the ladder; a candidate
+fails the first rule it breaks: no working dose below any collapse dose;
+no reply in stage confirm at that working dose; a reliability, its
+speaks_as share over the 32 prompts, a prompt without a verdict counting
+against it, below 0.8; a mean coherence below 6. Of finalists whose
+personas have one name, case and spacing aside, only the strongest stays,
+since which_persona tells personas apart by name. With fewer than 16
+finalists, select stops there, writing nothing, and says what would help.
+Each finalist's category comes next, from a categories file the owner
+fills in, `key,category`, one of the five; select writes it with the
+categories blank when it is missing or unfinished, and stops. The
+which_persona rubric then sees a sample of up to 8 of each finalist's
+replies that speak as it, drawn with a seed and the finalist's key (so
+one finalist's sample does not depend on who else is a finalist), with
+every finalist as an option; a finalist named for fewer than 90% of them
+is dropped, so of two personas the judge confuses, the one whose replies
+are taken for the other goes. Without `--yes`, select prints the calls
+this takes, how many are already scored or in the cache, and their cost,
+and stops, having called and written nothing; with it, it judges, saves
+the verdicts in the confirm folder's scores table, and goes on. Of those
+left, select takes up to 24, round by round across the categories, the
+strongest first (reliability, then coherence, then distinctness), within
+a category the kind the panel has fewer of. Fewer than 24 are all kept if
+at least 16, with advice from the rule most of the others failed (such as
+a higher or lower dose, larger sets, or more candidates) and the
+categories left thin; fewer than 16 write nothing. It writes the panel
+file (`pushlab.panel.panel_file`) and a page with two example lines per
+persona, both ignored by git, as they name the library's personas.
 
 **Golden tests** (`tests/golden/qwen3-8b.yaml`,
-`tests/gpu/test_golden_qwen3_8b.py`, `pushlab golden record`): fixed
-prompts, seeds, pushes and calibration modes on Qwen3-8B, each reply's
-fingerprint the SHA-256 of its token IDs, stored with the environment that
-made it. They are recorded on the pod, outside the repository, and
-copied into `tests/golden/qwen3-8b.json` through a pull request; until
-then the GPU test skips, saying so.
+`tests/gpu/test_golden_qwen3_8b.py`, `pushlab golden record`): 18 cases,
+3 prompts each unpushed and greedy, pushed by a made-up neuron under
+fixed and per_prompt calibration, by a made-up set, and sampled at two
+seeds, 32 tokens in bfloat16; each reply's fingerprint is the SHA-256 of
+its token IDs, stored with the environment that made it. They are
+recorded on the pod, outside the repository, and copied into
+`tests/golden/qwen3-8b.json` through a pull request; until then the GPU
+test skips, saying so.
 
 ## Why this shape
 
@@ -162,4 +182,20 @@ then the GPU test skips, saying so.
 
 ## Results
 
-To come, with the code.
+- Built in nine commits on `claude/focused-heisenberg-faly2w`; the CPU
+  suite passes (`uv run pytest -q`: about 4,000 tests, the GPU tests
+  skipped).
+- `pushlab expand --summary` on a made-up list of 850 candidates (575
+  neurons over 36 layers and 275 sets, deleted afterwards, as the real
+  list is made on the pod) gave library_repro 50 runs in 4 batches and
+  screen_a 6,800 runs (850 candidates times 8 prompts) in 432 batches.
+- A review of the finished code found five faults, fixed before the last
+  commit: stage ladder's hint pointed to `pushlab doses` with the whole
+  candidates list, which that command refuses (stage confirm prints the
+  doses instead); `--out`'s help said stage files go outside the
+  repository only sometimes; `stage preview` offered a `--judge` it then
+  refused; select took a ladder and a confirm given the wrong way round;
+  and this record left out the name rule.
+- Not yet run on the pod: the candidates list, Qwen3-8B's calibration,
+  the stages, the panel and the golden fingerprints are the owner's to
+  make (docs/runbooks/panel.md).

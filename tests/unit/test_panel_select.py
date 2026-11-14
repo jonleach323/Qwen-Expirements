@@ -163,6 +163,20 @@ def test_a_confirmed_candidate_must_be_on_the_ladder() -> None:
         assess(confirm, _scored("l", [owl], ()), PANEL)
 
 
+def test_a_confirm_and_a_ladder_the_wrong_way_round_are_refused() -> None:
+    owl = _ladder(1, "Brass Owl", WORKS)
+    confirm = _scored("c", [_confirm(owl, 1.0, [True] * 5, [8] * 5)], CONFIRM_PROMPTS)
+    ladder = _scored("l", [owl], LADDER_PROMPTS)
+    assess(confirm, ladder, PANEL)  # the right way round
+    with pytest.raises(ValueError, match="one experiment"):
+        assess(confirm, _scored("c", [owl], LADDER_PROMPTS), PANEL)
+    with pytest.raises(ValueError, match="at 3 doses, as a ladder does"):
+        assess(_scored("l2", [owl], LADDER_PROMPTS), ladder, PANEL)
+    single = _scored("c2", [_confirm(owl, 1.0, [True] * 5, [8] * 5)], CONFIRM_PROMPTS)
+    with pytest.raises(ValueError, match="at one dose, not at several"):
+        assess(confirm, single, PANEL)
+
+
 def test_the_rules_hold_at_their_thresholds() -> None:
     owl = _ladder(1, "Brass Owl", WORKS)
     found = assess(

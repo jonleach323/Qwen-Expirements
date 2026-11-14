@@ -87,7 +87,7 @@ def next_steps(stage: str, out: Path, source: Path, built: Stage) -> list[str]:
         upcoming = next_out(out, "ladder", "confirm")
         lines.append(f"  uv run pushlab panel stage confirm {out} --out {upcoming}")
         lines.append(
-            f"(`uv run pushlab doses {out} --units {units}` shows each one's doses.)"
+            "(stage confirm prints each candidate's working and collapse doses.)"
         )
     else:
         categories = out.parent / "categories.csv"
@@ -158,11 +158,6 @@ def run_stage(args: argparse.Namespace) -> int:
         name = experiment_name(args.name, out)
         check_out(out, source, args.overwrite)
         if stage == "preview":
-            if args.judge is not None:
-                raise ValueError(
-                    "--judge chooses whose verdicts a stage reads, and preview "
-                    "reads none: leave it out"
-                )
             built = stage_preview(source, selection, panel)
         else:
             scored = read_scored(source, args.runs_dir, args.judge, NEEDS[stage])

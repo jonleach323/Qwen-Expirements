@@ -94,8 +94,7 @@ and coherence:
 uv run pushlab score /workspace/experiments/s3-stage-ladder.yaml --rubric coherence
 ```
 
-`uv run pushlab doses /workspace/experiments/s3-stage-ladder.yaml --units
-units/candidates_qwen3-8b.csv` shows each candidate's working and collapse
+Stage confirm, next, prints each candidate's working and collapse
 doses.
 
 ## 5. Stage confirm: each that works, at its working dose

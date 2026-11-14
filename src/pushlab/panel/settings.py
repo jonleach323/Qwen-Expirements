@@ -5,7 +5,7 @@ The stages run on one held-out prompt set (prompts), greedy, max_new_tokens
 tokens a reply, batch_size runs a batch. screen_a runs every candidate at its
 reference dose on the set's first screen_prompts prompts; stage b the
 stage_b_size best on every prompt; stage ladder stage b's ladder_size best at
-ladder_doses, multiples of each candidate's reference dose, on the first
+ladder_doses (two or more), multiples of each candidate's reference dose, on the first
 ladder_prompts prompts; stage confirm each that works at its working dose on
 every prompt. select keeps at most panel_size personas, and writes none when
 fewer than panel_minimum pass; each must be named by the which_persona rubric
@@ -89,8 +89,11 @@ def _whole(where: str, name: str, value: object) -> int:
 
 
 def _doses(where: str, value: object) -> tuple[float, ...]:
-    if not isinstance(value, list) or not value:
-        raise ValueError(f"{where}: ladder_doses must be a list of numbers")
+    if not isinstance(value, list) or len(value) < 2:
+        raise ValueError(
+            f"{where}: ladder_doses must list two or more numbers, as a ladder "
+            "pushes each candidate at several doses"
+        )
     doses = []
     for dose in value:
         if type(dose) not in (int, float) or not (math.isfinite(dose) and dose > 0):

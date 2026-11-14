@@ -59,6 +59,11 @@ def test_the_panels_thresholds_still_read_beside_it() -> None:
             "above 0",
         ),
         (
+            "ladder_doses: [0.5, 0.75, 1.0, 1.25, 1.5]",
+            "ladder_doses: [1.0]",
+            "two or more numbers, as a ladder pushes each candidate at several",
+        ),
+        (
             "categories: [people, animals, fictional, objects, mystical]",
             "categories: [People, x]",
             "lowercase",

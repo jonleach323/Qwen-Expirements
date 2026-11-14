@@ -194,11 +194,20 @@ def test_variety_ranks_categories_then_kinds_then_layers(
     )
 
 
+def test_preview_takes_no_judge_as_it_reads_no_verdicts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "preview.yaml"
+    with pytest.raises(SystemExit):
+        made.stage("preview", tmp_path / "panel.yaml", out, "--judge", "fake:fake")
+    assert "unrecognized arguments: --judge" in capsys.readouterr().err
+    assert not out.exists()
+
+
 @pytest.mark.parametrize(
     ("situation", "problem"),
     [
         ("changed list", "has changed since"),
-        ("judge", "--judge chooses whose verdicts a stage reads, and preview reads"),
         ("one persona", "has 1 persona, and a preview needs two or more to pair"),
         ("no panel", "cannot read the panel"),
         ("unknown key", "has no library/L9N9-"),
@@ -214,7 +223,6 @@ def test_preview_refuses_a_panel_it_cannot_pair(
 ) -> None:  # type: ignore[no-untyped-def]
     roles = ("owl",) if situation == "one persona" else ("owl", "captain")
     path, listed, settings = panel(roles)
-    options = ["--judge", "fake:fake"] if situation == "judge" else []
     if situation == "changed list":
         listed.write_text(listed.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     if situation == "no panel":
@@ -227,7 +235,7 @@ def test_preview_refuses_a_panel_it_cannot_pair(
             text = text.replace("unit: tiny-vl:L1:N3", "unit: tiny-vl:L1:N4")
         path.write_text(text, encoding="utf-8")
     out = tmp_path / "experiments" / "preview.yaml"
-    assert _preview(path, settings, out, *options) == 1
+    assert _preview(path, settings, out) == 1
     err = capsys.readouterr().err
     assert err.startswith("pushlab panel stage preview: ") and problem in err
     assert not out.exists()
