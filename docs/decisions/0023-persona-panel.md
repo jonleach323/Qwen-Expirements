@@ -100,8 +100,10 @@ experiment, run and scored with `pushlab score SPEC --rubric speaks_as`,
 which asks each reply about its own candidate's persona from the
 experiment's candidates list (as `--units <candidates list>` does; a
 candidate whose persona is named "none", which_persona's answer for no
-persona, is left out, so no stage keeps it), and with coherence where a
-stage needs it, and
+persona, is left out, so no stage keeps it: the stages count its replies
+apart from those not yet judged, in a note of their own, and refuse an
+experiment whose only candidates with replies are named so), and with
+coherence where a stage needs it, and
 writing the next experiment outside the repository, as it names the
 library's units:
 

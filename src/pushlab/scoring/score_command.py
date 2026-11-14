@@ -232,8 +232,12 @@ def _score(
     )
     _show(experiment, asked, jobs, left_out, judge.name, size)
     if not any(job.plan.todo for job in jobs):
-        saved = any(job.plan.items for job in jobs)
-        why = "every item is scored already" if saved else "no reply is saved yet"
+        left = left_out.strangers + left_out.unasked  # replies no question asks about
+        why = "no reply is saved yet"
+        if any(job.plan.items for job in jobs):
+            why = "every item is scored already"
+        elif experiment.runs and left == len(experiment.runs):
+            why = "every saved reply is left out, as the lines above say"
         print(f"\nNothing to judge: {why}.")
         return 0
     before = judge.spent.now()

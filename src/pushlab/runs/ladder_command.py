@@ -14,12 +14,13 @@ to a quarter hour.
 
 It refuses, writing nothing, with the reason on stderr: doses or seeds
 that --doses and --seeds do not take; a units file the reader refuses, or
-one with a set of neurons; an --out that is a folder, that exists without
---overwrite, or that is inside the repository while a unit comes from the
-Neuron Persona Library, whose data stays out of git (decision 0020); a
-name that is not an experiment's; a prompt set that cannot be read; a
-model with no known speed, without --max-gpu-hours; and a ladder that does
-not expand. It loads no model and runs nothing.
+one with a set of neurons or a persona named "none", whose replies could
+never be judged (pushlab.analysis.no_persona); an --out that is a folder,
+that exists without --overwrite, or that is inside the repository while a
+unit comes from the Neuron Persona Library, whose data stays out of git
+(decision 0020); a name that is not an experiment's; a prompt set that
+cannot be read; a model with no known speed, without --max-gpu-hours; and
+a ladder that does not expand. It loads no model and runs nothing.
 """
 
 import argparse
@@ -31,6 +32,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from pushlab import PROJECT_ROOT
+from pushlab.analysis.no_persona import refuse_no_persona
 from pushlab.cli_ladder import BATCH_SIZE, MAX_NEW_TOKENS
 from pushlab.prompts import read_prompt_set
 from pushlab.runs.estimate import exact, read_costs, speed_for
@@ -339,9 +341,11 @@ def run_ladder(
         dose_values, seed_values = parse_doses(doses), parse_seeds(seeds)
         if control_seed is not None and not controls:
             raise ValueError("--control-seed goes with --controls of 1 or more")
+        units = read_ladder_units(units_file)
+        refuse_no_persona(units_file, units)
         ladder = Ladder(
             experiment_name(name, out),
-            tuple(read_ladder_units(units_file)),
+            tuple(units),
             dose_values,
             prompts.as_posix(),
             seed_values,

@@ -55,8 +55,8 @@ experiment's candidates list gives (as `--units
 units/candidates_qwen3-8b.csv` would). Leave out `--dry-run` to judge. A
 candidate whose persona the library names "none" cannot be judged, as
 that word is the judge's answer for no persona: its replies are left out,
-the dry run says how many, and stage b counts it among the candidates
-with no speaks_as verdict.
+the dry run says how many, and each stage notes them apart from the
+replies still to judge, and never keeps them.
 
 ## 2. Screen every candidate
 
