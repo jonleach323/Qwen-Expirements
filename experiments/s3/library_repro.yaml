@@ -23,7 +23,7 @@ decoding: {strategy: greedy}
 seeds: [0]
 max_new_tokens: 160
 # Every run has the one prompt, so no row is padded: 4 batches.
-batch_size: 16
+batch_size: 64
 # Each prompt's own residual sizes, as the library measures them: the
 # median over the prompt's tokens, its first left out, with no push.
 calibration: per_prompt

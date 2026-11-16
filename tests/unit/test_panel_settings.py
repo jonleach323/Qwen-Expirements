@@ -16,7 +16,7 @@ GOOD = PANEL_FILE.read_text(encoding="utf-8")
 def test_the_selection_starts_at_the_prompts_numbers() -> None:
     selection = read_selection()
     assert selection.prompts == "prompts/heldout32.jsonl"
-    assert (selection.max_new_tokens, selection.batch_size) == (160, 16)
+    assert (selection.max_new_tokens, selection.batch_size) == (160, 64)
     assert selection.screen_prompts == 8
     assert (selection.stage_b_size, selection.ladder_size) == (120, 40)
     assert (selection.ladder_prompts, selection.ladder_doses) == (
