@@ -34,7 +34,7 @@ prompt_ids:
 decoding: {strategy: greedy}
 seeds: [0]
 max_new_tokens: 160
-batch_size: 16
+batch_size: 128
 # Each layer's residual size from calibration/ (decision 0007), as every
 # later stage of the panel; `uv run pushlab calibrate --model qwen3-8b`
 # makes it once on the pod.
