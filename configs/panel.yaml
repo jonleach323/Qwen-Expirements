@@ -38,7 +38,7 @@ varied_below: 0.4
 selection:
   prompts: prompts/heldout32.jsonl
   max_new_tokens: 160
-  batch_size: 64
+  batch_size: 128
   # screen_a (experiments/s3/screen_a.yaml): every candidate at its
   # reference dose on the set's first screen_prompts prompts.
   screen_prompts: 8

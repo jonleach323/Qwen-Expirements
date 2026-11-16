@@ -125,7 +125,7 @@ def test_a_stage_s_text_reads_back_as_its_settings_with_its_comments() -> None:
         [0],
         "fixed",
     ]
-    assert (mapping["max_new_tokens"], mapping["batch_size"]) == (160, 64)
+    assert (mapping["max_new_tokens"], mapping["batch_size"]) == (160, 128)
     segments = [{"unit": OWL, "alpha": 1.0, "start": 0, "end": None, "region": "reply"}]
     plain_stage = _stage(
         prompt_ids=None,

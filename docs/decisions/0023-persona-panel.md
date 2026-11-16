@@ -195,8 +195,8 @@ test skips, saying so.
   neurons over 36 layers and 275 sets, deleted afterwards, as the real
   list is made on the pod) gave library_repro 50 runs in 4 batches and
   screen_a 6,800 runs (850 candidates times 8 prompts) in 432 batches.
-  Those were at batch_size 16; it is 64 since (S3, for the A100 pod),
-  which gives 1 batch and 112.
+  Those were at batch_size 16; it is 128 since (S3, for the A100 80 GB
+  pod), which gives 1 batch and 56.
 - A review of the finished code found five faults, fixed before the last
   commit: stage ladder's hint pointed to `pushlab doses` with the whole
   candidates list, which that command refuses (stage confirm prints the

@@ -75,7 +75,7 @@ def test_screen_a_pushes_every_candidate_at_its_reference_dose_on_8_prompts(
         "fixed",
     )
     assert spec.decoding["strategy"] == "greedy" and spec.seeds == (0,)
-    assert (spec.max_new_tokens, spec.batch_size) == (160, 64)
+    assert (spec.max_new_tokens, spec.batch_size) == (160, 128)
     assert spec.prompt_ids == tuple(f"heldout32-0{n}" for n in range(1, 9))
     labels = [condition.label for condition in spec.conditions]
     assert labels == [f"candidate-{n:04d}" for n in range(1, 11)]
