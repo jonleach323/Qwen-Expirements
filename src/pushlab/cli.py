@@ -376,6 +376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_dir=args.data_dir,
             include_sensitive=args.include_sensitive,
             overwrite=args.overwrite,
+            set_sizes=args.set_sizes,
         )
     return run_baseline(
         args.model, args.out, args.prompt, args.max_new_tokens, args.overwrite

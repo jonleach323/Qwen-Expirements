@@ -18,13 +18,13 @@ def test_the_selection_starts_at_the_prompts_numbers() -> None:
     assert selection.prompts == "prompts/heldout32.jsonl"
     assert (selection.max_new_tokens, selection.batch_size) == (160, 128)
     assert selection.screen_prompts == 8
-    assert (selection.stage_b_size, selection.ladder_size) == (120, 40)
+    assert (selection.stage_b_size, selection.ladder_size) == (200, 80)
     assert (selection.ladder_prompts, selection.ladder_doses) == (
         16,
         (0.5, 0.75, 1.0, 1.25, 1.5),
     )
     assert (selection.panel_size, selection.panel_minimum) == (24, 16)
-    assert (selection.distinct_rate, selection.distinct_sample) == (0.9, 8)
+    assert (selection.distinct_rate, selection.distinct_sample) == (0.9, 16)
     assert selection.categories == (
         "people",
         "animals",
@@ -44,8 +44,8 @@ def test_the_panels_thresholds_still_read_beside_it() -> None:
 @pytest.mark.parametrize(
     ("old", "new", "problem"),
     [
-        ("stage_b_size: 120", "stage_b_size: 0", "stage_b_size must be a whole number"),
-        ("stage_b_size: 120", "stage_b_size: 30", "ladder_size is above stage_b_size"),
+        ("stage_b_size: 200", "stage_b_size: 0", "stage_b_size must be a whole number"),
+        ("stage_b_size: 200", "stage_b_size: 30", "ladder_size is above stage_b_size"),
         ("panel_minimum: 16", "panel_minimum: 25", "panel_minimum, 25, is above"),
         ("distinct_rate: 0.9", "distinct_rate: 1.5", "distinct_rate must be above 0"),
         (

@@ -36,7 +36,7 @@ class Selection:
     Example:
         >>> selection = read_selection()
         >>> selection.stage_b_size, selection.ladder_size, selection.panel_size
-        (120, 40, 24)
+        (200, 80, 24)
     """
 
     prompts: str

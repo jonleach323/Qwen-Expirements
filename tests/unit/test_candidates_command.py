@@ -381,3 +381,13 @@ def test_docstring_examples_run() -> None:
     result = doctest.testmod(candidates_command)
     assert result.attempted > 0
     assert result.failed == 0
+
+
+def test_set_sizes_choose_each_roles_sets(data: Path, tmp_path: Path) -> None:
+    out = tmp_path / "sized.csv"
+    assert _candidates(data, out, "--set-sizes", "10,50,60") == 0
+    found = [c.key for c in read_candidates(out) if c.source == "mayner"]
+    roles = ("coral-reef", "pirate", "sommelier")
+    assert found == [f"mayner/{role}-top{k}" for role in roles for k in (10, 50, 60)]
+    with pytest.raises(SystemExit):
+        _candidates(data, tmp_path / "twice.csv", "--set-sizes", "10,10")
