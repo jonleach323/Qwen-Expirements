@@ -94,7 +94,7 @@ be a NeuronSet, a few neurons pushed as one unit
   uv run pushlab fetch library, then uv run pushlab fetch mayner
 - One candidate list from both sources, sensitive personas dropped (on the
   pod, from /workspace/data; loads no model):
-  uv run pushlab candidates --model qwen3-8b --out units/candidates_qwen3-8b.csv
+  uv run pushlab candidates --model qwen3-8b --set-sizes 10,50,100 --out units/candidates_qwen3-8b.csv
 - Lint and format: uv run ruff check --fix . && uv run ruff format .
 - All checks before committing: uv run pre-commit run --all-files
 

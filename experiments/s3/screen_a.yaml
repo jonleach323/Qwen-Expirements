@@ -39,13 +39,14 @@ batch_size: 128
 # later stage of the panel; `uv run pushlab calibrate --model qwen3-8b`
 # makes it once on the pod.
 calibration: fixed
-# For about 850 candidates (Mayner's 550 sets, his 275 roles at 10 and 50
-# neurons, and the library's persona neurons; decision 0020), 8 prompts and
-# 160 reply tokens at configs/costs.yaml's 22 reply tokens a second for
-# qwen3-8b: 13.7 hours, times 1.5, rounded up to a quarter hour, as pushlab
-# ladder's default. `pushlab run --dry-run` on the pod gives the hours for
-# the list there: raise this if the list is longer.
-max_gpu_hours: 20.75
+# For about 1,125 candidates (Mayner's 825 sets, his 275 roles at 10, 50 and
+# 100 neurons, made with pushlab candidates --set-sizes 10,50,100, and the
+# library's persona neurons; decision 0020), 8 prompts and 160 reply tokens
+# at configs/costs.yaml's 22 reply tokens a second for qwen3-8b: 18.2 hours,
+# times 1.5, rounded up to a quarter hour, as pushlab ladder's default.
+# `pushlab run --dry-run` on the pod gives the hours for the list there:
+# raise this if the list is longer.
+max_gpu_hours: 27.5
 # Every candidate of the list.
 candidates:
   file: units/candidates_qwen3-8b.csv

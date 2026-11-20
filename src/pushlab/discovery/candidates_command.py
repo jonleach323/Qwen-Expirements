@@ -28,7 +28,7 @@ from pushlab.discovery.candidates import (
     write_candidates,
 )
 from pushlab.discovery.library_import import import_library
-from pushlab.discovery.mayner_import import import_mayner
+from pushlab.discovery.mayner_import import SIZES, import_mayner
 from pushlab.discovery.sources import LIBRARY, MAYNER, SOURCES, Source, source_dir
 from pushlab.models.discovery import ModelInfo
 from pushlab.models.registry import REGISTRY
@@ -213,11 +213,14 @@ def run_candidates(
     data_dir: Path | None = None,
     include_sensitive: bool = False,
     overwrite: bool = False,
+    set_sizes: tuple[int, ...] | None = None,
 ) -> int:
     """Write both sources' candidates for model to out; return the exit status.
 
-    The sources are read from data_dir ($PUSHLAB_DATA_DIR, else
-    /workspace/data, by default), where `pushlab fetch` puts them. Returns 0
+    Each of Mayner's roles gives a set of its top k neurons for each k of
+    set_sizes (None: 10 and 50). The sources are read from data_dir
+    ($PUSHLAB_DATA_DIR, else /workspace/data, by default), where `pushlab
+    fetch` puts them. Returns 0
     once out is written, and 1 with the reasons on stderr when it refuses:
     before anything is imported, a model the sources list no neurons of, and
     an out that is a folder, or that exists unless overwrite; then a source
@@ -243,7 +246,12 @@ def run_candidates(
     print(f"Reading both sources' candidates from {root}", flush=True)
     found: list[Candidate] = []
     problems = []
-    for source, importer in ((LIBRARY, import_library), (MAYNER, import_mayner)):
+    sizes = SIZES if set_sizes is None else set_sizes
+    importers = (
+        (LIBRARY, import_library),
+        (MAYNER, lambda folder, model: import_mayner(folder, model, sizes)),
+    )
+    for source, importer in importers:
         try:
             found += importer(source_dir(source, root), model)
         except (OSError, ValueError) as error:  # each names the file and the fault

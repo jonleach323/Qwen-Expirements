@@ -44,11 +44,11 @@ selection:
   screen_prompts: 8
   # stage b: the stage_b_size candidates with the highest speaks_as rates,
   # on every prompt of the set.
-  stage_b_size: 120
+  stage_b_size: 200
   # stage ladder: stage b's ladder_size best, at each of ladder_doses (two
   # or more), as multiples of each candidate's reference dose, on the set's
   # first ladder_prompts prompts.
-  ladder_size: 40
+  ladder_size: 80
   ladder_prompts: 16
   ladder_doses: [0.5, 0.75, 1.0, 1.25, 1.5]
   # select: at most panel_size personas, or as many as pass, if at least
@@ -59,7 +59,7 @@ selection:
   panel_size: 24
   panel_minimum: 16
   distinct_rate: 0.9
-  distinct_sample: 8
+  distinct_sample: 16
   # The categories a panel spreads across; a categories file gives each
   # finalist's.
   categories: [people, animals, fictional, objects, mystical]

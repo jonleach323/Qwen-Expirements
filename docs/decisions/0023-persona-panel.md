@@ -107,10 +107,10 @@ coherence where a stage needs it, and
 writing the next experiment outside the repository, as it names the
 library's units:
 
-1. `b`: screen_a's 120 candidates with the highest speaks_as rates, ties
+1. `b`: screen_a's 200 candidates with the highest speaks_as rates, ties
    to the more verdicts, then the list's order, at their reference dose
    on all 32 held-out prompts.
-2. `ladder`: stage b's 40 best, at 0.5, 0.75, 1, 1.25 and 1.5 times their
+2. `ladder`: stage b's 80 best, at 0.5, 0.75, 1, 1.25 and 1.5 times their
    reference dose, on the first 16 prompts.
 3. `confirm`: each ladder candidate with a working dose below any collapse
    dose (decision 0022's analysis), at its working dose, on all 32
@@ -139,7 +139,7 @@ finalists, select stops there, writing nothing, and says what would help.
 Each finalist's category comes next, from a categories file the owner
 fills in, `key,category`, one of the five; select writes it with the
 categories blank when it is missing or unfinished, and stops. The
-which_persona rubric then sees a sample of up to 8 of each finalist's
+which_persona rubric then sees a sample of up to 16 of each finalist's
 replies that speak as it, drawn with a seed and the finalist's key (so
 one finalist's sample does not depend on who else is a finalist), with
 every finalist as an option; a finalist named for fewer than 90% of them
@@ -197,6 +197,12 @@ test skips, saying so.
   screen_a 6,800 runs (850 candidates times 8 prompts) in 432 batches.
   Those were at batch_size 16; it is 128 since (S3, for the A100 80 GB
   pod), which gives 1 batch and 56.
+- The first full pass on the pod (November 2026) left 6 personas: 14 of
+  the 20 finalists failed the distinct rule, which with a sample of 8 and
+  a rate of 0.9 asks for 8 of 8. So the sample is 16 since (one miss
+  passes), Mayner's roles also give sets of their top 100 neurons
+  (`pushlab candidates --set-sizes 10,50,100`), stage b keeps 200 and the
+  ladder 80, and the panel is chosen again from the screen on.
 - A review of the finished code found five faults, fixed before the last
   commit: stage ladder's hint pointed to `pushlab doses` with the whole
   candidates list, which that command refuses (stage confirm prints the

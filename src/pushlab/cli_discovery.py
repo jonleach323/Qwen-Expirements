@@ -141,7 +141,8 @@ def add_candidates(commands: argparse._SubParsersAction) -> None:
         description="Make one list of persona candidates from the two sources "
         "that `pushlab fetch` downloaded into the data folder: each persona of "
         "the Neuron Persona Library, one neuron pushed one way, and each of Will "
-        "Mayner's roles as two sets of neurons, its top 10 and its top 50. Every "
+        "Mayner's roles as sets of neurons, its top 10 and its top 50 unless "
+        "--set-sizes says otherwise. Every "
         "unit is checked against the model's shape. The personas a source calls "
         "sensitive are dropped, unless --include-sensitive, and then the "
         "duplicate names within each source, keeping the best of each (the "
@@ -176,3 +177,29 @@ def add_candidates(commands: argparse._SubParsersAction) -> None:
     candidates.add_argument(
         "--overwrite", action="store_true", help="replace the file if it exists"
     )
+    candidates.add_argument(
+        "--set-sizes",
+        type=set_sizes,
+        metavar="K,K",
+        help="how many of each Mayner role's top neurons each of its sets takes, "
+        "comma-separated, such as 10,50,100 (default: 10,50); his table holds "
+        "each role's top 1,000",
+    )
+
+
+def set_sizes(text: str) -> tuple[int, ...]:
+    """--set-sizes as numbers: different whole numbers from 1.
+
+    Example:
+        >>> set_sizes("10, 50,100")
+        (10, 50, 100)
+    """
+    try:
+        sizes = tuple(int(part) for part in text.split(","))
+    except ValueError:
+        sizes = ()
+    if not sizes or min(sizes) < 1 or len(set(sizes)) != len(sizes):
+        raise argparse.ArgumentTypeError(
+            f"give different whole numbers from 1, such as 10,50,100; not {text!r}"
+        )
+    return sizes

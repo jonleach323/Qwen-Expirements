@@ -36,7 +36,7 @@ SCREEN_A = S3 / "screen_a.yaml"
 LIBRARY_REPRO = S3 / "library_repro.yaml"
 LIST = "units/candidates_qwen3-8b.csv"
 # About 850 candidates: Mayner's 550 sets and the library's persona neurons.
-CANDIDATES = 850
+CANDIDATES = 1125
 # 7 library neurons, one at 1.5, above the ceiling, then 3 sets.
 SCREENED = [*lists.library_neurons(7, [3, 17, 30]), *lists.mayner_sets(3)]
 # 60 library neurons, 5 in each of 12 layers.
@@ -141,7 +141,7 @@ def test_max_gpu_hours_follow_the_speed_their_comments_name() -> None:
         text = path.read_text(encoding="utf-8")
         assert f"configs/costs.yaml's {speed:g} reply tokens a" in text
         assert f"max_gpu_hours: {default_hours(runs, 160, speed)}\n" in text
-    assert default_hours(CANDIDATES * 8, 160, speed) == 20.75
+    assert default_hours(CANDIDATES * 8, 160, speed) == 27.5
 
 
 def test_pushlab_expand_reports_both_files_run_counts(

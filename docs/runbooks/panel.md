@@ -19,7 +19,9 @@ ignored by git.
 
 - The candidates list, `units/candidates_qwen3-8b.csv`: `uv run pushlab
   fetch library`, `uv run pushlab fetch mayner`, then `uv run pushlab
-  candidates --model qwen3-8b --out units/candidates_qwen3-8b.csv`
+  candidates --model qwen3-8b --set-sizes 10,50,100 --out
+  units/candidates_qwen3-8b.csv`, which makes each of Mayner's roles a set
+  of its top 10, 50 and 100 neurons
   (decision 0020).
 - Qwen3-8B's calibration, which every stage after the library's check
   uses: `uv run pushlab calibrate --model qwen3-8b`.
@@ -65,7 +67,7 @@ dose (the library's strength, or Mayner's dose 1 for a set) on the first
 8 held-out prompts. `expand --summary` prints its run count, the list's
 candidates times 8, and `run --dry-run` its hours and cost; raise its
 `max_gpu_hours` through a pull request if the list is longer than about
-850.
+1,125.
 
 ```bash
 uv run pushlab expand experiments/s3/screen_a.yaml --summary
@@ -79,7 +81,7 @@ uv run pushlab run experiments/s3/screen_a.yaml
 uv run pushlab score experiments/s3/screen_a.yaml --rubric speaks_as
 ```
 
-## 3. Stage b: the 120 best, on every prompt
+## 3. Stage b: the 200 best, on every prompt
 
 ```bash
 uv run pushlab panel stage b experiments/s3/screen_a.yaml --out /workspace/experiments/s3-stage-b.yaml
@@ -88,7 +90,7 @@ uv run pushlab panel stage b experiments/s3/screen_a.yaml --out /workspace/exper
 It prints the candidates it kept with their speaks_as rates, and what to
 run next: the file, then its speaks_as scores, as in step 2.
 
-## 4. Stage ladder: the 40 best, at five doses
+## 4. Stage ladder: the 80 best, at five doses
 
 ```bash
 uv run pushlab panel stage ladder /workspace/experiments/s3-stage-b.yaml --out /workspace/experiments/s3-stage-ladder.yaml
